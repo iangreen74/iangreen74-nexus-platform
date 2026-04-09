@@ -1,0 +1,26 @@
+name: NEXUS Platform CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: pip install pytest
+      - run: NEXUS_MODE=local python -m pytest tests/ -x -q --tb=short
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder deploy
+        run: echo "ECS deploy will be wired in a later change"
