@@ -145,15 +145,15 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
             or "workflow failed" in _err(e)
             or "green rate" in _err(e)
         ),
-        "action": "escalate_with_diagnosis",
-        "blast_radius": BLAST_MODERATE,
-        "confidence": 0.8,
+        "action": "retrigger_ci",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.85,
         "reasoning": (
-            "CI failures require a code fix — escalate with the failing "
-            "workflow names attached."
+            "CI failures detected — attempting to retrigger the most recent "
+            "failed workflow. If the retrigger also fails, will escalate."
         ),
         "diagnosis": "GitHub Actions workflows are failing.",
-        "resolution": "Inspect failing workflow logs and push a fix.",
+        "resolution": "Auto-retrigger the most recent failed run, then escalate if still failing.",
     },
     # ----- Patterns learned from Ben's onboarding (2026-04-09) -----
     {

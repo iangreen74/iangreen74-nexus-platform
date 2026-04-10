@@ -816,23 +816,46 @@ loadAll();
 setInterval(loadAll, REFRESH_MS);
 
 // --- Copy Diagnostic Report ---
+function _copyToClipboard(text) {
+  // navigator.clipboard.writeText can fail after async delays (user gesture
+  // expires) or in non-secure contexts. Fall back to execCommand('copy').
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => {
+      _fallbackCopy(text);
+    });
+  }
+  _fallbackCopy(text);
+  return Promise.resolve();
+}
+function _fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+}
 async function copyDiagnostic() {
   const btn = document.getElementById('copy-report-btn');
   const orig = btn.textContent;
+  btn.textContent = '...';
   try {
-    const data = await fetchJSON(`${API}/diagnostic-report`);
-    if (!data || !data.report) throw new Error('no report');
-    await navigator.clipboard.writeText(data.report);
+    const resp = await fetch(`${API}/diagnostic-report`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!data || !data.report) throw new Error('empty report');
+    await _copyToClipboard(data.report);
     btn.textContent = '✓ Copied';
     btn.classList.add('copied');
   } catch (e) {
-    btn.textContent = 'Copy failed';
-    console.error(e);
+    btn.textContent = '✗ Failed';
+    console.error('Copy report failed:', e);
   } finally {
     setTimeout(() => {
       btn.textContent = orig;
       btn.classList.remove('copied');
-    }, 2000);
+    }, 2500);
   }
 }
 

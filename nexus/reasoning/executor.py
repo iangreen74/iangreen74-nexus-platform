@@ -39,8 +39,22 @@ logger = logging.getLogger("nexus.executor")
 _TENANT_ID: Callable[[dict[str, Any]], dict[str, Any]] = lambda ctx: {"tenant_id": ctx.get("tenant_id", "")}
 _NOTHING: Callable[[dict[str, Any]], dict[str, Any]] = lambda ctx: {}
 
+def _ci_retrigger_kwargs(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Get the most recent failed workflow run_id for retriggering."""
+    try:
+        result = registry.execute("get_failing_workflows")
+        if result.ok and result.result:
+            failing = result.result.get("failing", [])
+            if failing:
+                return {"run_id": failing[0].get("run_id", 0)}
+    except Exception:
+        pass
+    return {"run_id": 0}
+
+
 ACTION_CAPABILITY_MAP: dict[str, tuple[str, Callable[[dict[str, Any]], dict[str, Any]]]] = {
     "restart_daemon_service": ("restart_daemon", _NOTHING),
+    "retrigger_ci": ("retrigger_workflow", _ci_retrigger_kwargs),
     "validate_tenant_onboarding": ("validate_tenant_onboarding", _TENANT_ID),
     "refresh_tenant_token": ("refresh_tenant_token", _TENANT_ID),
     "retrigger_ingestion": ("retrigger_ingestion", _TENANT_ID),
@@ -112,10 +126,37 @@ def _last_outcome(key: str) -> str:
 
 
 def reset_cooldowns() -> None:
-    """Test hook."""
+    """Test hook — also resets escalation dedup."""
     with _cooldown_lock:
         _cooldowns.clear()
         _last_outcomes.clear()
+    reset_escalation_dedup()
+
+
+# ---- Escalation dedup -------------------------------------------------------
+# The executor fires escalations independently from alert_dispatcher.
+# Without dedup, every 30s poll cycle produces a new send_escalation call —
+# this caused 705 entries in the actions history and flooded Telegram.
+_escalation_lock = threading.Lock()
+_escalation_last_fired: dict[str, float] = {}
+ESCALATION_DEDUP_SECONDS = 30 * 60  # 30 minutes — matches cooldown window
+
+
+def _escalation_should_fire(key: str) -> bool:
+    """True if this escalation key hasn't fired within the dedup window."""
+    now = time.monotonic()
+    with _escalation_lock:
+        last = _escalation_last_fired.get(key)
+        if last is not None and (now - last) < ESCALATION_DEDUP_SECONDS:
+            return False
+        _escalation_last_fired[key] = now
+        return True
+
+
+def reset_escalation_dedup() -> None:
+    """Test hook."""
+    with _escalation_lock:
+        _escalation_last_fired.clear()
 
 
 # ---- Escalation helper ------------------------------------------------------
@@ -125,10 +166,19 @@ def _escalate(
     failure_reason: str = "",
 ) -> ExecutionResult:
     """Send an escalation alert via the send_escalation capability."""
+    # Dedup: don't re-fire the same escalation within the dedup window.
+    # This is what prevents 705 send_escalation entries in the actions history.
+    source = context.get("source", "overwatch")
+    dedup_key = f"{source}:{decision.action}"
+    if not _escalation_should_fire(dedup_key):
+        return ExecutionResult(
+            status="skipped",
+            reason=f"escalation dedup ({dedup_key})",
+        )
+
     meta = decision.metadata or {}
     diagnosis = meta.get("diagnosis") or decision.reasoning
     resolution = meta.get("resolution") or ""
-    event = context.get("source", "overwatch")
 
     extra = ""
     if failure_reason:
@@ -137,7 +187,7 @@ def _escalate(
     try:
         registry.execute(
             "send_escalation",
-            event=f"{event}: {decision.action}",
+            event=f"{source}: {decision.action}",
             diagnosis=diagnosis + extra,
             suggested_action=resolution or decision.action,
         )

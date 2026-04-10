@@ -49,7 +49,7 @@ def test_daemon_stale_pattern_is_auto_healed():
     assert decision.auto_approved is True
 
 
-def test_ci_failing_escalates_with_diagnosis():
+def test_ci_failing_retriggers():
     decision = triage.triage_ci_health(
         {
             "healthy": False,
@@ -57,7 +57,7 @@ def test_ci_failing_escalates_with_diagnosis():
             "green_rate_24h": 0.3,
         }
     )
-    assert decision.action == "escalate_with_diagnosis"
+    assert decision.action == "retrigger_ci"
     assert decision.metadata.get("failing_workflows") == ["deploy.yml"]
 
 
