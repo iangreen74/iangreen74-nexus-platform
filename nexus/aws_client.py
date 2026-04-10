@@ -96,13 +96,28 @@ def get_cloudwatch_errors(log_group: str, minutes: int = 30) -> int:
 
 
 def get_secret(secret_id: str) -> dict[str, Any]:
-    """Fetch a secret from Secrets Manager, parsed as JSON."""
+    """
+    Fetch a secret from Secrets Manager.
+
+    Returns a dict in all cases. JSON secrets are parsed; plain-string
+    secrets (e.g. a raw GitHub PAT) come back as `{"_raw": "..."}` so
+    callers can probe both shapes.
+    """
     if MODE != "production":
-        return {"mock": True, "secret_id": secret_id}
+        return {"mock": True, "secret_id": secret_id, "_raw": "mock-secret"}
     try:
         resp = _client("secretsmanager").get_secret_value(SecretId=secret_id)
-        raw = resp.get("SecretString", "{}")
-        return json.loads(raw) if raw else {}
+        raw = resp.get("SecretString", "")
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                parsed.setdefault("_raw", raw)
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return {"_raw": raw}
     except Exception:
         logger.exception("get_secret(%s) failed", secret_id)
         return {}

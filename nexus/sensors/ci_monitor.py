@@ -25,7 +25,13 @@ def _token() -> str | None:
     if MODE != "production":
         return None
     secret = get_secret(GITHUB_SECRET_ID)
-    return secret.get("github_pat") or secret.get("token")
+    # `github-token` is stored as a plain string, not JSON; aws_client wraps
+    # plain strings as {"_raw": "..."}. Fall back to JSON shapes for safety.
+    return (
+        secret.get("_raw")
+        or secret.get("github_pat")
+        or secret.get("token")
+    )
 
 
 def _fetch_runs(repo: str, token: str) -> list[dict[str, Any]]:

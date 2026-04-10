@@ -14,9 +14,9 @@ MODE = os.getenv("NEXUS_MODE", "production")
 AWS_REGION = "us-east-1"
 AWS_ACCOUNT_ID = "418295677815"
 
-# Neptune (read-only access to Forgewing's graph)
-NEPTUNE_ENDPOINT = "g-1xwjj34141"
-NEPTUNE_PORT = 8182
+# Neptune Analytics (read-only access to Forgewing's graph)
+# Forgewing runs on the neptune-graph API with openCypher, not classic Neptune.
+NEPTUNE_GRAPH_ID = "g-1xwjj34141"
 
 # ECS clusters and services NEXUS monitors
 FORGEWING_CLUSTER = "aria-platform"
@@ -39,7 +39,8 @@ CONSOLE_PORT = 9001
 TELEGRAM_SECRET_ID = "hyperlev/slack"  # Contains bot token + chat ID
 
 # GitHub (for CI monitoring)
-GITHUB_SECRET_ID = "nexus/github-pat"
+# `github-token` is a plain-string PAT (not JSON) shared with aria-platform.
+GITHUB_SECRET_ID = "github-token"
 GITHUB_ORG = "iangreen74"
 GITHUB_REPOS = ["aria-platform", "iangreen74-nexus-platform"]
 
