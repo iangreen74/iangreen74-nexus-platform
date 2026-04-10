@@ -176,6 +176,32 @@
 
   <section>
     <div class="section-head">
+      <h2>Failure Patterns</h2>
+      <span class="meta" id="patterns-meta"></span>
+    </div>
+    <table id="patterns-table">
+      <thead>
+        <tr><th>Pattern</th><th>Confidence</th><th>Occurrences</th><th>Blast Radius</th><th>Auto-heal</th></tr>
+      </thead>
+      <tbody id="patterns-body"><tr><td colspan="5" class="empty">Loading patterns…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Forge — Proposed Fixes</h2>
+      <span class="meta" id="forge-meta"></span>
+    </div>
+    <table id="forge-table">
+      <thead>
+        <tr><th>#</th><th>Title</th><th>Branch</th><th>State</th></tr>
+      </thead>
+      <tbody id="forge-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Capabilities</h2>
       <span class="meta" id="capabilities-meta"></span>
     </div>
@@ -200,7 +226,7 @@
     </table>
   </section>
 
-  <footer>OVERWATCH · AUTOREFRESH 30s · platform.vaultscaler.com</footer>
+  <footer>OVERWATCH · AUTOREFRESH 30s · <span id="graph-stats">graph: —</span> · platform.vaultscaler.com</footer>
 </div>
 
 <script>
@@ -437,13 +463,70 @@ async function loadActions() {
   `).join('');
 }
 
+async function loadPatterns() {
+  const data = await fetchJSON(`${API}/patterns`);
+  const body = document.getElementById('patterns-body');
+  if (!data || !data.patterns) {
+    body.innerHTML = '<tr><td colspan="5" class="err">Failed to load patterns</td></tr>';
+    return;
+  }
+  document.getElementById('patterns-meta').textContent = `${data.count} learned`;
+  if (data.patterns.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">No patterns recorded yet</td></tr>';
+    return;
+  }
+  body.innerHTML = data.patterns.map(p => `
+    <tr>
+      <td><strong>${p.name || '—'}</strong><br><span style="color:var(--text-dim)">${(p.diagnosis || '').slice(0,80)}</span></td>
+      <td>${((p.confidence ?? 0) * 100).toFixed(0)}%</td>
+      <td>${p.occurrence_count ?? 0}</td>
+      <td><span class="badge ${p.blast_radius || 'safe'}">${p.blast_radius || '—'}</span></td>
+      <td>${p.auto_healable ? 'yes' : 'no'}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadForge() {
+  const [prs, templates] = await Promise.all([
+    fetchJSON(`${API}/forge/prs`),
+    fetchJSON(`${API}/forge/templates`)
+  ]);
+  const body = document.getElementById('forge-body');
+  const tplCount = templates ? templates.count : 0;
+  document.getElementById('forge-meta').textContent =
+    `${prs ? prs.count : 0} open · ${tplCount} fix templates`;
+  if (!prs || !prs.prs || prs.prs.length === 0) {
+    body.innerHTML = `<tr><td colspan="4" class="empty">No proposed fixes ${tplCount > 0 ? '(' + tplCount + ' templates ready)' : ''}</td></tr>`;
+    return;
+  }
+  body.innerHTML = prs.prs.map(p => `
+    <tr>
+      <td>#${p.number}</td>
+      <td><a href="${p.url}" target="_blank">${p.title}</a></td>
+      <td><code>${(p.labels || []).join(', ')}</code></td>
+      <td>${p.draft ? 'draft' : 'open'}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadGraphStats() {
+  const data = await fetchJSON(`${API}/graph/stats`);
+  if (!data || !data.stats) return;
+  const counts = data.stats;
+  const parts = Object.entries(counts).map(([k, v]) => `${k.replace('Overwatch','')} ${v}`);
+  document.getElementById('graph-stats').textContent = `graph: ${data.total} nodes · ${parts.join(' · ')}`;
+}
+
 async function loadAll() {
   await Promise.all([
     loadOverview(),
     loadTenants(),
     loadTriageFeed(),
+    loadPatterns(),
+    loadForge(),
     loadCapabilities(),
-    loadActions()
+    loadActions(),
+    loadGraphStats()
   ]);
 }
 

@@ -18,6 +18,12 @@ AWS_ACCOUNT_ID = "418295677815"
 # Forgewing runs on the neptune-graph API with openCypher, not classic Neptune.
 NEPTUNE_GRAPH_ID = "g-1xwjj34141"
 
+# Overwatch's own graph storage. Per the OVERWATCH doc, Overwatch shares the
+# underlying Neptune Analytics graph with Forgewing but writes to a dedicated
+# label namespace (Overwatch*) so the two systems never collide.
+# This avoids the ~$300/mo baseline cost of a second Neptune Analytics graph.
+OVERWATCH_GRAPH_ID = NEPTUNE_GRAPH_ID
+
 # ECS clusters and services NEXUS monitors
 FORGEWING_CLUSTER = "aria-platform"
 FORGEWING_SERVICES = [
@@ -38,11 +44,16 @@ CONSOLE_PORT = 9001
 # Telegram alerts
 TELEGRAM_SECRET_ID = "hyperlev/slack"  # Contains bot token + chat ID
 
-# GitHub (for CI monitoring)
+# GitHub (for CI monitoring + Forge engine PR creation)
 # `github-token` is a plain-string PAT (not JSON) shared with aria-platform.
 GITHUB_SECRET_ID = "github-token"
 GITHUB_ORG = "iangreen74"
 GITHUB_REPOS = ["aria-platform", "iangreen74-nexus-platform"]
+
+# Forge Engine — the aria-platform repo Overwatch can propose changes to.
+ARIA_PLATFORM_REPO = "iangreen74/aria-platform"
+ARIA_PLATFORM_DEFAULT_BRANCH = "main"
+FORGE_PR_LABEL = "overwatch-fix"
 
 # Thresholds
 DAEMON_CYCLE_STALE_MINUTES = 15  # Alert if daemon hasn't cycled in this long

@@ -12,8 +12,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from nexus import overwatch_graph
 from nexus.capabilities import alert, ecs_ops  # noqa: F401 — register capabilities
 from nexus.capabilities.registry import registry
+from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
 from nexus.sensors import ci_monitor, daemon_monitor, tenant_health
@@ -150,3 +152,67 @@ async def triage_event(text: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="text is required")
     decision = triage.triage_event(text)
     return decision.to_dict()
+
+
+# --- Overwatch graph -----------------------------------------------------
+@router.get("/patterns")
+async def failure_patterns(min_confidence: float = 0.0) -> dict[str, Any]:
+    """Learned FailurePattern nodes from Overwatch's graph."""
+    patterns = overwatch_graph.get_failure_patterns(min_confidence=min_confidence)
+    return {"count": len(patterns), "patterns": patterns}
+
+
+@router.get("/investigations")
+async def investigations(limit: int = 50) -> dict[str, Any]:
+    """Recent DiagnosticInvestigation rows."""
+    rows = overwatch_graph.query(
+        "MATCH (i:OverwatchInvestigation) RETURN i.id AS id, "
+        "i.trigger_event AS trigger_event, i.conclusion AS conclusion, "
+        "i.confidence AS confidence, i.outcome AS outcome, "
+        "i.created_at AS created_at ORDER BY i.created_at DESC LIMIT 50"
+    )
+    return {"count": len(rows), "investigations": rows[:limit]}
+
+
+@router.get("/graph/stats")
+async def graph_stats() -> dict[str, Any]:
+    """Per-label node counts in the Overwatch graph."""
+    stats = overwatch_graph.graph_stats()
+    return {"stats": stats, "total": sum(stats.values())}
+
+
+# --- Forge Engine --------------------------------------------------------
+@router.get("/forge/prs")
+async def forge_prs() -> dict[str, Any]:
+    """PRs Overwatch has opened on aria-platform (filtered by overwatch-fix label)."""
+    prs = aria_repo.list_overwatch_prs()
+    return {"count": len(prs), "prs": prs}
+
+
+@router.get("/forge/templates")
+async def forge_templates() -> dict[str, Any]:
+    """Catalog of fix templates Overwatch can generate."""
+    templates = fix_generator.list_known_fix_templates()
+    return {"count": len(templates), "templates": templates}
+
+
+@router.post("/forge/deploy/{service}")
+async def forge_deploy(service: str, approve: bool = False) -> dict[str, Any]:
+    """
+    Trigger a deploy of an aria-platform service.
+
+    Moderate blast radius — requires `?approve=true` so it isn't fired
+    by accident from the dashboard. Dangerous services should add their
+    own gating in a future revision.
+    """
+    if not approve:
+        raise HTTPException(
+            status_code=403,
+            detail="approval required: re-call with ?approve=true",
+        )
+    return deploy_manager.deploy_service(service)
+
+
+@router.get("/forge/deploy/{service}")
+async def forge_deploy_status(service: str) -> dict[str, Any]:
+    return deploy_manager.get_deploy_status(service)

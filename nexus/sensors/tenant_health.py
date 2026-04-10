@@ -131,7 +131,7 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
         }
         pipeline = _pipeline_snapshot(tenant_id)
         conversation = _conversation_snapshot(tenant_id)
-        return {
+        report = {
             "tenant_id": tenant_id,
             "context": neptune_client.get_tenant_context(tenant_id),
             "deployment": deployment,
@@ -140,6 +140,8 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             "overall_status": _rollup(deployment, pipeline, conversation),
             "checked_at": _now().isoformat(),
         }
+        _record_snapshot(report)
+        return report
     except Exception:
         logger.exception("check_tenant(%s) crashed", tenant_id)
         return {
@@ -154,3 +156,28 @@ def check_all_tenants() -> list[dict[str, Any]]:
     """Run check_tenant for every tenant known to Neptune."""
     ids = neptune_client.get_tenant_ids()
     return [check_tenant(tid) for tid in ids]
+
+
+def _record_snapshot(report: dict[str, Any]) -> None:
+    """Persist a TenantSnapshot row for trending. Never raises."""
+    try:
+        from nexus import overwatch_graph  # local import to avoid cycles
+
+        deployment = report.get("deployment", {}) or {}
+        pipeline = report.get("pipeline", {}) or {}
+        conversation = report.get("conversation", {}) or {}
+        overwatch_graph.record_tenant_snapshot(
+            report["tenant_id"],
+            {
+                "overall_status": report.get("overall_status"),
+                "deployment_status": "healthy" if deployment.get("healthy") else
+                ("pending" if deployment.get("provisioned") is False else "unhealthy"),
+                "pipeline_status": "stalled" if pipeline.get("stuck_task_count", 0) > 0 else "active",
+                "conversation_status": "silent" if conversation.get("inactive") else "active",
+                "stuck_task_count": pipeline.get("stuck_task_count", 0),
+                "message_count": conversation.get("message_count", 0),
+                "last_message_at": conversation.get("last_message_at"),
+            },
+        )
+    except Exception:
+        logger.debug("snapshot recording failed for %s", report.get("tenant_id"), exc_info=True)

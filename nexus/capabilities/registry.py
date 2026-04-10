@@ -133,7 +133,32 @@ class CapabilityRegistry:
                 logger.exception("Capability %s failed", name)
             finally:
                 self._history.append(record)
+                self._record_to_graph(record, started, kwargs)
         return record
+
+    @staticmethod
+    def _record_to_graph(record: "ActionRecord", started: datetime, kwargs: dict[str, Any]) -> None:
+        """Persist this action to Overwatch's graph. Never raises."""
+        try:
+            from nexus import overwatch_graph  # local import to avoid cycles
+
+            duration_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+            target = (
+                kwargs.get("service")
+                or kwargs.get("target")
+                or kwargs.get("tenant_id")
+                or "—"
+            )
+            overwatch_graph.record_healing_action(
+                action_type=record.name,
+                target=str(target),
+                blast_radius=record.blast_radius,
+                trigger=record.id,
+                outcome="success" if record.ok else "failed",
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            logger.debug("graph recording failed for %s", record.name, exc_info=True)
 
 
 # Shared singleton — capability modules import this to self-register.

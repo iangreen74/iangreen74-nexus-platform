@@ -247,6 +247,8 @@ def triage_tenant_health(report: dict[str, Any]) -> TriageDecision:
         )
 
     decision.auto_approved = should_auto_heal(decision)
+    _record_triage(f"tenant:{tenant_id}", decision,
+                   severity="critical" if status == "critical" else "info")
     return decision
 
 
@@ -279,6 +281,8 @@ def triage_daemon_health(report: dict[str, Any]) -> TriageDecision:
         )
 
     decision.auto_approved = should_auto_heal(decision)
+    _record_triage("daemon", decision,
+                   severity="warning" if not report.get("healthy") else "info")
     return decision
 
 
@@ -298,6 +302,8 @@ def triage_ci_health(report: dict[str, Any]) -> TriageDecision:
         decision.metadata["green_rate_24h"] = report.get("green_rate_24h")
 
     decision.auto_approved = should_auto_heal(decision)
+    _record_triage("ci", decision,
+                   severity="warning" if not report.get("healthy") else "info")
     return decision
 
 
@@ -313,7 +319,10 @@ def triage_event(text: str) -> TriageDecision:
             reasoning="No known pattern matched — escalating for human review.",
             blast_radius=BLAST_MODERATE,
         )
+        _record_unknown_pattern(text)
     decision.auto_approved = should_auto_heal(decision)
+    _record_triage("event", decision,
+                   severity="warning" if not pattern else "info")
     return decision
 
 
@@ -329,3 +338,60 @@ def should_auto_heal(decision: TriageDecision) -> bool:
         decision.confidence >= AUTO_HEAL_CONFIDENCE_THRESHOLD
         and decision.blast_radius == BLAST_SAFE
     )
+
+
+# --- Graph recording ---------------------------------------------------------
+# Every triage decision is logged to Overwatch's own graph so the platform
+# accumulates memory over time. Failures here must never block triage.
+import hashlib  # noqa: E402
+
+from nexus import overwatch_graph  # noqa: E402
+
+
+def _record_triage(source: str, decision: TriageDecision, severity: str = "info") -> None:
+    try:
+        overwatch_graph.record_event(
+            event_type="triage_decision",
+            service=source,
+            severity=severity,
+            details={
+                "action": decision.action,
+                "confidence": decision.confidence,
+                "blast_radius": decision.blast_radius,
+                "reasoning": decision.reasoning,
+                "pattern_name": (decision.metadata or {}).get("pattern_name"),
+            },
+        )
+        # If a known pattern matched, MERGE+increment its FailurePattern node.
+        meta = decision.metadata or {}
+        pname = meta.get("pattern_name")
+        if pname:
+            overwatch_graph.record_failure_pattern(
+                name=pname,
+                signature=pname,
+                diagnosis=meta.get("diagnosis") or decision.reasoning,
+                resolution=meta.get("resolution") or decision.action,
+                auto_healable=decision.blast_radius == BLAST_SAFE
+                and decision.confidence >= AUTO_HEAL_CONFIDENCE_THRESHOLD,
+                blast_radius=decision.blast_radius,
+                confidence=decision.confidence,
+            )
+    except Exception:
+        pass  # recording must never crash triage
+
+
+def _record_unknown_pattern(text: str) -> None:
+    """An unknown event signature seen for the first time becomes a low-confidence pattern."""
+    try:
+        digest = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()[:10]
+        overwatch_graph.record_failure_pattern(
+            name=f"unknown_{digest}",
+            signature=text[:200],
+            diagnosis="Auto-detected unknown failure — needs human review.",
+            resolution="Investigate and add a triage pattern if recurring.",
+            auto_healable=False,
+            blast_radius=BLAST_MODERATE,
+            confidence=0.1,
+        )
+    except Exception:
+        pass
