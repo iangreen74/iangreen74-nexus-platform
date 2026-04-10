@@ -48,10 +48,14 @@ def _should_fire(key: str) -> bool:
 
 
 def _is_alert_worthy(decision: TriageDecision) -> bool:
+    """Only alert for things that genuinely need human action."""
     if decision.action == "noop":
         return False
+    if decision.action == "monitor":
+        return False  # monitoring is not actionable
     if decision.action in _ESCALATION_ACTIONS:
-        return True
+        # Only escalate if confidence is high enough to be meaningful
+        return decision.confidence >= 0.7
     if decision.blast_radius == "dangerous":
         return True
     return False
@@ -95,6 +99,9 @@ def maybe_alert(
     """
     try:
         if not _is_alert_worthy(decision):
+            return False
+        # Don't alert while a heal chain is still working the problem
+        if context and context.get("heal_chain_active"):
             return False
         key = dedup_key or f"{source}:{decision.action}"
         if not _should_fire(key):

@@ -22,7 +22,7 @@ from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_I
 from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
-from nexus.reasoning.executor import execute_decision, execute_or_continue_chain, get_all_active_chains
+from nexus.reasoning.executor import execute_decision, execute_or_continue_chain, get_active_chain, get_all_active_chains
 from nexus.reasoning.pattern_learner import (
     approve_candidate,
     capture_resolution,
@@ -79,7 +79,8 @@ async def platform_status() -> dict[str, Any]:
         "daemon", daemon_decision,
         dedup_key="daemon:" + daemon_decision.action,
         context={"running": daemon.get("running"), "stale": daemon.get("stale"),
-                 "cycle_age_minutes": daemon.get("cycle_age_minutes")},
+                 "cycle_age_minutes": daemon.get("cycle_age_minutes"),
+                 "heal_chain_active": get_active_chain("daemon") is not None},
     )
     daemon_exec = execute_or_continue_chain(
         daemon_decision,
@@ -93,7 +94,8 @@ async def platform_status() -> dict[str, Any]:
         "ci", ci_decision,
         dedup_key="ci:" + ci_decision.action,
         context={"green_rate_24h": ci.get("green_rate_24h"),
-                 "failing_workflows": ",".join(ci.get("failing_workflows", []) or [])},
+                 "failing_workflows": ",".join(ci.get("failing_workflows", []) or []),
+                 "heal_chain_active": get_active_chain("ci") is not None},
     )
     ci_exec = execute_or_continue_chain(
         ci_decision,
@@ -108,7 +110,8 @@ async def platform_status() -> dict[str, Any]:
         maybe_alert(
             f"tenant:{tid}", decision,
             dedup_key=f"tenant:{tid}:{decision.action}",
-            context={"overall_status": t.get("overall_status")},
+            context={"overall_status": t.get("overall_status"),
+                     "heal_chain_active": get_active_chain(f"tenant:{tid}") is not None},
         )
         t_exec = execute_or_continue_chain(
             decision,
@@ -126,7 +129,8 @@ async def platform_status() -> dict[str, Any]:
                     f"capability:{tid}", cap_decision,
                     dedup_key=f"capability:{tid}:{cap_decision.action}",
                     context={"capability_overall": cap_report.overall,
-                             "score": capability_validator.capability_score(cap_report)},
+                             "score": capability_validator.capability_score(cap_report),
+                             "heal_chain_active": get_active_chain(f"capability:{tid}") is not None},
                 )
                 cap_exec = execute_or_continue_chain(
                     cap_decision,

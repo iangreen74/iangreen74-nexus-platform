@@ -209,9 +209,18 @@ def context_health(tenant_id: str) -> dict[str, Any]:
         else:
             missing.append(name)
 
+    # Don't flag new tenants — low context is expected during ramp-up.
+    # A tenant needs at least 5 completed tasks before we expect rich
+    # intelligence sources. Below that, low context is normal.
+    tasks = neptune_client.get_recent_tasks(tenant_id, limit=50)
+    completed = [t for t in tasks if t.get("status") == "complete"]
+    is_ramping = len(completed) < 5
+
     return {
         "active": active,
         "expected": len(expected_sources),
         "missing": missing,
-        "healthy": active >= 4,
+        "tenant_id": tenant_id,
+        "healthy": active >= 4 or is_ramping,
+        "ramping": is_ramping,
     }

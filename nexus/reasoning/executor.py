@@ -181,16 +181,36 @@ def _escalate(
     diagnosis = meta.get("diagnosis") or decision.reasoning
     resolution = meta.get("resolution") or ""
 
+    # Build human-readable source name
+    _FRIENDLY = {"daemon": "Daemon", "ci": "CI/CD"}
+    friendly = _FRIENDLY.get(source, source)
+    if source.startswith("tenant:"):
+        friendly = f"Tenant {source.split(':')[-1][:14]}"
+    elif source.startswith("performance:"):
+        metric = source.split(":")[1] if ":" in source else "unknown"
+        friendly = f"Performance ({metric})"
+    elif source.startswith("capability:"):
+        friendly = f"Tenant capabilities ({source.split(':')[-1][:14]})"
+
+    # Simplify heal chain exhaustion messages
+    chain_summary = meta.get("heal_chain_summary", "")
+    if chain_summary:
+        steps = [s.strip() for s in chain_summary.split("\n") if "→" in s]
+        if steps:
+            diagnosis += "\nOverwatch tried: " + "; ".join(steps)
+
     extra = ""
-    if failure_reason:
-        extra = f"\nAuto-heal failed: {failure_reason}"
+    if failure_reason and "heal chain exhausted" in failure_reason:
+        extra = "\nOverwatch exhausted its recovery options — needs your attention."
+    elif failure_reason:
+        extra = f"\n{failure_reason}"
 
     try:
         registry.execute(
             "send_escalation",
-            event=f"{source}: {decision.action}",
+            event=friendly,
             diagnosis=diagnosis + extra,
-            suggested_action=resolution or decision.action,
+            suggested_action=resolution or "Investigate manually",
         )
         return ExecutionResult(
             status="escalated",

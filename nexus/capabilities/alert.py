@@ -22,12 +22,9 @@ def send_telegram_alert(message: str, level: str = "info") -> dict[str, Any]:
 
 def send_escalation(event: str, diagnosis: str, suggested_action: str) -> dict[str, Any]:
     """Format and send an escalation message to the operator."""
-    body = (
-        "*NEXUS Escalation*\n"
-        f"*Event:* {event}\n"
-        f"*Diagnosis:* {diagnosis}\n"
-        f"*Suggested action:* {suggested_action}"
-    )
+    body = f"*Overwatch*\n*{event}*\n{diagnosis}"
+    if suggested_action and suggested_action != "Investigate manually":
+        body += f"\n\n*Next step:* {suggested_action}"
     ok = send_alert(body, level="critical")
     return {
         "sent": ok,
