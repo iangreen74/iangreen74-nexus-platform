@@ -226,6 +226,39 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
             "and accept the GitHub App permissions."
         ),
     },
+    # ----- Capability Validator patterns (2026-04-10) -----
+    {
+        "name": "tenant_capability_blocked",
+        "match": lambda e: (
+            e.get("type") == "capability_report"
+            and e.get("overall") == "blocked"
+        ),
+        "action": "validate_tenant_onboarding",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.9,
+        "reasoning": (
+            "Capability validator found critical checks failing — tenant "
+            "cannot generate PRs. Running full onboarding validation."
+        ),
+        "diagnosis": "One or more critical capability checks failed.",
+        "resolution": "Auto-heal mapped capabilities, then escalate remaining.",
+    },
+    {
+        "name": "tenant_capability_degraded",
+        "match": lambda e: (
+            e.get("type") == "capability_report"
+            and e.get("overall") == "degraded"
+        ),
+        "action": "check_pipeline_health",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.8,
+        "reasoning": (
+            "Capability validator found important checks failing — tenant "
+            "experience is degraded. Investigating pipeline health."
+        ),
+        "diagnosis": "Multiple non-critical capability checks failing.",
+        "resolution": "Schedule for next cycle, escalate if persistent.",
+    },
     {
         "name": "daemon_timeout_recurring",
         "match": lambda e: (
@@ -391,6 +424,68 @@ def triage_ci_health(report: dict[str, Any]) -> TriageDecision:
     decision.auto_approved = should_auto_heal(decision)
     _record_triage("ci", decision,
                    severity="warning" if not report.get("healthy") else "info")
+    return decision
+
+
+def triage_capability_report(report: dict[str, Any]) -> TriageDecision:
+    """Decide what to do about a CapabilityReport."""
+    overall = report.get("overall", "unknown")
+    tenant_id = report.get("tenant_id", "unknown")
+
+    if overall == "fully_operational":
+        decision = TriageDecision(
+            action="noop",
+            confidence=1.0,
+            reasoning=f"Tenant {tenant_id} fully operational — all capability checks passing.",
+            blast_radius=BLAST_SAFE,
+            auto_approved=True,
+        )
+    elif overall == "onboarding":
+        decision = TriageDecision(
+            action="noop",
+            confidence=1.0,
+            reasoning=f"Tenant {tenant_id} still onboarding — checks skipped.",
+            blast_radius=BLAST_SAFE,
+            auto_approved=True,
+        )
+    elif overall == "blocked":
+        event = {"type": "capability_report", "overall": "blocked", "tenant_id": tenant_id}
+        event.update(report)
+        pattern = _match_pattern(event)
+        if pattern:
+            decision = _decision_from_pattern(pattern)
+        else:
+            decision = TriageDecision(
+                action="validate_tenant_onboarding",
+                confidence=0.9,
+                reasoning=f"Tenant {tenant_id} has critical capability failures.",
+                blast_radius=BLAST_SAFE,
+            )
+        decision.metadata["blockers"] = report.get("blockers", [])
+    elif overall == "degraded":
+        event = {"type": "capability_report", "overall": "degraded", "tenant_id": tenant_id}
+        event.update(report)
+        pattern = _match_pattern(event)
+        if pattern:
+            decision = _decision_from_pattern(pattern)
+        else:
+            decision = TriageDecision(
+                action="monitor",
+                confidence=0.7,
+                reasoning=f"Tenant {tenant_id} degraded — monitoring.",
+                blast_radius=BLAST_SAFE,
+            )
+    else:
+        decision = TriageDecision(
+            action="monitor",
+            confidence=0.5,
+            reasoning=f"Unknown capability status '{overall}' for {tenant_id}.",
+            blast_radius=BLAST_SAFE,
+        )
+
+    decision.auto_approved = should_auto_heal(decision)
+    _record_triage(f"capability:{tenant_id}", decision,
+                   severity="warning" if overall == "blocked" else "info")
     return decision
 
 

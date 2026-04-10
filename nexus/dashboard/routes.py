@@ -24,6 +24,7 @@ from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
 from nexus.reasoning.executor import execute_decision
 from nexus.sensors import (
+    capability_validator,
     ci_monitor,
     daemon_monitor,
     infrastructure_lock,
@@ -97,6 +98,25 @@ async def platform_status() -> dict[str, Any]:
         t_exec = execute_decision(decision, {"source": f"tenant:{tid}", "target": tid, "tenant_id": tid})
         executions.append({"source": f"tenant:{tid}", "action": decision.action, **t_exec.to_dict()})
 
+        # Capability validation — triage blocked/degraded tenants
+        try:
+            cap_report = capability_validator.validate_tenant_capabilities(tid)
+            if cap_report.overall in ("blocked", "degraded"):
+                cap_decision = triage.triage_capability_report(cap_report.to_dict())
+                maybe_alert(
+                    f"capability:{tid}", cap_decision,
+                    dedup_key=f"capability:{tid}:{cap_decision.action}",
+                    context={"capability_overall": cap_report.overall,
+                             "score": capability_validator.capability_score(cap_report)},
+                )
+                cap_exec = execute_decision(
+                    cap_decision,
+                    {"source": f"capability:{tid}", "target": tid, "tenant_id": tid},
+                )
+                executions.append({"source": f"capability:{tid}", "action": cap_decision.action, **cap_exec.to_dict()})
+        except Exception:
+            logger.debug("capability validation failed for %s", tid, exc_info=True)
+
     locks = infrastructure_lock.check_locks()
     preemptive_alerts = preemptive.run_preemptive_checks()
     if not locks.get("all_locked"):
@@ -134,6 +154,16 @@ async def platform_status() -> dict[str, Any]:
 @router.get("/tenants")
 async def list_tenants() -> dict[str, Any]:
     reports = tenant_health.check_all_tenants()
+    # Enrich each tenant with capability score
+    for report in reports:
+        tid = report.get("tenant_id", "")
+        try:
+            cap_report = capability_validator.validate_tenant_capabilities(tid)
+            report["capability_score"] = capability_validator.capability_score(cap_report)
+            report["capability_overall"] = cap_report.overall
+        except Exception:
+            report["capability_score"] = "unknown"
+            report["capability_overall"] = "unknown"
     return {"count": len(reports), "tenants": reports}
 
 
@@ -188,6 +218,9 @@ async def tenant_full_detail(tenant_id: str) -> dict[str, Any]:
     # Validation alerts
     validation = tenant_validator.validate_tenant(tenant_id)
 
+    # Capability validation (full 8-layer check)
+    cap_report = capability_validator.validate_tenant_capabilities(tenant_id)
+
     # Triage decision
     report = tenant_health.check_tenant(tenant_id)
     decision = triage.triage_tenant_health(report)
@@ -207,6 +240,7 @@ async def tenant_full_detail(tenant_id: str) -> dict[str, Any]:
         "token": token_info,
         "repo_file_count": repo_file_count,
         "ingestion": ingest[0] if ingest else None,
+        "capabilities": cap_report.to_dict(),
         "validation": {
             "alert_count": len(validation),
             "alerts": validation,
