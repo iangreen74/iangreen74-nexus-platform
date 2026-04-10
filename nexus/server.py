@@ -8,12 +8,18 @@ Separation principle: NEXUS never imports from aria-platform.
 It connects through AWS APIs, Neptune reads, and HTTP endpoints.
 """
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from nexus.config import CONSOLE_PORT, MODE
 from nexus.dashboard import routes as dashboard_routes
+
+STATIC_DIR = Path(__file__).parent / "dashboard" / "static"
+INDEX_FILE = STATIC_DIR / "index.html"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +42,9 @@ app.add_middleware(
 
 app.include_router(dashboard_routes.router, prefix="/api")
 
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 @app.get("/health")
 async def health():
@@ -50,14 +59,18 @@ async def health():
 
 @app.get("/")
 async def root():
-    """Root endpoint — points the operator at the dashboard API."""
-    return {
-        "system": "nexus-platform",
-        "mode": MODE,
-        "docs": "/docs",
-        "health": "/health",
-        "api": "/api/status",
-    }
+    """Serve the operator dashboard SPA, or a JSON pointer if it's missing."""
+    if INDEX_FILE.exists():
+        return FileResponse(str(INDEX_FILE))
+    return JSONResponse(
+        {
+            "system": "nexus-platform",
+            "mode": MODE,
+            "docs": "/docs",
+            "health": "/health",
+            "api": "/api/status",
+        }
+    )
 
 
 @app.on_event("startup")

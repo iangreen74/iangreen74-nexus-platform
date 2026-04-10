@@ -45,62 +45,136 @@ class TriageDecision:
 
 
 # ---------------------------------------------------------------------------
-# Known failure patterns — seeded from Ben's onboarding incidents.
+# Known failure patterns — seeded from Ben's onboarding incidents (2026-04).
+#
+# Each pattern carries a `match` lambda that takes an event dict (with at
+# least `error` or `type` keys), plus the diagnosis and resolution that
+# the operator should see when this pattern fires.
 # ---------------------------------------------------------------------------
+def _err(event: dict[str, Any]) -> str:
+    return str(event.get("error") or "").lower()
+
+
 KNOWN_PATTERNS: list[dict[str, Any]] = [
     {
-        "id": "github_permission_denied",
-        "match_any": ["github permission denied", "403", "repository access"],
+        "name": "github_permission_denied",
+        "match": lambda e: (
+            "permission" in _err(e) and "denied" in _err(e)
+        )
+        or "403" in _err(e),
         "action": "escalate_to_operator",
         "blast_radius": BLAST_MODERATE,
         "confidence": 0.95,
         "reasoning": (
-            "GitHub permission denied indicates the customer has not "
-            "granted NEXUS write access — only they can fix this."
+            "Tenant's GitHub App installation doesn't have access to their "
+            "repo. Installation ID may be wrong."
+        ),
+        "diagnosis": (
+            "GitHub returned 403/permission denied on a write — only the "
+            "customer can grant this access."
+        ),
+        "resolution": (
+            "Customer needs to install the GitHub App on their account: "
+            "https://github.com/apps/vaultscaler-pr-gateway/installations/new"
         ),
     },
     {
-        "id": "bedrock_parse_failure",
-        "match_any": ["cannot parse bedrock", "bedrock response", "json decode"],
+        "name": "bedrock_json_parse",
+        "match": lambda e: (
+            "cannot parse" in _err(e)
+            and ("bedrock" in _err(e) or "json" in _err(e))
+        ),
         "action": "retry_with_fence_stripping",
         "blast_radius": BLAST_SAFE,
         "confidence": 0.9,
         "reasoning": (
-            "Bedrock occasionally wraps JSON in markdown fences; "
-            "stripping them and retrying is a safe, idempotent fix."
+            "Bedrock returned a response with markdown fences or prose "
+            "wrapping the JSON; the quality gate handles this gracefully."
+        ),
+        "diagnosis": (
+            "Non-blocking parse failure on a Bedrock response."
+        ),
+        "resolution": (
+            "Quality gate (quality_gate.py) defaults to approved on parse "
+            "failure — no operator action needed."
         ),
     },
     {
-        "id": "daemon_stale",
-        "match_any": ["daemon stale", "cycle stale", "no recent cycle"],
-        "action": "restart_daemon_service",
-        "blast_radius": BLAST_SAFE,
+        "name": "step_functions_access_denied",
+        "match": lambda e: (
+            "AccessDeniedException" in str(event_or_empty(e))
+            and "states:" in str(event_or_empty(e))
+        ),
+        "action": "escalate_to_operator",
+        "blast_radius": BLAST_DANGEROUS,
         "confidence": 0.85,
         "reasoning": (
-            "Daemon hasn't cycled in the allowed window — forcing a new "
-            "ECS deployment is the standard recovery and is reversible."
+            "IAM role missing Step Functions permissions for the "
+            "Deliberation Engine."
+        ),
+        "diagnosis": (
+            "AWS Step Functions denied a states:* call from the ECS task role."
+        ),
+        "resolution": (
+            "Add states:DescribeExecution (and states:StartExecution if "
+            "needed) to aria-ecs-task-role."
         ),
     },
     {
-        "id": "ci_failing",
-        "match_any": ["ci failing", "workflow failed", "green rate"],
+        "name": "daemon_stale",
+        "match": lambda e: (
+            e.get("type") == "daemon_stale"
+            or "daemon stale" in _err(e)
+            or "cycle stale" in _err(e)
+            or "no recent cycle" in _err(e)
+        ),
+        "action": "restart_daemon_service",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.9,
+        "reasoning": (
+            "Daemon hasn't completed a cycle in >15 minutes; forcing a new "
+            "ECS deployment is the standard recovery and is reversible."
+        ),
+        "diagnosis": "aria-daemon hasn't ticked the graph in the allowed window.",
+        "resolution": "Force new ECS deployment of aria-daemon.",
+    },
+    {
+        "name": "ci_failing",
+        "match": lambda e: (
+            "ci failing" in _err(e)
+            or "workflow failed" in _err(e)
+            or "green rate" in _err(e)
+        ),
         "action": "escalate_with_diagnosis",
         "blast_radius": BLAST_MODERATE,
         "confidence": 0.8,
         "reasoning": (
-            "CI failures require a code fix — NEXUS should escalate "
-            "with the failing workflow names attached."
+            "CI failures require a code fix — escalate with the failing "
+            "workflow names attached."
         ),
+        "diagnosis": "GitHub Actions workflows are failing.",
+        "resolution": "Inspect failing workflow logs and push a fix.",
     },
 ]
 
 
-def _match_pattern(text: str) -> dict[str, Any] | None:
-    needle = (text or "").lower()
+def event_or_empty(e: dict[str, Any]) -> str:
+    """Helper used by lambdas: full event payload as a single searchable string."""
+    return " ".join(str(v) for v in e.values())
+
+
+def _match_pattern(event: str | dict[str, Any]) -> dict[str, Any] | None:
+    """Find the first pattern whose match() returns True for this event."""
+    if isinstance(event, str):
+        event_dict: dict[str, Any] = {"error": event}
+    else:
+        event_dict = dict(event)
     for pattern in KNOWN_PATTERNS:
-        for key in pattern["match_any"]:
-            if key in needle:
+        try:
+            if pattern["match"](event_dict):
                 return pattern
+        except Exception:
+            continue
     return None
 
 
@@ -111,7 +185,11 @@ def _decision_from_pattern(pattern: dict[str, Any]) -> TriageDecision:
         reasoning=pattern["reasoning"],
         blast_radius=pattern["blast_radius"],
         auto_approved=False,
-        metadata={"pattern_id": pattern["id"]},
+        metadata={
+            "pattern_name": pattern["name"],
+            "diagnosis": pattern.get("diagnosis"),
+            "resolution": pattern.get("resolution"),
+        },
     )
 
 
@@ -183,7 +261,7 @@ def triage_daemon_health(report: dict[str, Any]) -> TriageDecision:
         )
     elif report.get("stale"):
         decision = _decision_from_pattern(
-            next(p for p in KNOWN_PATTERNS if p["id"] == "daemon_stale")
+            next(p for p in KNOWN_PATTERNS if p["name"] == "daemon_stale")
         )
     elif not report.get("running"):
         decision = TriageDecision(
@@ -214,7 +292,7 @@ def triage_ci_health(report: dict[str, Any]) -> TriageDecision:
             auto_approved=True,
         )
     else:
-        pattern = next(p for p in KNOWN_PATTERNS if p["id"] == "ci_failing")
+        pattern = next(p for p in KNOWN_PATTERNS if p["name"] == "ci_failing")
         decision = _decision_from_pattern(pattern)
         decision.metadata["failing_workflows"] = report.get("failing_workflows", [])
         decision.metadata["green_rate_24h"] = report.get("green_rate_24h")

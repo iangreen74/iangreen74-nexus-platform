@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NEXUS Platform</title>
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --bg-elev: #111114;
+    --bg-row: #16161a;
+    --border: #1f1f24;
+    --text: #e6e6ea;
+    --text-dim: #8a8a93;
+    --teal: #00e5a0;
+    --teal-dim: #0a3d2e;
+    --red: #ef4444;
+    --red-dim: #3d1414;
+    --amber: #f59e0b;
+    --amber-dim: #3d2a08;
+    --blue: #60a5fa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--teal); text-decoration: none; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 0 24px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand h1 {
+    font-size: 18px; letter-spacing: 0.18em; font-weight: 600; color: var(--text);
+  }
+  .brand .sub { color: var(--text-dim); font-size: 11px; letter-spacing: 0.05em; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--teal); box-shadow: 0 0 8px var(--teal);
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  .dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .dot.gray { background: var(--text-dim); box-shadow: none; animation: none; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .status-badge {
+    padding: 6px 14px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    background: var(--teal-dim); color: var(--teal); border: 1px solid var(--teal);
+  }
+  .status-badge.degraded { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
+  .status-badge.critical { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+
+  /* Sections */
+  section { margin-bottom: 32px; }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .section-head h2 {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--text-dim);
+  }
+  .section-head .meta { font-size: 11px; color: var(--text-dim); }
+
+  /* Metric cards */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .card .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 8px; }
+  .card .value { font-size: 22px; font-weight: 600; color: var(--text); }
+  .card .value.teal { color: var(--teal); }
+  .card .value.red { color: var(--red); }
+  .card .value.amber { color: var(--amber); }
+  .card .sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; background: var(--bg-elev); border-radius: 8px; overflow: hidden; }
+  thead th {
+    text-align: left; padding: 10px 14px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-dim); font-weight: 600;
+    border-bottom: 1px solid var(--border); background: var(--bg-row);
+  }
+  tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--bg-row); }
+  tbody tr.detail-row td { background: var(--bg-row); padding: 16px 14px; font-size: 11px; color: var(--text-dim); }
+  tbody tr.detail-row pre { white-space: pre-wrap; word-break: break-word; }
+
+  /* Badges */
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    border: 1px solid var(--border);
+  }
+  .badge.safe { color: var(--teal); border-color: var(--teal); background: var(--teal-dim); }
+  .badge.moderate { color: var(--amber); border-color: var(--amber); background: var(--amber-dim); }
+  .badge.dangerous { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+  .badge.success { color: var(--teal); border-color: var(--teal); background: var(--teal-dim); }
+  .badge.failed { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+
+  /* Triage feed */
+  .feed { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; }
+  .feed-item {
+    display: grid; grid-template-columns: 80px 1fr 120px 70px;
+    gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border);
+    align-items: center; font-size: 12px;
+  }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-item .ts { color: var(--text-dim); font-size: 11px; }
+  .feed-item .reasoning { color: var(--text); }
+  .feed-item .action { color: var(--teal); font-weight: 600; }
+  .feed-item .conf { text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  .empty { padding: 24px; text-align: center; color: var(--text-dim); font-size: 12px; }
+  .err { padding: 16px; background: var(--red-dim); color: var(--red); border-radius: 8px; font-size: 12px; }
+
+  footer {
+    text-align: center; padding: 24px 0 12px 0; color: var(--text-dim); font-size: 10px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <span class="dot" id="online-dot"></span>
+      <h1>NEXUS</h1>
+      <span class="sub">PLATFORM · FORGEWING CONTROL PLANE</span>
+    </div>
+    <span class="status-badge" id="overall-badge">LOADING</span>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <h2>System Overview</h2>
+      <span class="meta" id="overview-meta"></span>
+    </div>
+    <div class="metrics" id="overview"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Tenant Health</h2>
+      <span class="meta" id="tenants-meta"></span>
+    </div>
+    <table id="tenants-table">
+      <thead>
+        <tr><th></th><th>Tenant</th><th>Plan</th><th>Last Activity</th><th>Stuck Tasks</th><th>Status</th></tr>
+      </thead>
+      <tbody id="tenants-body"><tr><td colspan="6" class="empty">Loading tenants…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Triage Feed</h2>
+      <span class="meta" id="triage-meta"></span>
+    </div>
+    <div class="feed" id="triage-feed"><div class="empty">Loading triage decisions…</div></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Capabilities</h2>
+      <span class="meta" id="capabilities-meta"></span>
+    </div>
+    <table id="capabilities-table">
+      <thead>
+        <tr><th>Name</th><th>Blast Radius</th><th>Description</th><th>Approval</th></tr>
+      </thead>
+      <tbody id="capabilities-body"><tr><td colspan="4" class="empty">Loading capabilities…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Actions History</h2>
+      <span class="meta" id="actions-meta"></span>
+    </div>
+    <table id="actions-table">
+      <thead>
+        <tr><th>Time</th><th>Action</th><th>Blast Radius</th><th>Outcome</th></tr>
+      </thead>
+      <tbody id="actions-body"><tr><td colspan="4" class="empty">No actions recorded yet</td></tr></tbody>
+    </table>
+  </section>
+
+  <footer>NEXUS PLATFORM · AUTOREFRESH 30s · platform.vaultscaler.com</footer>
+</div>
+
+<script>
+const API = '/api';
+const REFRESH_MS = 30000;
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return iso; }
+}
+
+function fmtAge(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    const ms = Date.now() - d.getTime();
+    if (isNaN(ms)) return '—';
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  } catch { return '—'; }
+}
+
+function statusClass(status) {
+  if (status === 'healthy') return 'teal';
+  if (status === 'degraded') return 'amber';
+  if (status === 'critical') return 'red';
+  return 'gray';
+}
+
+function dotFor(status) {
+  return `<span class="dot ${statusClass(status)}"></span>`;
+}
+
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    console.error('fetch failed', url, e);
+    return null;
+  }
+}
+
+async function loadOverview() {
+  const data = await fetchJSON(`${API}/status`);
+  if (!data) return;
+
+  const badge = document.getElementById('overall-badge');
+  badge.textContent = (data.overall || 'unknown').toUpperCase();
+  badge.className = 'status-badge ' + (data.overall === 'healthy' ? '' : data.overall);
+
+  const onlineDot = document.getElementById('online-dot');
+  onlineDot.className = 'dot ' + (data.overall === 'healthy' ? '' : statusClass(data.overall));
+
+  const daemon = data.daemon || {};
+  const ci = data.ci || {};
+  const tenants = data.tenants || {};
+
+  const cards = [
+    {
+      label: 'Daemon',
+      value: daemon.running ? 'RUNNING' : 'DOWN',
+      cls: daemon.running ? 'teal' : 'red',
+      sub: daemon.last_cycle_at ? `last cycle ${fmtAge(daemon.last_cycle_at)}` : 'no cycle yet'
+    },
+    {
+      label: 'Cycle Age',
+      value: daemon.cycle_age_minutes != null ? `${Math.round(daemon.cycle_age_minutes)}m` : '—',
+      cls: daemon.stale ? 'red' : 'teal',
+      sub: daemon.stale ? 'STALE' : 'fresh'
+    },
+    {
+      label: 'Daemon Errors / 30m',
+      value: (daemon.error_count_30m ?? 0).toString(),
+      cls: (daemon.error_count_30m ?? 0) > 0 ? 'amber' : 'teal',
+      sub: `rate ${(daemon.error_rate ?? 0).toFixed(2)}/min`
+    },
+    {
+      label: 'CI Green Rate (24h)',
+      value: ((ci.green_rate_24h ?? 0) * 100).toFixed(0) + '%',
+      cls: ci.healthy ? 'teal' : 'red',
+      sub: `last: ${ci.last_run_status || '—'}`
+    },
+    {
+      label: 'Tenants',
+      value: (data.tenant_count ?? 0).toString(),
+      cls: (tenants.critical ?? 0) > 0 ? 'red' : (tenants.degraded ?? 0) > 0 ? 'amber' : 'teal',
+      sub: `${tenants.healthy ?? 0} healthy · ${tenants.degraded ?? 0} degraded · ${tenants.critical ?? 0} critical`
+    }
+  ];
+  document.getElementById('overview').innerHTML = cards.map(c => `
+    <div class="card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value}</div>
+      <div class="sub">${c.sub}</div>
+    </div>
+  `).join('');
+  document.getElementById('overview-meta').textContent = `updated ${fmtTime(new Date().toISOString())}`;
+}
+
+async function loadTenants() {
+  const data = await fetchJSON(`${API}/tenants`);
+  const body = document.getElementById('tenants-body');
+  if (!data || !data.tenants) {
+    body.innerHTML = '<tr><td colspan="6" class="err">Failed to load tenants</td></tr>';
+    return;
+  }
+  document.getElementById('tenants-meta').textContent = `${data.count} tenant${data.count === 1 ? '' : 's'}`;
+  if (data.tenants.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No tenants found</td></tr>';
+    return;
+  }
+  body.innerHTML = data.tenants.map((t, idx) => {
+    const ctx = t.context || {};
+    const conv = t.conversation || {};
+    const pipe = t.pipeline || {};
+    const stuck = pipe.stuck_task_count ?? 0;
+    return `
+      <tr class="clickable" data-tid="${t.tenant_id}" data-row="${idx}">
+        <td>${dotFor(t.overall_status)}</td>
+        <td>${ctx.name || t.tenant_id}</td>
+        <td>${ctx.plan || '—'}</td>
+        <td>${fmtAge(conv.last_message_at)}</td>
+        <td>${stuck}</td>
+        <td>${(t.overall_status || 'unknown').toUpperCase()}</td>
+      </tr>
+    `;
+  }).join('');
+
+  body.querySelectorAll('tr.clickable').forEach(row => {
+    row.addEventListener('click', () => toggleTenantDetail(row));
+  });
+}
+
+async function toggleTenantDetail(row) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('detail-row')) {
+    next.remove();
+    return;
+  }
+  const tid = row.dataset.tid;
+  const data = await fetchJSON(`${API}/tenants/${encodeURIComponent(tid)}`);
+  const detail = document.createElement('tr');
+  detail.className = 'detail-row';
+  detail.innerHTML = `<td colspan="6"><pre>${JSON.stringify(data || { error: 'failed to load' }, null, 2)}</pre></td>`;
+  row.parentNode.insertBefore(detail, row.nextSibling);
+}
+
+async function loadTriageFeed() {
+  // Build a synthetic feed by triaging the current daemon, CI, and tenant reports.
+  const [daemon, ci, tenants] = await Promise.all([
+    fetchJSON(`${API}/daemon`),
+    fetchJSON(`${API}/ci`),
+    fetchJSON(`${API}/tenants`)
+  ]);
+  const items = [];
+  const now = new Date().toISOString();
+  if (daemon && daemon.decision) items.push({ ts: now, source: 'daemon', decision: daemon.decision });
+  if (ci && ci.decision) items.push({ ts: now, source: 'ci', decision: ci.decision });
+  if (tenants && tenants.tenants) {
+    tenants.tenants.forEach(t => {
+      if (t.overall_status && t.overall_status !== 'healthy') {
+        items.push({
+          ts: t.checked_at || now,
+          source: `tenant ${t.tenant_id}`,
+          decision: { action: t.overall_status, reasoning: `tenant ${t.tenant_id} is ${t.overall_status}`, confidence: 0.9 }
+        });
+      }
+    });
+  }
+  document.getElementById('triage-meta').textContent = `${items.length} event${items.length === 1 ? '' : 's'}`;
+  const feed = document.getElementById('triage-feed');
+  if (items.length === 0) {
+    feed.innerHTML = '<div class="empty">All clear — no triage events</div>';
+    return;
+  }
+  feed.innerHTML = items.map(i => `
+    <div class="feed-item">
+      <span class="ts">${fmtTime(i.ts)}</span>
+      <span class="reasoning">${i.source}: ${i.decision.reasoning || ''}</span>
+      <span class="action">${i.decision.action || '—'}</span>
+      <span class="conf">${((i.decision.confidence ?? 0) * 100).toFixed(0)}%</span>
+    </div>
+  `).join('');
+}
+
+async function loadCapabilities() {
+  const data = await fetchJSON(`${API}/capabilities`);
+  const body = document.getElementById('capabilities-body');
+  if (!data || !data.capabilities) {
+    body.innerHTML = '<tr><td colspan="4" class="err">Failed to load capabilities</td></tr>';
+    return;
+  }
+  document.getElementById('capabilities-meta').textContent = `${data.count} registered`;
+  body.innerHTML = data.capabilities.map(c => `
+    <tr>
+      <td><strong>${c.name}</strong></td>
+      <td><span class="badge ${c.blast_radius}">${c.blast_radius}</span></td>
+      <td>${c.description}</td>
+      <td>${c.requires_approval ? 'required' : 'auto'}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadActions() {
+  const data = await fetchJSON(`${API}/actions`);
+  const body = document.getElementById('actions-body');
+  if (!data) {
+    body.innerHTML = '<tr><td colspan="4" class="err">Failed to load actions</td></tr>';
+    return;
+  }
+  document.getElementById('actions-meta').textContent = `${data.count} recent`;
+  if (!data.actions || data.actions.length === 0) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No actions recorded yet</td></tr>';
+    return;
+  }
+  body.innerHTML = data.actions.map(a => `
+    <tr>
+      <td>${fmtTime(a.started_at)}</td>
+      <td><strong>${a.name}</strong></td>
+      <td><span class="badge ${a.blast_radius}">${a.blast_radius}</span></td>
+      <td><span class="badge ${a.ok ? 'success' : 'failed'}">${a.ok ? 'success' : (a.error || 'failed')}</span></td>
+    </tr>
+  `).join('');
+}
+
+async function loadAll() {
+  await Promise.all([
+    loadOverview(),
+    loadTenants(),
+    loadTriageFeed(),
+    loadCapabilities(),
+    loadActions()
+  ]);
+}
+
+loadAll();
+setInterval(loadAll, REFRESH_MS);
+</script>
+</body>
+</html>
