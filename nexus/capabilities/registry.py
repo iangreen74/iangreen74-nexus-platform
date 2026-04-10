@@ -107,6 +107,22 @@ class CapabilityRegistry:
 
     # -- Execution ----------------------------------------------------------
 
+    # Tier 1 capabilities (observe & alert) are exempt from rate limiting
+    # per the OVERWATCH doc: "Tier 1 is always automatic." Only Tier 2+
+    # (healing/modify operations) count against the hourly budget.
+    _RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({
+        "send_telegram_alert",
+        "send_escalation",
+        "get_service_logs",
+        "get_failing_workflows",
+        "diagnose_daemon_timeout",
+        "check_daemon_code_version",
+        "validate_tenant_onboarding",
+        "validate_repo_indexing",
+        "check_pipeline_health",
+        "verify_write_access",
+    })
+
     def execute(self, name: str, **kwargs: Any) -> ActionRecord:
         cap = self.get(name)
         started = datetime.now(timezone.utc)
@@ -120,7 +136,10 @@ class CapabilityRegistry:
         )
         with self._lock:
             try:
-                self._check_rate()
+                # Tier 1 (safe, read-only, or alerting) capabilities skip the
+                # rate limit. Only Tier 2+ (healing/modify) counts.
+                if name not in self._RATE_LIMIT_EXEMPT:
+                    self._check_rate()
                 result = cap.function(**kwargs)
                 record.ok = True
                 record.result = result
