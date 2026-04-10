@@ -22,7 +22,13 @@ from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_I
 from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
-from nexus.sensors import ci_monitor, daemon_monitor, tenant_health
+from nexus.sensors import (
+    ci_monitor,
+    daemon_monitor,
+    infrastructure_lock,
+    preemptive,
+    tenant_health,
+)
 
 logger = logging.getLogger("nexus.dashboard")
 
@@ -76,12 +82,27 @@ async def platform_status() -> dict[str, Any]:
             context={"overall_status": t.get("overall_status")},
         )
 
+    locks = infrastructure_lock.check_locks()
+    preemptive_alerts = preemptive.run_preemptive_checks()
+    if not locks.get("all_locked"):
+        # Lock violations are always critical and override the rollup.
+        overall = "degraded"
+
     return {
         "overall": overall,
         "daemon": daemon,
         "ci": ci,
         "tenants": summary,
         "tenant_count": len(tenants),
+        "infrastructure": {
+            "all_locked": locks.get("all_locked"),
+            "violation_count": locks.get("violation_count", 0),
+            "violations": locks.get("violations", []),
+        },
+        "preemptive": {
+            "alert_count": len(preemptive_alerts),
+            "alerts": preemptive_alerts,
+        },
     }
 
 
@@ -374,6 +395,123 @@ def _invoke_bedrock(system_prompt: str, user_message: str) -> str:
         if block.get("type") == "text":
             return block.get("text", "")
     return ""
+
+
+# --- Infrastructure lockdown -----------------------------------------------
+@router.get("/locks")
+async def locks() -> dict[str, Any]:
+    """Full infrastructure lock report — every check and every violation."""
+    return infrastructure_lock.check_locks()
+
+
+# --- Preemptive health -----------------------------------------------------
+@router.get("/preemptive")
+async def preemptive_alerts() -> dict[str, Any]:
+    """All current preemptive alerts (real + honest stubs)."""
+    alerts = preemptive.run_preemptive_checks()
+    return {"count": len(alerts), "alerts": alerts}
+
+
+# --- Support escalation ----------------------------------------------------
+def _resolve_auto_heal_capability(decision: triage.TriageDecision) -> tuple[str, dict[str, Any]] | None:
+    """
+    Map a TriageDecision's `action` to a registered capability + kwargs,
+    if and only if the decision is auto-approved AND we have a known
+    mapping. Returns None to mean "escalate, don't auto-heal".
+    """
+    if not decision.auto_approved or decision.action == "noop":
+        return None
+    if decision.action == "restart_daemon_service":
+        from nexus.config import FORGEWING_CLUSTER
+
+        return ("restart_service", {"cluster": FORGEWING_CLUSTER, "service": "aria-daemon"})
+    return None
+
+
+@router.post("/support/escalate")
+async def support_escalate(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """
+    ARIA → Overwatch bridge for platform-level customer issues.
+
+    Records the escalation, runs an immediate tenant health check,
+    triages it, and either auto-heals (if a safe known-pattern action
+    matches) or escalates to Ian via Telegram.
+    """
+    tenant_id = (payload or {}).get("tenant_id")
+    issue = (payload or {}).get("issue", "")
+    source = (payload or {}).get("source", "aria")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+
+    overwatch_graph.record_event(
+        event_type="support_escalation",
+        service=f"tenant:{tenant_id}",
+        details={"issue": issue, "source": source, "tenant_id": tenant_id},
+        severity="warning",
+    )
+
+    health = tenant_health.check_tenant(tenant_id)
+    decision = triage.triage_tenant_health(health)
+
+    auto = _resolve_auto_heal_capability(decision)
+    if auto is not None:
+        capability_name, kwargs = auto
+        try:
+            action = registry.execute(capability_name, **kwargs)
+            overwatch_graph.record_event(
+                event_type="support_auto_healed",
+                service=f"tenant:{tenant_id}",
+                details={"capability": capability_name, "action_id": action.id},
+                severity="info",
+            )
+            return {
+                "status": "auto_healed",
+                "tenant_id": tenant_id,
+                "diagnosis": decision.reasoning,
+                "action_taken": capability_name,
+                "result": action.result,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("auto-heal during support escalation failed")
+            # Fall through to escalation below
+
+    # Escalation path — fire a formatted Telegram via the registered capability
+    try:
+        registry.execute(
+            "send_escalation",
+            event=f"support_escalation:{tenant_id}",
+            diagnosis=decision.reasoning,
+            suggested_action=f"Investigate tenant {tenant_id}: {issue}",
+        )
+    except Exception:
+        logger.exception("send_escalation capability call failed")
+
+    return {
+        "status": "escalated",
+        "tenant_id": tenant_id,
+        "diagnosis": decision.reasoning,
+        "triage": decision.to_dict(),
+        "message": "This has been escalated to our platform team. We're investigating.",
+    }
+
+
+@router.get("/support/escalations")
+async def support_escalations(limit: int = 50) -> dict[str, Any]:
+    """Recent support escalations recorded in the Overwatch graph."""
+    rows = overwatch_graph.query(
+        "MATCH (e:OverwatchPlatformEvent) WHERE e.event_type = 'support_escalation' "
+        "RETURN e.id AS id, e.service AS service, e.details AS details, "
+        "e.severity AS severity, e.created_at AS created_at "
+        "ORDER BY e.created_at DESC LIMIT $lim",
+        {"lim": limit},
+    )
+    if not rows:
+        # Local mode — fall back to scanning the in-memory store
+        rows = [
+            e for e in overwatch_graph.get_recent_events(limit=200)
+            if e.get("event_type") == "support_escalation"
+        ][:limit]
+    return {"count": len(rows), "escalations": rows}
 
 
 @router.post("/ops/chat")

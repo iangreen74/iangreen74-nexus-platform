@@ -63,6 +63,23 @@ OPS_CHAT_MODEL_ID = os.getenv(
 )
 OPS_CHAT_MAX_TOKENS = 2000
 
+# Infrastructure lockdown — values that must NEVER drift. Any mismatch
+# fires a critical alert. Add to this list cautiously; every entry is a
+# promise that Overwatch will defend it on every poll.
+COGNITO_USER_POOL_ID = "us-east-1_3dzaO4Dzl"
+GITHUB_APP_ID = "2782895"
+
+# Preemptive health thresholds
+PREEMPTIVE_TASK_AGE_DAYS = 7         # alert if any ECS task is older than this
+PREEMPTIVE_CERT_EXPIRY_DAYS = 30     # alert this many days before ACM cert expiry
+PREEMPTIVE_SECRET_EXPIRY_DAYS = 14   # alert this many days before known secret expiries
+# Known secret expiries by name → ISO date. Empty by default; populate via
+# the operator console as you rotate things. Overwatch can't introspect PAT
+# expiry from Secrets Manager metadata, so we track it here explicitly.
+KNOWN_SECRET_EXPIRIES: dict[str, str] = {
+    # "github-token": "2026-07-01",
+}
+
 # Thresholds
 DAEMON_CYCLE_STALE_MINUTES = 15  # Alert if daemon hasn't cycled in this long
 TENANT_INACTIVE_HOURS = 24  # Alert if tenant has no activity

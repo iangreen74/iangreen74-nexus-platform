@@ -237,6 +237,32 @@
 
   <section>
     <div class="section-head">
+      <h2>Predictive Alerts</h2>
+      <span class="meta" id="predictive-meta"></span>
+    </div>
+    <table id="predictive-table">
+      <thead>
+        <tr><th>Check</th><th>Severity</th><th>Message</th><th>Suggested Action</th></tr>
+      </thead>
+      <tbody id="predictive-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Support Escalations</h2>
+      <span class="meta" id="support-meta"></span>
+    </div>
+    <table id="support-table">
+      <thead>
+        <tr><th>Time</th><th>Tenant</th><th>Issue</th><th>Status</th></tr>
+      </thead>
+      <tbody id="support-body"><tr><td colspan="4" class="empty">No escalations</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Failure Patterns</h2>
       <span class="meta" id="patterns-meta"></span>
     </div>
@@ -393,6 +419,14 @@ async function loadOverview() {
       value: (data.tenant_count ?? 0).toString(),
       cls: (tenants.critical ?? 0) > 0 ? 'red' : (tenants.degraded ?? 0) > 0 ? 'amber' : 'teal',
       sub: `${tenants.healthy ?? 0} healthy · ${tenants.degraded ?? 0} degraded · ${tenants.critical ?? 0} critical · ${tenants.pending ?? 0} pending`
+    },
+    {
+      label: 'Infrastructure',
+      value: data.infrastructure?.all_locked ? '🔒 LOCKED' : '⚠ DRIFT',
+      cls: data.infrastructure?.all_locked ? 'teal' : 'red',
+      sub: data.infrastructure?.all_locked
+        ? 'all constants verified'
+        : `${data.infrastructure?.violation_count ?? 0} violation(s)`
     }
   ];
   document.getElementById('overview').innerHTML = cards.map(c => `
@@ -585,11 +619,73 @@ async function loadGraphStats() {
   document.getElementById('graph-stats').textContent = `graph: ${data.total} nodes · ${parts.join(' · ')}`;
 }
 
+async function loadPredictive() {
+  const data = await fetchJSON(`${API}/preemptive`);
+  const body = document.getElementById('predictive-body');
+  if (!data || !data.alerts) {
+    body.innerHTML = '<tr><td colspan="4" class="err">Failed to load</td></tr>';
+    return;
+  }
+  const real = data.alerts.filter(a => a.status !== 'unknown_needs_wiring');
+  const stubs = data.alerts.filter(a => a.status === 'unknown_needs_wiring');
+  document.getElementById('predictive-meta').textContent =
+    `${real.length} active · ${stubs.length} unwired`;
+  if (data.alerts.length === 0) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No predictive alerts</td></tr>';
+    return;
+  }
+  body.innerHTML = data.alerts.map(a => {
+    const sevClass =
+      a.severity === 'critical' ? 'failed' :
+      a.severity === 'warning' ? 'moderate' : 'safe';
+    return `
+      <tr>
+        <td><strong>${a.check_name}</strong></td>
+        <td><span class="badge ${sevClass}">${a.severity || '—'}</span></td>
+        <td>${a.message || ''}</td>
+        <td style="color:var(--text-dim)">${a.suggested_action || ''}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadSupport() {
+  const data = await fetchJSON(`${API}/support/escalations`);
+  const body = document.getElementById('support-body');
+  if (!data) {
+    body.innerHTML = '<tr><td colspan="4" class="err">Failed to load</td></tr>';
+    return;
+  }
+  document.getElementById('support-meta').textContent = `${data.count} recent`;
+  if (!data.escalations || data.escalations.length === 0) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No escalations</td></tr>';
+    return;
+  }
+  body.innerHTML = data.escalations.map(e => {
+    let details = e.details || {};
+    if (typeof details === 'string') {
+      try { details = JSON.parse(details); } catch { details = {issue: details}; }
+    }
+    const sev = e.severity || 'info';
+    const sevClass = sev === 'critical' ? 'failed' : sev === 'warning' ? 'moderate' : 'safe';
+    return `
+      <tr>
+        <td>${fmtTime(e.created_at)}</td>
+        <td>${details.tenant_id || (e.service || '').replace('tenant:','') || '—'}</td>
+        <td>${(details.issue || '').slice(0, 80)}</td>
+        <td><span class="badge ${sevClass}">${sev}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
 async function loadAll() {
   await Promise.all([
     loadOverview(),
     loadTenants(),
     loadTriageFeed(),
+    loadPredictive(),
+    loadSupport(),
     loadPatterns(),
     loadForge(),
     loadCapabilities(),
