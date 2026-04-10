@@ -107,20 +107,35 @@ def _check_ecs_services_batch() -> dict[str, Any]:
 
 
 def _check_neptune_graph() -> dict[str, Any]:
+    """
+    Verify Neptune Analytics is reachable by running a tiny count query
+    directly against the data-plane client.
+
+    The boto3 neptune-graph client we use elsewhere is configured against
+    the data-plane endpoint (https://us-east-1.neptune-graph.amazonaws.com)
+    which works for execute_query but NOT for control-plane operations
+    like get_graph. We bypass our own query() wrapper here because it
+    swallows exceptions and returns [] on failure — we need real errors
+    to surface as violations.
+    """
     if MODE != "production":
         return {"id": NEPTUNE_GRAPH_ID, "status": "AVAILABLE"}
     try:
+        import json as _json
+
         from nexus.neptune_client import _client as _ng_client
 
-        resp = _ng_client().get_graph(graphIdentifier=NEPTUNE_GRAPH_ID)
-        # boto3 unwraps the response; status is a top-level key
-        return {
-            "id": resp.get("id"),
-            "name": resp.get("name"),
-            "status": resp.get("status", "MISSING"),
-        }
+        resp = _ng_client().execute_query(
+            graphIdentifier=NEPTUNE_GRAPH_ID,
+            queryString="MATCH (n) RETURN count(n) AS c LIMIT 1",
+            language="OPEN_CYPHER",
+        )
+        payload = _json.loads(resp["payload"].read())
+        rows = payload.get("results", []) or []
+        count = int(rows[0].get("c", 0)) if rows else 0
+        return {"id": NEPTUNE_GRAPH_ID, "status": "AVAILABLE", "node_count": count}
     except Exception as exc:
-        logger.warning("neptune get_graph failed: %s", exc)
+        logger.warning("neptune count query failed: %s", exc)
         return {"id": NEPTUNE_GRAPH_ID, "status": "ERROR", "error": str(exc)}
 
 
