@@ -816,46 +816,59 @@ loadAll();
 setInterval(loadAll, REFRESH_MS);
 
 // --- Copy Diagnostic Report ---
-function _copyToClipboard(text) {
-  // navigator.clipboard.writeText can fail after async delays (user gesture
-  // expires) or in non-secure contexts. Fall back to execCommand('copy').
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text).catch(() => {
-      _fallbackCopy(text);
-    });
-  }
-  _fallbackCopy(text);
-  return Promise.resolve();
-}
-function _fallbackCopy(text) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand('copy');
-  document.body.removeChild(ta);
-}
 async function copyDiagnostic() {
   const btn = document.getElementById('copy-report-btn');
   const orig = btn.textContent;
-  btn.textContent = '...';
+  btn.textContent = 'Generating...';
   try {
     const resp = await fetch(`${API}/diagnostic-report`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    if (!data || !data.report) throw new Error('empty report');
-    await _copyToClipboard(data.report);
-    btn.textContent = '✓ Copied';
-    btn.classList.add('copied');
-  } catch (e) {
+    const text = data.report || 'No report generated';
+
+    // Method 1: Modern clipboard API (may fail if user gesture expired
+    // during the await fetch — that's the root cause of the silent failure)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = '✓ Copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 2500);
+        return;
+      } catch (_) { /* fall through to textarea */ }
+    }
+
+    // Method 2: Textarea fallback — immune to gesture expiry because
+    // execCommand('copy') doesn't require a live user activation.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+
+    if (ok) {
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+    } else {
+      // Method 3: Open in a new tab so the user can Ctrl+A, Ctrl+C manually
+      const win = window.open('', '_blank');
+      if (win) {
+        win.document.write('<pre style="white-space:pre-wrap;font-family:monospace;padding:20px">' + text.replace(/</g, '&lt;') + '</pre>');
+        win.document.title = 'Overwatch Diagnostic Report';
+      }
+      btn.textContent = 'Opened in tab';
+    }
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 2500);
+  } catch (err) {
+    console.error('Copy report failed:', err);
     btn.textContent = '✗ Failed';
-    console.error('Copy report failed:', e);
-  } finally {
-    setTimeout(() => {
-      btn.textContent = orig;
-      btn.classList.remove('copied');
-    }, 2500);
+    setTimeout(() => btn.textContent = orig, 2500);
   }
 }
 
