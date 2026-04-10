@@ -55,6 +55,14 @@ ARIA_PLATFORM_REPO = "iangreen74/aria-platform"
 ARIA_PLATFORM_DEFAULT_BRANCH = "main"
 FORGE_PR_LABEL = "overwatch-fix"
 
+# Ops Chat — Bedrock model used by /api/ops/chat. The aria-ecs-task-role
+# already grants bedrock:InvokeModel on *. Override via env var if a
+# different model needs to be tried.
+OPS_CHAT_MODEL_ID = os.getenv(
+    "OVERWATCH_OPS_MODEL", "us.anthropic.claude-sonnet-4-6"
+)
+OPS_CHAT_MAX_TOKENS = 2000
+
 # Thresholds
 DAEMON_CYCLE_STALE_MINUTES = 15  # Alert if daemon hasn't cycled in this long
 TENANT_INACTIVE_HOURS = 24  # Alert if tenant has no activity

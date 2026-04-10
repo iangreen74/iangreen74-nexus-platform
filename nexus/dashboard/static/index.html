@@ -131,6 +131,64 @@
     text-align: center; padding: 24px 0 12px 0; color: var(--text-dim); font-size: 10px;
     letter-spacing: 0.08em; text-transform: uppercase;
   }
+
+  /* Header buttons */
+  .header-actions { display: flex; align-items: center; gap: 12px; }
+  .btn {
+    background: var(--bg-elev); color: var(--text); border: 1px solid var(--border);
+    padding: 8px 14px; border-radius: 6px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+    font-family: inherit; transition: all 0.15s ease;
+  }
+  .btn:hover { border-color: var(--teal); color: var(--teal); }
+  .btn.copied { color: var(--teal); border-color: var(--teal); background: var(--teal-dim); }
+
+  /* Ops chat panel */
+  body { padding-bottom: 80px; } /* leave room for fixed chat */
+  #ops-chat {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--bg-elev); border-top: 1px solid var(--border);
+    padding: 14px 24px; display: flex; gap: 12px; z-index: 100;
+  }
+  #ops-input {
+    flex: 1; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 14px; font-size: 13px; font-family: inherit;
+  }
+  #ops-input:focus { outline: none; border-color: var(--teal); }
+  #ops-input:disabled { opacity: 0.5; }
+  #ops-submit {
+    background: var(--teal); color: var(--bg);
+    border: none; padding: 10px 22px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; cursor: pointer; font-family: inherit;
+  }
+  #ops-submit:hover { filter: brightness(1.1); }
+  #ops-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  #ops-response {
+    position: fixed; bottom: 76px; left: 24px; right: 24px;
+    max-height: 55vh; overflow-y: auto;
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px 24px; z-index: 99;
+    font-size: 13px; line-height: 1.6; color: var(--text);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
+  }
+  #ops-response .question {
+    color: var(--teal); font-weight: 600; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  #ops-response .answer { white-space: pre-wrap; word-break: break-word; }
+  #ops-response .close {
+    position: absolute; top: 10px; right: 14px; background: none;
+    border: none; color: var(--text-dim); cursor: pointer; font-size: 18px;
+    font-family: inherit; padding: 4px 8px;
+  }
+  #ops-response .close:hover { color: var(--text); }
+  #ops-response.thinking .answer::after {
+    content: "▍"; animation: blink 1s step-end infinite; color: var(--teal);
+  }
+  @keyframes blink { 50% { opacity: 0; } }
 </style>
 </head>
 <body>
@@ -142,7 +200,10 @@
       <h1>OVERWATCH</h1>
       <span class="sub">AUTONOMOUS PLATFORM ENGINEERING · FORGEWING CONTROL PLANE</span>
     </div>
-    <span class="status-badge" id="overall-badge">LOADING</span>
+    <div class="header-actions">
+      <button class="btn" id="copy-report-btn" onclick="copyDiagnostic()" title="Copy a structured diagnostic to the clipboard for pasting into Claude">Copy Report</button>
+      <span class="status-badge" id="overall-badge">LOADING</span>
+    </div>
   </header>
 
   <section>
@@ -227,6 +288,13 @@
   </section>
 
   <footer>OVERWATCH · AUTOREFRESH 30s · <span id="graph-stats">graph: —</span> · platform.vaultscaler.com</footer>
+</div>
+
+<div id="ops-chat">
+  <input id="ops-input" type="text"
+         placeholder="Ask Ops about the platform..."
+         onkeydown="if(event.key==='Enter')askOps()">
+  <button id="ops-submit" onclick="askOps()">Ask</button>
 </div>
 
 <script>
@@ -532,6 +600,78 @@ async function loadAll() {
 
 loadAll();
 setInterval(loadAll, REFRESH_MS);
+
+// --- Copy Diagnostic Report ---
+async function copyDiagnostic() {
+  const btn = document.getElementById('copy-report-btn');
+  const orig = btn.textContent;
+  try {
+    const data = await fetchJSON(`${API}/diagnostic-report`);
+    if (!data || !data.report) throw new Error('no report');
+    await navigator.clipboard.writeText(data.report);
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+  } catch (e) {
+    btn.textContent = 'Copy failed';
+    console.error(e);
+  } finally {
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.classList.remove('copied');
+    }, 2000);
+  }
+}
+
+// --- Ops Chat ---
+function ensureOpsResponsePanel() {
+  let panel = document.getElementById('ops-response');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'ops-response';
+    document.body.appendChild(panel);
+  }
+  return panel;
+}
+
+function showOpsResponse(question, answer, thinking) {
+  const panel = ensureOpsResponsePanel();
+  panel.classList.toggle('thinking', !!thinking);
+  panel.innerHTML = `
+    <button class="close" onclick="document.getElementById('ops-response').remove()">✕</button>
+    <div class="question">You: ${question.replace(/</g, '&lt;')}</div>
+    <div class="answer">${(answer || '').replace(/</g, '&lt;')}</div>
+  `;
+}
+
+async function askOps() {
+  const input = document.getElementById('ops-input');
+  const submit = document.getElementById('ops-submit');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  input.disabled = true;
+  submit.disabled = true;
+  submit.textContent = '…';
+  showOpsResponse(message, 'Thinking…', true);
+
+  try {
+    const resp = await fetch(`${API}/ops/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    });
+    const data = await resp.json();
+    showOpsResponse(message, data.response || 'No response.', false);
+  } catch (e) {
+    showOpsResponse(message, 'Error: ' + e.message, false);
+  } finally {
+    input.disabled = false;
+    submit.disabled = false;
+    submit.textContent = 'Ask';
+    input.focus();
+  }
+}
 </script>
 </body>
 </html>

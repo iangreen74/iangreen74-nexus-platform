@@ -7,14 +7,18 @@ is wired to a real queue.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from nexus import overwatch_graph
 from nexus.capabilities import alert, ecs_ops  # noqa: F401 — register capabilities
 from nexus.capabilities.registry import registry
+from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
 from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
@@ -216,3 +220,187 @@ async def forge_deploy(service: str, approve: bool = False) -> dict[str, Any]:
 @router.get("/forge/deploy/{service}")
 async def forge_deploy_status(service: str) -> dict[str, Any]:
     return deploy_manager.get_deploy_status(service)
+
+
+# --- Diagnostic Report -----------------------------------------------------
+def _format_report(
+    status: dict[str, Any],
+    tenants: dict[str, Any],
+    actions: list[dict[str, Any]],
+    patterns: list[dict[str, Any]],
+) -> str:
+    """Build the human-readable text diagnostic for clipboard paste."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines: list[str] = [f"OVERWATCH DIAGNOSTIC — {now}"]
+    lines.append(f"Platform: {status.get('overall', 'unknown').upper()}")
+    lines.append("")
+
+    daemon = status.get("daemon", {}) or {}
+    age = daemon.get("cycle_age_minutes")
+    age_str = f"{age:.0f}m" if isinstance(age, (int, float)) else "—"
+    lines.append(
+        f"Daemon: {'RUNNING' if daemon.get('running') else 'DOWN'} "
+        f"(stale={daemon.get('stale')}, last cycle {age_str} ago, "
+        f"errors/30m={daemon.get('error_count_30m', 0)})"
+    )
+    if daemon.get("last_cycle_duration_seconds"):
+        lines.append(
+            f"  Last cycle duration: {daemon['last_cycle_duration_seconds']}s, "
+            f"prs_checked={daemon.get('last_cycle_prs_checked')}, "
+            f"tasks_dispatched={daemon.get('last_cycle_tasks_dispatched')}"
+        )
+
+    ci = status.get("ci", {}) or {}
+    failing = ci.get("failing_workflows") or []
+    lines.append(
+        f"CI: {(ci.get('green_rate_24h', 0) or 0) * 100:.0f}% green over "
+        f"{ci.get('run_count', 0)} runs (failing: {', '.join(failing) or 'none'})"
+    )
+
+    ts = status.get("tenants", {}) or {}
+    lines.append(
+        f"Tenants: {status.get('tenant_count', 0)} total — "
+        f"{ts.get('healthy', 0)} healthy, {ts.get('degraded', 0)} degraded, "
+        f"{ts.get('critical', 0)} critical, {ts.get('pending', 0)} pending"
+    )
+    lines.append("")
+
+    for t in tenants.get("tenants", []):
+        tid = t.get("tenant_id", "unknown")
+        lines.append(f"TENANT {tid}: {(t.get('overall_status') or 'unknown').upper()}")
+        deployment = t.get("deployment", {}) or {}
+        if deployment.get("provisioned") is False:
+            lines.append("  Deployment: NO_STACK (no ForgeScaler-* CF stack matched)")
+        else:
+            stack = deployment.get("stack") or {}
+            lines.append(f"  Deployment: stack={stack.get('stack_name', '—')} status={stack.get('status', '—')}")
+        pipeline = t.get("pipeline", {}) or {}
+        lines.append(
+            f"  Pipeline: stuck_tasks={pipeline.get('stuck_task_count', 0)}, "
+            f"in_progress={pipeline.get('tasks_in_progress', 0)}, "
+            f"last_pr={pipeline.get('last_pr_at', '—')}"
+        )
+        conv = t.get("conversation", {}) or {}
+        lines.append(
+            f"  Conversation: messages={conv.get('message_count', 0)}, "
+            f"last_message={conv.get('last_message_at', '—')}, "
+            f"inactive={conv.get('inactive')}"
+        )
+        lines.append("")
+
+    if patterns:
+        lines.append("LEARNED FAILURE PATTERNS:")
+        for p in patterns[:10]:
+            lines.append(
+                f"  - {p.get('name')}: {p.get('occurrence_count', 0)}x, "
+                f"confidence={(p.get('confidence', 0) or 0) * 100:.0f}%, "
+                f"blast={p.get('blast_radius', '—')}"
+            )
+        lines.append("")
+
+    if actions:
+        lines.append("RECENT ACTIONS:")
+        for a in actions[:10]:
+            outcome = "OK" if a.get("ok") else (a.get("error") or "FAILED")
+            lines.append(f"  - {a.get('started_at', '')}  {a.get('name', '')}  →  {outcome}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("Paste this into Claude with: 'Diagnose what's wrong and suggest concrete fixes.'")
+    return "\n".join(lines)
+
+
+@router.get("/diagnostic-report")
+async def diagnostic_report() -> dict[str, Any]:
+    """Generate a structured text diagnostic for pasting into Claude."""
+    status = await platform_status()
+    tenants = await list_tenants()
+    actions_resp = await actions(limit=10)
+    patterns_resp = await failure_patterns(min_confidence=0.0)
+    text = _format_report(
+        status=status,
+        tenants=tenants,
+        actions=actions_resp.get("actions", []),
+        patterns=patterns_resp.get("patterns", []),
+    )
+    return {"report": text, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+# --- Ops Chat (Bedrock) ----------------------------------------------------
+def _build_ops_system_prompt(status: dict[str, Any], tenants: dict[str, Any]) -> str:
+    """Compose the system prompt with live platform context."""
+    return (
+        "You are Ops, the Overwatch platform engineering assistant. You help "
+        "Ian diagnose and fix issues with the Forgewing platform.\n\n"
+        "Current platform state:\n"
+        f"{json.dumps(status, indent=2, default=str)}\n\n"
+        "Current tenant health:\n"
+        f"{json.dumps(tenants, indent=2, default=str)}\n\n"
+        "You have deep knowledge of:\n"
+        "- ECS services: forgescaler, forgescaler-staging, aria-daemon, aria-console\n"
+        "- Neptune Analytics graph: g-1xwjj34141 (Forgewing data)\n"
+        "- GitHub App: vaultscaler-pr-gateway (each customer needs their own installation)\n"
+        "- CI/CD: GitHub Actions workflows in aria-platform repo\n"
+        "- Daemon: runs every ~90s, generates PRs, processes tasks\n\n"
+        "When diagnosing issues:\n"
+        "1. State what you observe from the data\n"
+        "2. List possible causes ranked by likelihood\n"
+        "3. Suggest specific actions (AWS CLI commands, code changes, manual steps)\n"
+        "4. Flag blast radius (safe/moderate/dangerous) for each suggestion\n\n"
+        "Be direct and specific. No hedging. If you don't have enough data, say "
+        "exactly what additional data would help."
+    )
+
+
+def _invoke_bedrock(system_prompt: str, user_message: str) -> str:
+    """Synchronous Bedrock invocation — wrap with asyncio.to_thread from async."""
+    import boto3  # noqa: WPS433 — lazy
+
+    client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+    resp = client.invoke_model(
+        modelId=OPS_CHAT_MODEL_ID,
+        body=json.dumps(
+            {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": OPS_CHAT_MAX_TOKENS,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_message}],
+            }
+        ),
+    )
+    payload = json.loads(resp["body"].read())
+    blocks = payload.get("content") or []
+    for block in blocks:
+        if block.get("type") == "text":
+            return block.get("text", "")
+    return ""
+
+
+@router.post("/ops/chat")
+async def ops_chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Conversational platform-engineering assistant powered by Bedrock."""
+    message = (payload or {}).get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    if MODE != "production":
+        return {
+            "response": (
+                f"[Local mode] You asked: {message}\n\n"
+                "In production this would call Bedrock with the full Overwatch "
+                f"context (model={OPS_CHAT_MODEL_ID}). Set NEXUS_MODE=production "
+                "to enable real responses."
+            ),
+            "model": OPS_CHAT_MODEL_ID,
+            "mode": MODE,
+        }
+
+    try:
+        status = await platform_status()
+        tenants = await list_tenants()
+        system_prompt = _build_ops_system_prompt(status, tenants)
+        text = await asyncio.to_thread(_invoke_bedrock, system_prompt, message)
+        return {"response": text or "(empty response)", "model": OPS_CHAT_MODEL_ID, "mode": MODE}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ops_chat failed")
+        return {"response": f"Bedrock call failed: {exc}", "error": True, "model": OPS_CHAT_MODEL_ID}
