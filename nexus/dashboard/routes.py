@@ -23,6 +23,12 @@ from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
 from nexus.reasoning.executor import execute_decision, execute_or_continue_chain, get_all_active_chains
+from nexus.reasoning.pattern_learner import (
+    approve_candidate,
+    capture_resolution,
+    get_candidates,
+    reject_candidate,
+)
 from nexus.sensors import (
     capability_validator,
     ci_monitor,
@@ -586,6 +592,58 @@ async def heal_chains() -> dict[str, Any]:
         "available_chains": available,
         "available_count": len(available),
     }
+
+
+# --- Pattern Learning (Level 4) -------------------------------------------
+
+@router.get("/patterns/candidates")
+async def pattern_candidates() -> dict[str, Any]:
+    """List all candidate patterns awaiting graduation."""
+    candidates = get_candidates()
+    return {
+        "candidates": [c.to_dict() for c in candidates],
+        "count": len(candidates),
+        "graduated": sum(1 for c in candidates if c.graduated),
+        "pending": sum(1 for c in candidates if not c.graduated),
+    }
+
+
+@router.post("/patterns/capture-resolution")
+async def api_capture_resolution(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Capture a manual resolution and generate a candidate pattern."""
+    required = ["incident_source", "incident_action", "heal_capability", "root_cause", "resolution"]
+    missing = [k for k in required if not body.get(k)]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing fields: {', '.join(missing)}")
+    cp = capture_resolution(
+        incident_source=body["incident_source"],
+        incident_action=body["incident_action"],
+        heal_capability=body["heal_capability"],
+        root_cause=body["root_cause"],
+        resolution_text=body["resolution"],
+        should_auto_heal=body.get("should_auto_heal", False),
+        blast_radius=body.get("blast_radius", "safe"),
+        heal_kwargs_template=body.get("heal_kwargs_template", {}),
+    )
+    return {"candidate": cp.to_dict(), "status": "created"}
+
+
+@router.post("/patterns/candidates/{name}/approve")
+async def api_approve_candidate(name: str) -> dict[str, Any]:
+    """Approve a candidate pattern — its suggested heal worked."""
+    cp = approve_candidate(name)
+    if not cp:
+        raise HTTPException(status_code=404, detail=f"Candidate '{name}' not found")
+    return {"candidate": cp.to_dict(), "graduated": cp.graduated, "status": "approved"}
+
+
+@router.post("/patterns/candidates/{name}/reject")
+async def api_reject_candidate(name: str, body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Reject a candidate pattern — its suggested heal didn't work."""
+    cp = reject_candidate(name, reason=(body or {}).get("reason", ""))
+    if not cp:
+        raise HTTPException(status_code=404, detail=f"Candidate '{name}' not found")
+    return {"candidate": cp.to_dict(), "status": "rejected"}
 
 
 @router.get("/diagnostic-report")

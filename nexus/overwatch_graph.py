@@ -40,6 +40,7 @@ _local_store: dict[str, list[dict[str, Any]]] = {
     "OverwatchInvestigation": [],
     "OverwatchHumanDecision": [],
     "OverwatchIncident": [],
+    "OverwatchCandidatePattern": [],
 }
 
 
@@ -522,6 +523,54 @@ def get_resolved_incidents(hours: int = 24) -> list[dict[str, Any]]:
         "i.patterns_matched AS patterns_matched, i.prevention_added AS prevention_added "
         "ORDER BY i.resolved_at DESC",
         {"cutoff": cutoff},
+    )
+
+
+def record_candidate_pattern(data: dict[str, Any]) -> str:
+    """Persist or update a CandidatePattern node (MERGE by name)."""
+    name = data.get("name", "")
+    now = _now_iso()
+    if MODE != "production":
+        with _lock:
+            existing = next(
+                (n for n in _local_store["OverwatchCandidatePattern"] if n.get("name") == name),
+                None,
+            )
+            if existing:
+                existing.update({k: v for k, v in data.items() if v is not None})
+                existing["updated_at"] = now
+                return existing.get("id", name)
+            node = {"id": f"candidate-{name}", **data, "created_at": data.get("created_at", now), "updated_at": now}
+            _local_store["OverwatchCandidatePattern"].append(node)
+            return node["id"]
+    props = {k: v for k, v in data.items() if v is not None}
+    props["updated_at"] = now
+    # Coerce complex values to JSON strings
+    for key in ("heal_kwargs_template",):
+        if key in props and isinstance(props[key], dict):
+            props[key] = json.dumps(props[key])
+    query(
+        "MERGE (c:OverwatchCandidatePattern {name: $name}) SET c += $props",
+        {"name": name, "props": props},
+    )
+    return f"candidate-{name}"
+
+
+def get_candidate_patterns() -> list[dict[str, Any]]:
+    """Return all CandidatePattern nodes."""
+    if MODE != "production":
+        with _lock:
+            return list(_local_store["OverwatchCandidatePattern"])
+    return query(
+        "MATCH (c:OverwatchCandidatePattern) "
+        "RETURN c.name AS name, c.signature AS signature, "
+        "c.match_source AS match_source, c.match_action AS match_action, "
+        "c.heal_capability AS heal_capability, c.diagnosis AS diagnosis, "
+        "c.resolution AS resolution, c.blast_radius AS blast_radius, "
+        "c.confidence AS confidence, c.success_count AS success_count, "
+        "c.failure_count AS failure_count, c.graduated AS graduated, "
+        "c.created_at AS created_at "
+        "ORDER BY c.created_at DESC"
     )
 
 

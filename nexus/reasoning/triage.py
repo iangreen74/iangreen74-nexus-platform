@@ -590,13 +590,31 @@ def triage_event(text: str) -> TriageDecision:
     if pattern:
         decision = _decision_from_pattern(pattern)
     else:
-        decision = TriageDecision(
-            action="escalate_to_operator",
-            confidence=0.4,
-            reasoning="No known pattern matched — escalating for human review.",
-            blast_radius=BLAST_MODERATE,
-        )
-        _record_unknown_pattern(text)
+        # Check candidate patterns before escalating — Level 4 self-programming
+        from nexus.reasoning.pattern_learner import find_matching_candidate
+
+        candidate = find_matching_candidate("event", "escalate_to_operator")
+        if candidate:
+            decision = TriageDecision(
+                action=candidate.heal_capability,
+                confidence=candidate.confidence,
+                reasoning=f"Candidate pattern '{candidate.name}' suggests: {candidate.resolution}",
+                blast_radius=candidate.blast_radius,
+                metadata={
+                    "candidate_name": candidate.name,
+                    "candidate_match": True,
+                    "diagnosis": candidate.diagnosis,
+                    "resolution": candidate.resolution,
+                },
+            )
+        else:
+            decision = TriageDecision(
+                action="escalate_to_operator",
+                confidence=0.4,
+                reasoning="No known pattern matched — escalating for human review.",
+                blast_radius=BLAST_MODERATE,
+            )
+            _record_unknown_pattern(text)
     decision.auto_approved = should_auto_heal(decision)
     _record_triage("event", decision,
                    severity="warning" if not pattern else "info")

@@ -308,6 +308,19 @@
 
   <section>
     <div class="section-head">
+      <h2>Pattern Candidates</h2>
+      <span class="meta" id="candidates-meta"></span>
+    </div>
+    <table id="candidates-table">
+      <thead>
+        <tr><th>Name</th><th>Capability</th><th>Confidence</th><th>Approvals</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody id="candidates-body"><tr><td colspan="6" class="empty">No candidate patterns yet — resolve an incident to teach Overwatch</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Forge — Proposed Fixes</h2>
       <span class="meta" id="forge-meta"></span>
     </div>
@@ -677,6 +690,45 @@ async function loadPatterns() {
   `).join('');
 }
 
+async function loadCandidates() {
+  const data = await fetchJSON(`${API}/patterns/candidates`);
+  const body = document.getElementById('candidates-body');
+  if (!data) { body.innerHTML = '<tr><td colspan="6" class="err">Failed</td></tr>'; return; }
+  document.getElementById('candidates-meta').textContent =
+    `${data.pending} pending · ${data.graduated} graduated · ${data.count} total`;
+  if (!data.candidates || data.candidates.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No candidates yet — resolve an incident to teach Overwatch</td></tr>';
+    return;
+  }
+  body.innerHTML = data.candidates.map(c => {
+    const grad = c.graduated;
+    const statusBadge = grad
+      ? '<span class="badge success">GRADUATED</span>'
+      : `<span class="badge moderate">${((c.confidence || 0) * 100).toFixed(0)}%</span>`;
+    const actions = grad ? '' :
+      `<button class="btn" style="padding:4px 8px;font-size:10px" onclick="approveCand('${c.name}')">Approve</button> ` +
+      `<button class="btn" style="padding:4px 8px;font-size:10px" onclick="rejectCand('${c.name}')">Reject</button>`;
+    return `
+      <tr>
+        <td><strong>${c.name}</strong><br><span style="color:var(--text-dim)">${(c.diagnosis || '').slice(0,60)}</span></td>
+        <td>${c.heal_capability || '—'}</td>
+        <td>${statusBadge}</td>
+        <td>${c.success_count || 0}✓ / ${c.failure_count || 0}✗</td>
+        <td>${grad ? '🎓' : 'pending'}</td>
+        <td>${actions}</td>
+      </tr>
+    `;
+  }).join('');
+}
+async function approveCand(name) {
+  await fetch(`${API}/patterns/candidates/${name}/approve`, { method: 'POST' });
+  loadCandidates();
+}
+async function rejectCand(name) {
+  await fetch(`${API}/patterns/candidates/${name}/reject`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+  loadCandidates();
+}
+
 async function loadForge() {
   const [prs, templates] = await Promise.all([
     fetchJSON(`${API}/forge/prs`),
@@ -854,6 +906,7 @@ async function loadAll() {
     loadPredictive(),
     loadSupport(),
     loadPatterns(),
+    loadCandidates(),
     loadForge(),
     loadCapabilities(),
     loadActions(),
