@@ -65,19 +65,45 @@ def _check_dns(hostname: str) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def _check_ecs_cluster() -> dict[str, Any]:
+def _check_ecs_services_batch() -> dict[str, Any]:
+    """
+    Verify the four critical services in one describe_services call.
+
+    The aria-ecs-task-role has ecs:DescribeServices but NOT ListServices or
+    DescribeClusters, so we can't use the convenience helpers — we go
+    straight to describe_services with the known service list. Cluster
+    reachability is implied: if describe_services returns at least one
+    service from this cluster, the cluster exists and is reachable.
+    """
     if MODE != "production":
-        return {"name": FORGEWING_CLUSTER, "status": "ACTIVE", "active_services": len(FORGEWING_SERVICES)}
-    try:
-        resp = aws_client._client("ecs").describe_clusters(clusters=[FORGEWING_CLUSTER])
-        cluster = (resp.get("clusters") or [{}])[0]
         return {
-            "name": cluster.get("clusterName"),
-            "status": cluster.get("status"),
-            "active_services": cluster.get("activeServicesCount", 0),
+            "cluster_reachable": True,
+            "services": [
+                {"service": s, "status": "ACTIVE", "running_count": 1, "desired_count": 1}
+                for s in FORGEWING_SERVICES
+            ],
+        }
+    try:
+        resp = aws_client._client("ecs").describe_services(
+            cluster=FORGEWING_CLUSTER, services=list(FORGEWING_SERVICES)
+        )
+        services = [
+            {
+                "service": s.get("serviceName"),
+                "status": s.get("status"),
+                "running_count": s.get("runningCount", 0),
+                "desired_count": s.get("desiredCount", 0),
+            }
+            for s in resp.get("services", [])
+        ]
+        failures = [f.get("reason") for f in resp.get("failures", []) or []]
+        return {
+            "cluster_reachable": len(services) > 0,
+            "services": services,
+            "failures": failures,
         }
     except Exception as exc:
-        return {"name": FORGEWING_CLUSTER, "error": str(exc)}
+        return {"cluster_reachable": False, "services": [], "error": str(exc)}
 
 
 def _check_neptune_graph() -> dict[str, Any]:
@@ -87,12 +113,23 @@ def _check_neptune_graph() -> dict[str, Any]:
         from nexus.neptune_client import _client as _ng_client
 
         resp = _ng_client().get_graph(graphIdentifier=NEPTUNE_GRAPH_ID)
-        return {"id": resp.get("id"), "status": resp.get("status")}
+        # boto3 unwraps the response; status is a top-level key
+        return {
+            "id": resp.get("id"),
+            "name": resp.get("name"),
+            "status": resp.get("status", "MISSING"),
+        }
     except Exception as exc:
-        return {"id": NEPTUNE_GRAPH_ID, "error": str(exc)}
+        logger.warning("neptune get_graph failed: %s", exc)
+        return {"id": NEPTUNE_GRAPH_ID, "status": "ERROR", "error": str(exc)}
 
 
 def _check_cognito() -> dict[str, Any]:
+    """
+    Cognito check is best-effort. The aria-ecs-task-role does NOT currently
+    have cognito-idp:DescribeUserPool, so this returns a `skipped` marker
+    rather than a false violation. Add the IAM permission to enable.
+    """
     if MODE != "production":
         return {"id": COGNITO_USER_POOL_ID, "status": "ACTIVE"}
     try:
@@ -100,7 +137,10 @@ def _check_cognito() -> dict[str, Any]:
         pool = resp.get("UserPool", {})
         return {"id": pool.get("Id"), "name": pool.get("Name"), "status": "ACTIVE"}
     except Exception as exc:
-        return {"id": COGNITO_USER_POOL_ID, "error": str(exc)}
+        msg = str(exc)
+        if "AccessDenied" in msg or "not authorized" in msg.lower():
+            return {"id": COGNITO_USER_POOL_ID, "status": "SKIPPED", "skipped_reason": "iam: cognito-idp:DescribeUserPool not granted"}
+        return {"id": COGNITO_USER_POOL_ID, "status": "ERROR", "error": msg}
 
 
 def check_locks() -> dict[str, Any]:
@@ -112,38 +152,46 @@ def check_locks() -> dict[str, Any]:
     sees exactly what drifted and what to investigate.
     """
     violations: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
     checks: dict[str, Any] = {}
 
-    # ECS cluster
-    cluster_state = _check_ecs_cluster()
-    checks["ecs_cluster"] = cluster_state
-    if cluster_state.get("status") != "ACTIVE":
-        violations.append({"lock": "ecs_cluster", "reason": f"status={cluster_state.get('status')}"})
-
-    # ECS services — each must exist with desired >= 1
-    services_state = aws_client.get_ecs_services(FORGEWING_CLUSTER)
-    checks["ecs_services"] = services_state
-    found_names = {s.get("service") for s in services_state}
+    # ECS cluster + services in one batched describe_services call.
+    # Cluster reachability is implied by getting any service back.
+    ecs_state = _check_ecs_services_batch()
+    checks["ecs"] = ecs_state
+    if not ecs_state.get("cluster_reachable"):
+        violations.append({
+            "lock": "ecs_cluster",
+            "reason": ecs_state.get("error", "describe_services returned no services"),
+        })
+    services_by_name = {s["service"]: s for s in ecs_state.get("services", [])}
     for expected in FORGEWING_SERVICES:
-        svc = next((s for s in services_state if s.get("service") == expected), None)
+        svc = services_by_name.get(expected)
         if svc is None:
-            violations.append({"lock": f"service:{expected}", "reason": "missing"})
+            violations.append({"lock": f"service:{expected}", "reason": "missing from describe_services response"})
+            continue
+        if svc.get("status") not in (None, "ACTIVE"):
+            violations.append({"lock": f"service:{expected}", "reason": f"status={svc.get('status')}"})
         elif svc.get("desired_count", 0) < 1:
             violations.append({"lock": f"service:{expected}", "reason": "desired<1"})
-        elif svc.get("status") not in (None, "ACTIVE"):
-            violations.append({"lock": f"service:{expected}", "reason": f"status={svc.get('status')}"})
 
     # Neptune graph
     graph_state = _check_neptune_graph()
     checks["neptune_graph"] = graph_state
-    if graph_state.get("status") != "AVAILABLE":
+    if graph_state.get("status") == "AVAILABLE":
+        pass
+    elif graph_state.get("status") == "ERROR":
+        violations.append({"lock": "neptune_graph", "reason": graph_state.get("error", "unknown")[:120]})
+    else:
         violations.append({"lock": "neptune_graph", "reason": f"status={graph_state.get('status')}"})
 
-    # Cognito user pool
+    # Cognito user pool — skipped if IAM perms missing
     cognito_state = _check_cognito()
     checks["cognito_pool"] = cognito_state
-    if cognito_state.get("error"):
-        violations.append({"lock": "cognito_pool", "reason": cognito_state["error"][:120]})
+    if cognito_state.get("status") == "SKIPPED":
+        skipped.append({"lock": "cognito_pool", "reason": cognito_state["skipped_reason"]})
+    elif cognito_state.get("status") not in (None, "ACTIVE"):
+        violations.append({"lock": "cognito_pool", "reason": cognito_state.get("error", "unknown")[:120]})
 
     # DNS — Overwatch + Forgewing customer-facing domains must resolve
     dns_results: dict[str, Any] = {}
@@ -159,6 +207,7 @@ def check_locks() -> dict[str, Any]:
         "all_locked": len(violations) == 0,
         "violation_count": len(violations),
         "violations": violations,
+        "skipped": skipped,
         "expected": INFRASTRUCTURE_LOCKS,
         "checks": checks,
         "checked_at": _now(),
