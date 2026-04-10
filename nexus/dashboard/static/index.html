@@ -221,7 +221,7 @@
     </div>
     <table id="tenants-table">
       <thead>
-        <tr><th></th><th>Tenant</th><th>Plan</th><th>Last Activity</th><th>Stuck Tasks</th><th>Status</th></tr>
+        <tr><th></th><th>Tenant</th><th>Stage</th><th>Pipeline</th><th>Last Activity</th><th>Status</th></tr>
       </thead>
       <tbody id="tenants-body"><tr><td colspan="6" class="empty">Loading tenants…</td></tr></tbody>
     </table>
@@ -464,14 +464,15 @@ async function loadTenants() {
     const ctx = t.context || {};
     const conv = t.conversation || {};
     const pipe = t.pipeline || {};
-    const stuck = pipe.stuck_task_count ?? 0;
+    const stage = t.pipeline_stage || ctx.plan || '—';
+    const summary = t.pipeline_summary || '—';
     return `
       <tr class="clickable" data-tid="${t.tenant_id}" data-row="${idx}">
         <td>${dotFor(t.overall_status)}</td>
         <td>${ctx.name || t.tenant_id}</td>
-        <td>${ctx.plan || '—'}</td>
+        <td>${stage.toUpperCase()}</td>
+        <td>${summary}</td>
         <td>${fmtAge(conv.last_message_at)}</td>
-        <td>${stuck}</td>
         <td>${(t.overall_status || 'unknown').toUpperCase()}</td>
       </tr>
     `;
@@ -489,10 +490,63 @@ async function toggleTenantDetail(row) {
     return;
   }
   const tid = row.dataset.tid;
-  const data = await fetchJSON(`${API}/tenants/${encodeURIComponent(tid)}`);
+  const data = await fetchJSON(`${API}/tenants/${encodeURIComponent(tid)}/detail`);
+  if (!data) return;
   const detail = document.createElement('tr');
   detail.className = 'detail-row';
-  detail.innerHTML = `<td colspan="6"><pre>${JSON.stringify(data || { error: 'failed to load' }, null, 2)}</pre></td>`;
+
+  // Build a structured detail view
+  const ctx = data.context || {};
+  const token = data.token || {};
+  const triage = data.triage || {};
+  const tasks = data.tasks || [];
+  const prs = data.prs || [];
+  const conv = data.conversation || [];
+  const val = data.validation || {};
+
+  let html = `<td colspan="6"><div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">`;
+
+  // Left column: pipeline + tasks
+  html += `<div>`;
+  html += `<div class="label">PIPELINE</div>`;
+  html += `<div>Stage: <strong>${(data.pipeline_stage || '—').toUpperCase()}</strong> · ${data.pipeline_summary || '—'}</div>`;
+  html += `<div>Repo files: ${data.repo_file_count ?? 0} · Ingestion: ${data.ingestion ? data.ingestion.status : 'none'}</div>`;
+  html += `<div>Token: ${token.present ? '✓ present' : '✗ empty'} · Installation: ${token.installation_id || '—'}</div>`;
+  if (val.alert_count > 0) {
+    html += `<div style="color:var(--amber); margin-top:6px">${val.alert_count} validation alert(s):</div>`;
+    for (const a of val.alerts || []) html += `<div>  ⚠ ${a.check}: ${a.message}</div>`;
+  }
+  html += `<div class="label" style="margin-top:12px">TASKS (${tasks.length})</div>`;
+  for (const t of tasks.slice(0, 10)) {
+    const st = t.status || '?';
+    const cls = st === 'complete' ? 'teal' : st === 'in_progress' ? 'amber' : '';
+    html += `<div><span class="badge ${cls || 'safe'}">${st}</span> ${(t.description || t.id || '').slice(0, 60)}</div>`;
+  }
+  if (tasks.length > 10) html += `<div style="color:var(--text-dim)">…and ${tasks.length - 10} more</div>`;
+  html += `</div>`;
+
+  // Right column: PRs + conversation + triage
+  html += `<div>`;
+  html += `<div class="label">PRS (${prs.length})</div>`;
+  if (prs.length === 0) html += `<div style="color:var(--text-dim)">No PRs yet</div>`;
+  for (const p of prs.slice(0, 5)) {
+    const st = p.state || p.status || '?';
+    html += `<div><span class="badge ${st === 'merged' ? 'success' : 'safe'}">${st}</span> ${p.pr_url ? '<a href="' + p.pr_url + '" target="_blank">#' + (p.id || '') + '</a>' : '#' + (p.id || '')}</div>`;
+  }
+  html += `<div class="label" style="margin-top:12px">CONVERSATION (${data.conversation_count ?? 0} messages)</div>`;
+  if (conv.length === 0) html += `<div style="color:var(--text-dim)">No messages</div>`;
+  for (const m of conv) {
+    const role = m.role || '?';
+    const txt = (m.content || '').slice(0, 80);
+    html += `<div><strong>${role}:</strong> ${txt}</div>`;
+  }
+  html += `<div class="label" style="margin-top:12px">TRIAGE</div>`;
+  html += `<div>${triage.action || '—'} · confidence ${((triage.confidence || 0) * 100).toFixed(0)}% · blast ${triage.blast_radius || '—'}</div>`;
+  html += `<div style="color:var(--text-dim)">${triage.reasoning || ''}</div>`;
+  html += `</div>`;
+
+  html += `</div></td>`;
+  detail.innerHTML = html;
   row.parentNode.insertBefore(detail, row.nextSibling);
 }
 

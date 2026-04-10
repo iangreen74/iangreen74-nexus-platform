@@ -84,15 +84,42 @@ def _pipeline_snapshot(tenant_id: str) -> dict[str, Any]:
     )
     repo_file_count = int(repo_files[0].get("c", 0)) if repo_files else 0
 
+    # Determine the current task being worked on
+    current_task = None
+    if in_progress:
+        t = in_progress[0]
+        current_task = {
+            "id": t.get("id"),
+            "description": (t.get("description") or "")[:100],
+            "status": t.get("status"),
+        }
+    elif tasks:
+        # Fall back to the most recent task
+        t = tasks[0]
+        current_task = {
+            "id": t.get("id"),
+            "description": (t.get("description") or "")[:100],
+            "status": t.get("status"),
+        }
+
+    # Task status breakdown
+    pending = [t for t in tasks if t.get("status") == "pending"]
+    complete = [t for t in tasks if t.get("status") == "complete"]
+    skipped = [t for t in tasks if t.get("status") == "skipped"]
+
     return {
         "last_pr_at": last_pr_ts.isoformat() if last_pr_ts else None,
         "tasks_in_progress": len(in_progress),
+        "tasks_pending": len(pending),
+        "tasks_complete": len(complete),
+        "tasks_skipped": len(skipped),
         "stuck_task_count": len(stuck),
         "stuck_task_ids": stuck,
         "total_recent_tasks": len(tasks),
         "pr_count": len(prs),
         "repo_file_count": repo_file_count,
         "hours_since_first_task": round(hours_since_first, 1),
+        "current_task": current_task,
     }
 
 
@@ -109,6 +136,32 @@ def _conversation_snapshot(tenant_id: str) -> dict[str, Any]:
         "last_message_at": last_ts.isoformat() if last_ts else None,
         "inactive": inactive,
     }
+
+
+def _derive_pipeline_stage(mission_stage: str, pipeline: dict[str, Any]) -> str:
+    """
+    Translate the raw Neptune mission_stage + pipeline data into a
+    human-readable stage label for the dashboard.
+    """
+    stage_map: dict[str, str] = {
+        "awaiting_repo": "onboarding",
+        "ingestion_pending": "onboarding",
+        "ingesting": "ingesting",
+        "brief_pending": "planning",
+        "brief_pending_approval": "awaiting_approval",
+        "executing": "executing",
+        "complete": "complete",
+    }
+    base = stage_map.get(mission_stage, mission_stage or "unknown")
+    # Refine based on actual pipeline data
+    if base == "executing":
+        if pipeline.get("pr_count", 0) > 0:
+            return "active"
+        if pipeline.get("tasks_in_progress", 0) > 0:
+            return "generating_prs"
+        if pipeline.get("total_recent_tasks", 0) > 0:
+            return "tasks_queued"
+    return base
 
 
 def _check_token(tenant_id: str) -> dict[str, Any]:
@@ -169,11 +222,27 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
         }
         pipeline = _pipeline_snapshot(tenant_id)
         conversation = _conversation_snapshot(tenant_id)
+        ctx = neptune_client.get_tenant_context(tenant_id)
+        mission_stage = ctx.get("mission_stage", "unknown")
+        pipeline_stage = _derive_pipeline_stage(mission_stage, pipeline)
+
+        # Build a human-readable summary line
+        summary_parts = []
+        if pipeline.get("pr_count", 0) > 0:
+            summary_parts.append(f"{pipeline['pr_count']} PR{'s' if pipeline['pr_count'] != 1 else ''}")
+        if pipeline.get("total_recent_tasks", 0) > 0:
+            summary_parts.append(f"{pipeline['total_recent_tasks']} tasks")
+            if pipeline.get("tasks_pending", 0) > 0:
+                summary_parts.append(f"{pipeline['tasks_pending']} pending")
+        summary = " · ".join(summary_parts) if summary_parts else "no activity"
+
         report = {
             "tenant_id": tenant_id,
-            "context": neptune_client.get_tenant_context(tenant_id),
+            "context": ctx,
             "deployment": deployment,
             "pipeline": pipeline,
+            "pipeline_stage": pipeline_stage,
+            "pipeline_summary": summary,
             "conversation": conversation,
             "token": token_status,
             "overall_status": _rollup(deployment, pipeline, conversation),

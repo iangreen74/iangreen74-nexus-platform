@@ -80,27 +80,42 @@ class ExecutionResult:
 
 # ---- Cooldown ---------------------------------------------------------------
 _cooldown_lock = threading.Lock()
-_cooldowns: dict[str, float] = {}
+_cooldowns: dict[str, float] = {}  # key → monotonic timestamp of last execution
+_last_outcomes: dict[str, str] = {}  # key → "success" | "failed"
 COOLDOWN_MINUTES = 30
 
 
-def _in_cooldown(key: str) -> bool:
+def _cooldown_remaining(key: str) -> float:
+    """Minutes remaining on cooldown for this key, or 0 if expired."""
     with _cooldown_lock:
         last = _cooldowns.get(key)
         if last is None:
-            return False
-        return (time.monotonic() - last) < COOLDOWN_MINUTES * 60
+            return 0.0
+        elapsed = (time.monotonic() - last) / 60.0
+        remaining = COOLDOWN_MINUTES - elapsed
+        return max(0.0, remaining)
 
 
-def _set_cooldown(key: str) -> None:
+def _in_cooldown(key: str) -> bool:
+    return _cooldown_remaining(key) > 0
+
+
+def _set_cooldown(key: str, outcome: str = "success") -> None:
     with _cooldown_lock:
         _cooldowns[key] = time.monotonic()
+        _last_outcomes[key] = outcome
+
+
+def _last_outcome(key: str) -> str:
+    with _cooldown_lock:
+        return _last_outcomes.get(key, "")
 
 
 def reset_cooldowns() -> None:
     """Test hook."""
     with _cooldown_lock:
         _cooldowns.clear()
+        _last_outcomes.clear()
 
 
 # ---- Escalation helper ------------------------------------------------------
@@ -181,17 +196,33 @@ def execute_decision(
         _record(decision, context, result)
         return result
 
-    # Safety gate 2: Cooldown
-    if _in_cooldown(cooldown_key):
-        return ExecutionResult(status="skipped", reason=f"cooldown active ({cooldown_key})")
+    # Safety gate 2: Cooldown — but override if the last execution didn't
+    # fix the problem (the sensor is still reporting the same issue).
+    remaining = _cooldown_remaining(cooldown_key)
+    if remaining > 0:
+        prev = _last_outcome(cooldown_key)
+        if prev == "success":
+            # Previous execution was successful. If it's still in cooldown,
+            # respect it — the fix may need time to propagate.
+            return ExecutionResult(
+                status="skipped",
+                reason=f"cooldown {remaining:.0f}m remaining ({cooldown_key}), last attempt succeeded",
+            )
+        # Previous attempt failed or has no recorded outcome — let it retry
+        # after a shorter grace period (5 min) rather than the full 30 min.
+        if remaining > COOLDOWN_MINUTES - 5:
+            return ExecutionResult(
+                status="skipped",
+                reason=f"cooldown {remaining:.0f}m remaining ({cooldown_key}), retrying after grace period",
+            )
 
     # Safety gate 3: Execute through the registry (which enforces rate limits)
     try:
         kwargs = kwargs_builder(context)
         record = registry.execute(capability_name, **kwargs)
-        _set_cooldown(cooldown_key)
 
         if record.ok:
+            _set_cooldown(cooldown_key, "success")
             result = ExecutionResult(
                 status="executed",
                 outcome="success",
@@ -209,7 +240,8 @@ def execute_decision(
                 "info",
             )
         else:
-            # Capability executed but failed — escalate
+            # Capability executed but failed — set cooldown as failed and escalate
+            _set_cooldown(cooldown_key, "failed")
             result = _escalate(decision, context, failure_reason=record.error or "capability returned error")
             result.action_taken = capability_name
             result.outcome = "failed_then_escalated"

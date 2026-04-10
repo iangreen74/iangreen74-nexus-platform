@@ -144,6 +144,78 @@ async def tenant_detail(tenant_id: str) -> dict[str, Any]:
     return {"report": report, "decision": decision.to_dict()}
 
 
+@router.get("/tenants/{tenant_id}/detail")
+async def tenant_full_detail(tenant_id: str) -> dict[str, Any]:
+    """
+    Full pipeline state for a single tenant: tasks, PRs, conversation,
+    token validity, repo indexing status, validation alerts. This feeds
+    the dashboard's expandable tenant rows and the Ops chat context.
+    """
+    ctx = neptune_client.get_tenant_context(tenant_id)
+    tasks = neptune_client.get_recent_tasks(tenant_id, limit=50)
+    prs = neptune_client.get_recent_prs(tenant_id, limit=20)
+
+    # Conversation — last 5 messages
+    conversation_rows = neptune_client.query(
+        "MATCH (cm:ConversationMessage {tenant_id: $tid}) "
+        "RETURN cm.role AS role, cm.content AS content, "
+        "cm.timestamp AS timestamp "
+        "ORDER BY cm.timestamp DESC LIMIT 5",
+        {"tid": tenant_id},
+    )
+    # Reverse so they're chronological
+    conversation_rows = list(reversed(conversation_rows))
+
+    # Token validity
+    token_info = tenant_health._check_token(tenant_id)
+
+    # Repo indexing
+    files = neptune_client.query(
+        "MATCH (f:RepoFile {tenant_id: $tid}) RETURN count(f) AS c",
+        {"tid": tenant_id},
+    )
+    repo_file_count = int(files[0].get("c", 0)) if files else 0
+
+    # Ingestion run
+    ingest = neptune_client.query(
+        "MATCH (r:IngestRun {tenant_id: $tid}) "
+        "RETURN r.status AS status, r.files_indexed AS files_indexed, "
+        "r.started_at AS started_at, r.completed_at AS completed_at "
+        "ORDER BY r.started_at DESC LIMIT 1",
+        {"tid": tenant_id},
+    )
+
+    # Validation alerts
+    validation = tenant_validator.validate_tenant(tenant_id)
+
+    # Triage decision
+    report = tenant_health.check_tenant(tenant_id)
+    decision = triage.triage_tenant_health(report)
+
+    return {
+        "tenant_id": tenant_id,
+        "context": ctx,
+        "mission_stage": ctx.get("mission_stage", "unknown"),
+        "pipeline_stage": report.get("pipeline_stage", "unknown"),
+        "pipeline_summary": report.get("pipeline_summary", ""),
+        "tasks": tasks,
+        "task_count": len(tasks),
+        "prs": prs,
+        "pr_count": len(prs),
+        "conversation": conversation_rows,
+        "conversation_count": neptune_client.get_conversation_count(tenant_id),
+        "token": token_info,
+        "repo_file_count": repo_file_count,
+        "ingestion": ingest[0] if ingest else None,
+        "validation": {
+            "alert_count": len(validation),
+            "alerts": validation,
+        },
+        "triage": decision.to_dict(),
+        "health": report,
+    }
+
+
 @router.get("/daemon")
 async def daemon() -> dict[str, Any]:
     report = daemon_monitor.check_daemon()
