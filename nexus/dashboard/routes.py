@@ -29,6 +29,7 @@ from nexus.sensors import (
     daemon_monitor,
     infrastructure_lock,
     preemptive,
+    sre_metrics,
     tenant_health,
     tenant_validator,
 )
@@ -474,6 +475,26 @@ async def validate_tenants() -> dict[str, Any]:
             tid: {"alert_count": len(alerts), "alerts": alerts}
             for tid, alerts in results.items()
         },
+    }
+
+
+# --- SRE Metrics -----------------------------------------------------------
+@router.get("/sre")
+async def sre_dashboard() -> dict[str, Any]:
+    """Full SRE metrics dashboard with trends and antifragile score."""
+    return sre_metrics.get_sre_dashboard()
+
+
+@router.get("/sre/incidents")
+async def sre_incidents() -> dict[str, Any]:
+    """Recent incidents with lifecycle timestamps."""
+    open_inc = overwatch_graph.get_open_incidents()
+    resolved = overwatch_graph.get_resolved_incidents(hours=168)
+    return {
+        "open": open_inc,
+        "open_count": len(open_inc),
+        "resolved": resolved,
+        "resolved_count": len(resolved),
     }
 
 

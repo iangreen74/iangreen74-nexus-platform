@@ -164,13 +164,38 @@ def execute_decision(
     through this function records the outcome to the Overwatch graph.
     """
     action = decision.action
+    source = context.get("source", "unknown")
 
-    # 1. Skip informational actions
+    # 1. Skip informational actions — and resolve any open incident for
+    #    this source (the system returned to healthy).
     if action in _SKIP_ACTIONS:
+        if action == "noop":
+            try:
+                resolved = overwatch_graph.resolve_incident(source, auto_healed=True)
+                if resolved:
+                    logger.info("incident resolved (auto): %s", source)
+            except Exception:
+                pass
         return ExecutionResult(status="skipped", reason=action)
+
+    # Open or re-use an incident for this source
+    meta = decision.metadata or {}
+    try:
+        overwatch_graph.open_incident(
+            source=source,
+            incident_type=action,
+            root_cause=meta.get("diagnosis") or decision.reasoning,
+            patterns_matched=[meta.get("pattern_name")] if meta.get("pattern_name") else [],
+        )
+    except Exception:
+        pass
 
     # 2. Escalation actions → always fire (they're just alerts)
     if action.startswith("escalate"):
+        try:
+            overwatch_graph.acknowledge_incident(source, "escalation")
+        except Exception:
+            pass
         result = _escalate(decision, context)
         _record(decision, context, result)
         return result
@@ -223,6 +248,10 @@ def execute_decision(
 
         if record.ok:
             _set_cooldown(cooldown_key, "success")
+            try:
+                overwatch_graph.acknowledge_incident(source, capability_name)
+            except Exception:
+                pass
             result = ExecutionResult(
                 status="executed",
                 outcome="success",

@@ -39,6 +39,7 @@ _local_store: dict[str, list[dict[str, Any]]] = {
     "OverwatchTenantSnapshot": [],
     "OverwatchInvestigation": [],
     "OverwatchHumanDecision": [],
+    "OverwatchIncident": [],
 }
 
 
@@ -363,6 +364,165 @@ def graph_stats() -> dict[str, int]:
         rows = query(f"MATCH (n:{label}) RETURN count(n) AS c")
         stats[label] = int(rows[0].get("c", 0)) if rows else 0
     return stats
+
+
+# --- Incident lifecycle -------------------------------------------------------
+# The antifragile loop: detect → acknowledge → resolve → learn → prevent
+#
+# An incident is "open" until resolved_at is set. Each source (daemon, ci,
+# tenant:X) can have at most one open incident at a time — MERGE by source.
+
+def open_incident(
+    source: str,
+    incident_type: str,
+    root_cause: str = "",
+    patterns_matched: list[str] | None = None,
+) -> str:
+    """
+    Create or re-open an incident for `source`. Returns the incident id.
+    If an open incident already exists for this source, returns its id
+    without creating a duplicate.
+    """
+    now = _now_iso()
+    if MODE != "production":
+        with _lock:
+            existing = next(
+                (i for i in _local_store["OverwatchIncident"]
+                 if i.get("source") == source and not i.get("resolved_at")),
+                None,
+            )
+            if existing:
+                return existing["id"]
+            node = {
+                "id": _new_id(),
+                "source": source,
+                "type": incident_type,
+                "detected_at": now,
+                "acknowledged_at": None,
+                "resolved_at": None,
+                "duration_seconds": None,
+                "auto_healed": False,
+                "patterns_matched": json.dumps(patterns_matched or []),
+                "healing_actions": json.dumps([]),
+                "root_cause": root_cause,
+                "prevention_added": False,
+                "created_at": now,
+            }
+            _local_store["OverwatchIncident"].append(node)
+            return node["id"]
+    rows = query(
+        "MERGE (i:OverwatchIncident {source: $src, resolved_at: ''}) "
+        "ON CREATE SET i.id = $id, i.type = $type, i.detected_at = $now, "
+        "i.root_cause = $root, i.patterns_matched = $patterns, "
+        "i.healing_actions = '[]', i.auto_healed = false, "
+        "i.prevention_added = false, i.created_at = $now "
+        "RETURN i.id AS id",
+        {
+            "src": source,
+            "id": _new_id(),
+            "type": incident_type,
+            "now": now,
+            "root": root_cause,
+            "patterns": json.dumps(patterns_matched or []),
+        },
+    )
+    return rows[0].get("id", "") if rows else ""
+
+
+def acknowledge_incident(source: str, action_taken: str) -> None:
+    """Mark the open incident for `source` as acknowledged (first action taken)."""
+    now = _now_iso()
+    if MODE != "production":
+        with _lock:
+            inc = next(
+                (i for i in _local_store["OverwatchIncident"]
+                 if i.get("source") == source and not i.get("resolved_at")),
+                None,
+            )
+            if inc and not inc.get("acknowledged_at"):
+                inc["acknowledged_at"] = now
+                actions = json.loads(inc.get("healing_actions", "[]"))
+                actions.append(action_taken)
+                inc["healing_actions"] = json.dumps(actions)
+        return
+    query(
+        "MATCH (i:OverwatchIncident {source: $src}) "
+        "WHERE i.resolved_at = '' AND (i.acknowledged_at IS NULL OR i.acknowledged_at = '') "
+        "SET i.acknowledged_at = $now",
+        {"src": source, "now": now},
+    )
+
+
+def resolve_incident(source: str, auto_healed: bool = False) -> dict[str, Any] | None:
+    """
+    Close the open incident for `source`. Returns the resolved incident
+    dict with computed duration, or None if no open incident exists.
+    """
+    now = _now_iso()
+    if MODE != "production":
+        with _lock:
+            inc = next(
+                (i for i in _local_store["OverwatchIncident"]
+                 if i.get("source") == source and not i.get("resolved_at")),
+                None,
+            )
+            if not inc:
+                return None
+            inc["resolved_at"] = now
+            inc["auto_healed"] = auto_healed
+            detected = inc.get("detected_at", now)
+            try:
+                d0 = datetime.fromisoformat(detected)
+                d1 = datetime.fromisoformat(now)
+                inc["duration_seconds"] = round((d1 - d0).total_seconds(), 1)
+            except Exception:
+                inc["duration_seconds"] = 0
+            return dict(inc)
+    rows = query(
+        "MATCH (i:OverwatchIncident {source: $src}) "
+        "WHERE i.resolved_at = '' "
+        "SET i.resolved_at = $now, i.auto_healed = $healed "
+        "RETURN i.id AS id, i.detected_at AS detected_at, "
+        "i.acknowledged_at AS acknowledged_at, i.type AS type, "
+        "i.source AS source, i.root_cause AS root_cause",
+        {"src": source, "now": now, "healed": auto_healed},
+    )
+    return rows[0] if rows else None
+
+
+def get_open_incidents() -> list[dict[str, Any]]:
+    """All currently-open incidents."""
+    if MODE != "production":
+        with _lock:
+            return [i for i in _local_store["OverwatchIncident"] if not i.get("resolved_at")]
+    return query(
+        "MATCH (i:OverwatchIncident) WHERE i.resolved_at = '' "
+        "RETURN i.id AS id, i.source AS source, i.type AS type, "
+        "i.detected_at AS detected_at, i.acknowledged_at AS acknowledged_at, "
+        "i.root_cause AS root_cause, i.patterns_matched AS patterns_matched "
+        "ORDER BY i.detected_at DESC"
+    )
+
+
+def get_resolved_incidents(hours: int = 24) -> list[dict[str, Any]]:
+    """Resolved incidents from the last `hours` hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    if MODE != "production":
+        with _lock:
+            return [
+                i for i in _local_store["OverwatchIncident"]
+                if i.get("resolved_at") and i.get("resolved_at", "") >= cutoff
+            ]
+    return query(
+        "MATCH (i:OverwatchIncident) WHERE i.resolved_at <> '' AND i.resolved_at >= $cutoff "
+        "RETURN i.id AS id, i.source AS source, i.type AS type, "
+        "i.detected_at AS detected_at, i.acknowledged_at AS acknowledged_at, "
+        "i.resolved_at AS resolved_at, i.duration_seconds AS duration_seconds, "
+        "i.auto_healed AS auto_healed, i.root_cause AS root_cause, "
+        "i.patterns_matched AS patterns_matched, i.prevention_added AS prevention_added "
+        "ORDER BY i.resolved_at DESC",
+        {"cutoff": cutoff},
+    )
 
 
 def reset_local_store() -> None:

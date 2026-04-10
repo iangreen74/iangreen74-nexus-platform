@@ -216,6 +216,23 @@
 
   <section>
     <div class="section-head">
+      <h2>SRE Metrics</h2>
+      <span class="meta" id="sre-meta"></span>
+    </div>
+    <div class="metrics" id="sre-metrics"></div>
+    <div id="error-budget-bar" style="margin-top:12px; background:var(--bg-elev); border:1px solid var(--border); border-radius:6px; padding:12px 16px; display:none;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+        <span class="label">Error Budget (30d)</span>
+        <span id="budget-text" style="font-size:11px; color:var(--text-dim)"></span>
+      </div>
+      <div style="width:100%; height:8px; background:var(--bg-row); border-radius:4px; overflow:hidden;">
+        <div id="budget-fill" style="height:100%; border-radius:4px; transition:width 0.5s ease;"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Tenant Health</h2>
       <span class="meta" id="tenants-meta"></span>
     </div>
@@ -676,6 +693,49 @@ async function loadGraphStats() {
   document.getElementById('graph-stats').textContent = `graph: ${data.total} nodes · ${parts.join(' · ')}`;
 }
 
+async function loadSRE() {
+  const data = await fetchJSON(`${API}/sre`);
+  if (!data) return;
+  const trendIcon = t => t === 'improving' ? '↗' : t === 'degrading' ? '↘' : '→';
+  const trendCls = t => t === 'improving' ? 'teal' : t === 'degrading' ? 'red' : '';
+
+  document.getElementById('sre-meta').textContent =
+    `ANTIFRAGILE SCORE: ${data.antifragile_score ?? 0}/100 · ${data.open_incidents ?? 0} open · ${data.resolved_24h ?? 0} resolved (24h)`;
+
+  const fmt = (v, unit, decimals) => v != null ? v.toFixed(decimals ?? 0) + unit : '—';
+  const cards = [
+    { label: 'MTTD', value: fmt(data.mttd_seconds, 's'), cls: trendCls(data.mttd_trend), sub: `detect ${trendIcon(data.mttd_trend)}` },
+    { label: 'MTTA', value: fmt(data.mtta_seconds, 's'), cls: trendCls(data.mtta_trend), sub: `acknowledge ${trendIcon(data.mtta_trend)}` },
+    { label: 'MTTR', value: fmt(data.mttr_seconds, 's'), cls: trendCls(data.mttr_trend), sub: `recover ${trendIcon(data.mttr_trend)}` },
+    { label: 'MTBF', value: fmt(data.mtbf_hours, 'h', 1), cls: trendCls(data.mtbf_trend), sub: `between failures ${trendIcon(data.mtbf_trend)}` },
+    { label: 'CFR', value: data.change_failure_rate != null ? (data.change_failure_rate * 100).toFixed(0) + '%' : '—', cls: trendCls(data.cfr_trend), sub: `change failures ${trendIcon(data.cfr_trend)}` },
+    { label: 'Availability', value: fmt(data.availability_percent, '%', 1), cls: data.availability_percent >= 99.9 ? 'teal' : data.availability_percent >= 99 ? 'amber' : 'red', sub: 'uptime 24h' },
+    { label: 'Patterns', value: (data.patterns_learned ?? 0).toString(), cls: 'teal', sub: `${data.patterns_total_occurrences ?? 0} total matches` },
+    { label: 'Antifragile', value: (data.antifragile_score ?? 0).toString(), cls: (data.antifragile_score ?? 0) >= 60 ? 'teal' : (data.antifragile_score ?? 0) >= 30 ? 'amber' : 'red', sub: `score / 100` },
+  ];
+  document.getElementById('sre-metrics').innerHTML = cards.map(c => `
+    <div class="card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value}</div>
+      <div class="sub">${c.sub}</div>
+    </div>
+  `).join('');
+
+  // Error budget bar
+  const budget = data.error_budget;
+  if (budget) {
+    const bar = document.getElementById('error-budget-bar');
+    bar.style.display = 'block';
+    const pct = Math.min(budget.consumed_percent, 100);
+    const remaining = budget.remaining_minutes;
+    document.getElementById('budget-text').textContent =
+      `${remaining.toFixed(1)} min remaining (${(100 - pct).toFixed(1)}% left)`;
+    const fill = document.getElementById('budget-fill');
+    fill.style.width = `${100 - pct}%`;
+    fill.style.background = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--amber)' : 'var(--teal)';
+  }
+}
+
 async function loadPredictive() {
   const data = await fetchJSON(`${API}/preemptive`);
   const body = document.getElementById('predictive-body');
@@ -739,6 +799,7 @@ async function loadSupport() {
 async function loadAll() {
   await Promise.all([
     loadOverview(),
+    loadSRE(),
     loadTenants(),
     loadTriageFeed(),
     loadPredictive(),
