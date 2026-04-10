@@ -47,10 +47,17 @@ def send_alert(message: str, level: Level = "info") -> bool:
         import requests  # noqa: WPS433 — lazy to keep local mode light
 
         secret = get_secret(TELEGRAM_SECRET_ID)
-        token = secret.get("telegram_bot_token") or secret.get("bot_token")
+        # The hyperlev/slack secret stores the Telegram bot token under
+        # `telegram_token` (not `telegram_bot_token`). Fall back to the
+        # other shapes for forward compat.
+        token = (
+            secret.get("telegram_token")
+            or secret.get("telegram_bot_token")
+            or secret.get("bot_token")
+        )
         chat_id = secret.get("telegram_chat_id") or secret.get("chat_id")
         if not token or not chat_id:
-            logger.error("Telegram secret missing bot_token/chat_id")
+            logger.error("Telegram secret missing token/chat_id (have keys: %s)", list(secret.keys()))
             return False
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         resp = requests.post(
@@ -58,6 +65,8 @@ def send_alert(message: str, level: Level = "info") -> bool:
             json={"chat_id": chat_id, "text": formatted, "parse_mode": "Markdown"},
             timeout=10,
         )
+        if resp.status_code != 200:
+            logger.warning("Telegram send returned %s: %s", resp.status_code, resp.text[:200])
         return resp.status_code == 200
     except Exception:
         logger.exception("Telegram send failed for level=%s", level)

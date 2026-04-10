@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>NEXUS Platform</title>
+<title>OVERWATCH</title>
 <style>
   :root {
     --bg: #0a0a0b;
@@ -139,8 +139,8 @@
   <header>
     <div class="brand">
       <span class="dot" id="online-dot"></span>
-      <h1>NEXUS</h1>
-      <span class="sub">PLATFORM · FORGEWING CONTROL PLANE</span>
+      <h1>OVERWATCH</h1>
+      <span class="sub">AUTONOMOUS PLATFORM ENGINEERING · FORGEWING CONTROL PLANE</span>
     </div>
     <span class="status-badge" id="overall-badge">LOADING</span>
   </header>
@@ -200,7 +200,7 @@
     </table>
   </section>
 
-  <footer>NEXUS PLATFORM · AUTOREFRESH 30s · platform.vaultscaler.com</footer>
+  <footer>OVERWATCH · AUTOREFRESH 30s · platform.vaultscaler.com</footer>
 </div>
 
 <script>
@@ -233,6 +233,7 @@ function fmtAge(iso) {
 
 function statusClass(status) {
   if (status === 'healthy') return 'teal';
+  if (status === 'pending') return 'teal';
   if (status === 'degraded') return 'amber';
   if (status === 'critical') return 'red';
   return 'gray';
@@ -297,7 +298,7 @@ async function loadOverview() {
       label: 'Tenants',
       value: (data.tenant_count ?? 0).toString(),
       cls: (tenants.critical ?? 0) > 0 ? 'red' : (tenants.degraded ?? 0) > 0 ? 'amber' : 'teal',
-      sub: `${tenants.healthy ?? 0} healthy · ${tenants.degraded ?? 0} degraded · ${tenants.critical ?? 0} critical`
+      sub: `${tenants.healthy ?? 0} healthy · ${tenants.degraded ?? 0} degraded · ${tenants.critical ?? 0} critical · ${tenants.pending ?? 0} pending`
     }
   ];
   document.getElementById('overview').innerHTML = cards.map(c => `

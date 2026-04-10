@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from nexus.capabilities import alert, ecs_ops  # noqa: F401 — register capabilities
 from nexus.capabilities.registry import registry
 from nexus.reasoning import triage
+from nexus.reasoning.alert_dispatcher import maybe_alert
 from nexus.sensors import ci_monitor, daemon_monitor, tenant_health
 
 logger = logging.getLogger("nexus.dashboard")
@@ -23,7 +24,7 @@ router = APIRouter()
 
 
 def _tenant_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
-    counts = {"healthy": 0, "degraded": 0, "critical": 0, "unknown": 0}
+    counts = {"healthy": 0, "degraded": 0, "critical": 0, "pending": 0, "unknown": 0}
     for r in reports:
         status = r.get("overall_status", "unknown")
         counts[status] = counts.get(status, 0) + 1
@@ -42,6 +43,33 @@ async def platform_status() -> dict[str, Any]:
         if daemon.get("healthy") and ci.get("healthy") and summary.get("critical", 0) == 0
         else "degraded"
     )
+
+    # Fire Telegram alerts for any escalation-worthy decisions. Dedup
+    # lives inside maybe_alert so the 30s dashboard polling doesn't
+    # turn into a notification flood.
+    daemon_decision = triage.triage_daemon_health(daemon)
+    maybe_alert(
+        "daemon", daemon_decision,
+        dedup_key="daemon:" + daemon_decision.action,
+        context={"running": daemon.get("running"), "stale": daemon.get("stale"),
+                 "cycle_age_minutes": daemon.get("cycle_age_minutes")},
+    )
+    ci_decision = triage.triage_ci_health(ci)
+    maybe_alert(
+        "ci", ci_decision,
+        dedup_key="ci:" + ci_decision.action,
+        context={"green_rate_24h": ci.get("green_rate_24h"),
+                 "failing_workflows": ",".join(ci.get("failing_workflows", []) or [])},
+    )
+    for t in tenants:
+        decision = triage.triage_tenant_health(t)
+        tid = t.get("tenant_id", "unknown")
+        maybe_alert(
+            f"tenant:{tid}", decision,
+            dedup_key=f"tenant:{tid}:{decision.action}",
+            context={"overall_status": t.get("overall_status")},
+        )
+
     return {
         "overall": overall,
         "daemon": daemon,

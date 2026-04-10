@@ -146,18 +146,122 @@ def get_cf_stack_status(stack_name: str) -> dict[str, Any]:
         return {"stack_name": stack_name, "healthy": False, "error": True}
 
 
+# --- Tenant CF stack discovery -------------------------------------------------
+#
+# Real ForgeScaler tenant stacks follow the convention:
+#     ForgeScaler-{tenant_id_short}     (the customer's main stack)
+#     forgescaler-deploy-{tenant_id_short}   (the deployment stack)
+#
+# where `tenant_id_short` is the prefix of the tenant_id (typically the first
+# 13-14 chars: `forge-` plus 7 hex chars). The exact truncation isn't fixed, so
+# we list every active ForgeScaler stack once, then prefix-match each tenant.
+_FORGESCALER_TENANT_STACK_PREFIXES = ("ForgeScaler-", "forgescaler-deploy-")
+_HEALTHY_STATUSES = (
+    "CREATE_COMPLETE",
+    "UPDATE_COMPLETE",
+    "UPDATE_ROLLBACK_COMPLETE",
+)
+_tenant_stack_cache: dict[str, list[dict[str, Any]]] | None = None
+
+
+def _list_tenant_stacks() -> list[dict[str, Any]]:
+    """
+    Return all active ForgeScaler customer/deployment stacks.
+
+    Result is cached for the process lifetime since stack names rarely change
+    and listing every call would burn API budget. Each entry is
+    `{name, status, type}` where type is `customer` or `deploy`.
+    """
+    global _tenant_stack_cache
+    if _tenant_stack_cache is not None:
+        return _tenant_stack_cache.get("stacks", [])
+    if MODE != "production":
+        _tenant_stack_cache = {"stacks": []}
+        return []
+    stacks: list[dict[str, Any]] = []
+    try:
+        paginator = _client("cloudformation").get_paginator("list_stacks")
+        for page in paginator.paginate(StackStatusFilter=list(_HEALTHY_STATUSES)):
+            for s in page.get("StackSummaries", []):
+                name = s.get("StackName", "")
+                if name.startswith("ForgeScaler-"):
+                    stacks.append({"name": name, "status": s.get("StackStatus"), "type": "customer"})
+                elif name.startswith("forgescaler-deploy-"):
+                    stacks.append({"name": name, "status": s.get("StackStatus"), "type": "deploy"})
+    except Exception:
+        logger.exception("_list_tenant_stacks failed")
+    _tenant_stack_cache = {"stacks": stacks}
+    return stacks
+
+
+def reset_tenant_stack_cache() -> None:
+    """Drop the tenant stack cache so the next call re-lists from CloudFormation."""
+    global _tenant_stack_cache
+    _tenant_stack_cache = None
+
+
+def _find_stack_for_tenant(tenant_id: str) -> dict[str, Any] | None:
+    """Find the ForgeScaler-* customer stack belonging to a tenant."""
+    if not tenant_id:
+        return None
+    all_stacks = _list_tenant_stacks()
+    if not all_stacks:
+        return None
+    # Try shortest viable prefix first: many tenant IDs are truncated when
+    # used as stack suffixes (e.g. forge-1dba4143ca24ed1f -> forge-1dba414).
+    candidates: list[dict[str, Any]] = []
+    for stack in all_stacks:
+        if stack["type"] != "customer":
+            continue
+        suffix = stack["name"].removeprefix("ForgeScaler-")
+        if tenant_id.startswith(suffix) or suffix.startswith(tenant_id):
+            candidates.append(stack)
+    if not candidates:
+        return None
+    # Prefer the longest-matching suffix (most specific).
+    candidates.sort(key=lambda s: len(s["name"]), reverse=True)
+    return candidates[0]
+
+
 def describe_tenant_infra(tenant_id: str) -> dict[str, Any]:
-    """Summarize a tenant's CF stack and ECS posture."""
-    stack_name = f"forgewing-{tenant_id}"
-    stack = get_cf_stack_status(stack_name)
-    services = (
-        get_ecs_services(f"forgewing-{tenant_id}")
-        if MODE == "production"
-        else [{"service": f"{tenant_id}-app", "healthy": True, "running_count": 1, "desired_count": 1}]
-    )
+    """
+    Summarize a tenant's actual CF stack + ECS posture.
+
+    The stack name is *discovered* by listing live ForgeScaler-* stacks
+    and prefix-matching against tenant_id, rather than hard-coding a
+    naming convention that may not exist. If no stack is found, the
+    tenant is reported as `unprovisioned` rather than `critical` —
+    that's a meaningful distinction for triage.
+    """
+    if MODE != "production":
+        return {
+            "tenant_id": tenant_id,
+            "stack": {"stack_name": f"ForgeScaler-{tenant_id}", "status": "CREATE_COMPLETE", "healthy": True},
+            "services": [{"service": f"{tenant_id}-app", "healthy": True, "running_count": 1, "desired_count": 1}],
+            "healthy": True,
+            "provisioned": True,
+        }
+
+    matched = _find_stack_for_tenant(tenant_id)
+    if matched is None:
+        return {
+            "tenant_id": tenant_id,
+            "stack": None,
+            "services": [],
+            "healthy": False,
+            "provisioned": False,
+            "reason": "no ForgeScaler-* stack matched this tenant_id",
+        }
+
+    stack = get_cf_stack_status(matched["name"])
+    services: list[dict[str, Any]] = []  # tenant ECS services live in their own
+    # cluster (created by their stack); without an authoritative cluster name
+    # mapping we don't synthesize one here. The Phase-2 follow-up that maps
+    # stack outputs -> cluster name will populate this.
     return {
         "tenant_id": tenant_id,
         "stack": stack,
         "services": services,
-        "healthy": stack.get("healthy", False) and all(s.get("healthy") for s in services),
+        "healthy": stack.get("healthy", False),
+        "provisioned": True,
     }

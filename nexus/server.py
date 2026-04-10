@@ -1,10 +1,12 @@
 """
-NEXUS Platform — Autonomous Operations for Forgewing
+OVERWATCH — Autonomous Platform Engineering for Forgewing
 
-This is the control plane. It monitors, diagnoses, heals, and reports
-on the Forgewing platform without being part of it.
+This is the external control plane. It monitors, diagnoses, heals,
+and reports on the Forgewing platform without being part of it.
+"NEXUS" remains the daemon's internal identity; "Overwatch" is the
+operator-facing brand at platform.vaultscaler.com.
 
-Separation principle: NEXUS never imports from aria-platform.
+Separation principle: Overwatch never imports from aria-platform.
 It connects through AWS APIs, Neptune reads, and HTTP endpoints.
 """
 import logging
@@ -28,9 +30,9 @@ logging.basicConfig(
 logger = logging.getLogger("nexus")
 
 app = FastAPI(
-    title="NEXUS Platform",
-    version="0.1.0",
-    description="Autonomous operations system for Forgewing",
+    title="Overwatch",
+    version="0.2.0",
+    description="Autonomous platform engineering for Forgewing",
 )
 
 app.add_middleware(
@@ -52,8 +54,8 @@ async def health():
     return {
         "status": "online",
         "mode": MODE,
-        "version": "0.1.0",
-        "system": "nexus-platform",
+        "version": "0.2.0",
+        "system": "overwatch",
     }
 
 
@@ -64,7 +66,7 @@ async def root():
         return FileResponse(str(INDEX_FILE))
     return JSONResponse(
         {
-            "system": "nexus-platform",
+            "system": "overwatch",
             "mode": MODE,
             "docs": "/docs",
             "health": "/health",
@@ -76,7 +78,7 @@ async def root():
 @app.on_event("startup")
 async def startup():
     logger.info(
-        "NEXUS Platform starting in %s mode on port %s", MODE, CONSOLE_PORT
+        "Overwatch starting in %s mode on port %s", MODE, CONSOLE_PORT
     )
     if MODE == "production":
         logger.info("Connecting to Neptune, ECS, CloudWatch...")
@@ -86,4 +88,4 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    logger.info("NEXUS Platform shutting down")
+    logger.info("Overwatch shutting down")

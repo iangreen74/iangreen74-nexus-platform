@@ -95,6 +95,15 @@ def _conversation_snapshot(tenant_id: str) -> dict[str, Any]:
 
 
 def _rollup(deployment: dict, pipeline: dict, conversation: dict) -> str:
+    """
+    Collapse the three sub-reports into one overall_status.
+
+    `pending` is a deliberate non-critical state for tenants that exist
+    in the graph but haven't been provisioned yet (no CF stack). They're
+    not unhealthy — they're just not done onboarding.
+    """
+    if deployment.get("provisioned") is False:
+        return "pending"
     if not deployment.get("healthy"):
         return "critical"
     if pipeline.get("stuck_task_count", 0) > 2:
@@ -108,12 +117,17 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
     """Build a full TenantHealthReport for one tenant. Never raises."""
     try:
         infra = aws_client.describe_tenant_infra(tenant_id)
-        reachability = _check_app_reachable(tenant_id)
+        provisioned = infra.get("provisioned", True)
+        # Only do an HTTP reachability check for tenants that have a stack;
+        # an unprovisioned tenant has no app URL to hit.
+        reachability = _check_app_reachable(tenant_id) if provisioned else {"reachable": None}
         deployment = {
-            "stack": infra.get("stack", {}),
+            "stack": infra.get("stack"),
             "services": infra.get("services", []),
+            "provisioned": provisioned,
             "reachable": reachability.get("reachable"),
-            "healthy": bool(infra.get("healthy") and reachability.get("reachable")),
+            "healthy": bool(provisioned and infra.get("healthy")),
+            "reason": infra.get("reason"),
         }
         pipeline = _pipeline_snapshot(tenant_id)
         conversation = _conversation_snapshot(tenant_id)

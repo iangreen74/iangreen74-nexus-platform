@@ -22,6 +22,23 @@ from nexus.config import AWS_REGION, MODE, NEPTUNE_GRAPH_ID
 
 logger = logging.getLogger("nexus.neptune")
 
+# Names that must NEVER appear in the tenant list — these are platform
+# infrastructure, not customers. Overwatch monitors them but they are not
+# subject to tenant-health rollup.
+_NON_TENANT_NAMES: frozenset[str] = frozenset(
+    {
+        "aria-platform",
+        "aria",
+        "aria-daemon",
+        "aria-console",
+        "forgewing",
+        "forgescaler",
+        "overwatch",
+        "nexus",
+        "nexus-platform",
+    }
+)
+
 _client_singleton = None
 
 
@@ -66,14 +83,32 @@ def query(cypher: str, parameters: dict[str, Any] | None = None) -> list[dict[st
         return []
 
 
+def is_real_tenant(tenant_id: str | None) -> bool:
+    """
+    True if the given tenant_id represents an actual customer tenant
+    (and not a platform infrastructure name that snuck into the graph).
+    """
+    if not tenant_id:
+        return False
+    return tenant_id.strip().lower() not in _NON_TENANT_NAMES
+
+
 def get_tenant_ids() -> list[str]:
-    """Return all active tenant IDs."""
+    """
+    Return all active customer tenant IDs.
+
+    Filters out platform-infrastructure names (`aria-platform`,
+    `forgescaler`, etc.) defensively, even if the underlying graph
+    has been polluted with non-tenant Tenant nodes — these are the
+    platform being monitored, not products being served.
+    """
     if MODE != "production":
         return ["tenant-alpha", "tenant-beta", "tenant-ben"]
     rows = query(
         "MATCH (t:Tenant) WHERE t.status = 'active' RETURN t.tenant_id AS tid"
     )
-    return [r["tid"] for r in rows if r.get("tid")]
+    ids = [r["tid"] for r in rows if r.get("tid")]
+    return [tid for tid in ids if is_real_tenant(tid)]
 
 
 def get_tenant_context(tenant_id: str) -> dict[str, Any]:
