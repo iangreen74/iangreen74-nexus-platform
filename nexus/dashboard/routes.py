@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from nexus import overwatch_graph
-from nexus.capabilities import alert, ecs_ops  # noqa: F401 — register capabilities
+from nexus.capabilities import alert, ci_ops, daemon_ops, ecs_ops, tenant_ops  # noqa: F401 — register
 from nexus.capabilities.registry import registry
 from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
 from nexus.forge import aria_repo, deploy_manager, fix_generator
@@ -28,6 +28,7 @@ from nexus.sensors import (
     infrastructure_lock,
     preemptive,
     tenant_health,
+    tenant_validator,
 )
 
 logger = logging.getLogger("nexus.dashboard")
@@ -329,6 +330,21 @@ def _format_report(
     lines.append("---")
     lines.append("Paste this into Claude with: 'Diagnose what's wrong and suggest concrete fixes.'")
     return "\n".join(lines)
+
+
+@router.get("/validate/tenants")
+async def validate_tenants() -> dict[str, Any]:
+    """Proactive tenant validation — all checks for all tenants."""
+    results = tenant_validator.validate_all_tenants()
+    total_alerts = sum(len(a) for a in results.values())
+    return {
+        "tenant_count": len(results),
+        "total_alerts": total_alerts,
+        "tenants": {
+            tid: {"alert_count": len(alerts), "alerts": alerts}
+            for tid, alerts in results.items()
+        },
+    }
 
 
 @router.get("/diagnostic-report")

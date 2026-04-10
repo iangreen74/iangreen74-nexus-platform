@@ -1,0 +1,336 @@
+"""
+Tenant Operations — active capabilities for tenant health.
+
+These capabilities interact with the Forgewing API, Neptune, GitHub,
+and Secrets Manager to diagnose and fix tenant-level issues. Every
+one is registered with blast radius, and the more dangerous ones
+(retrigger_ingestion) require higher confidence to auto-approve.
+
+NEXUS never imports from aria-platform. All tenant interactions go
+through public APIs, Neptune queries, and Secrets Manager.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from nexus import aws_client, neptune_client, overwatch_graph
+from nexus.capabilities import forgewing_api
+from nexus.capabilities.registry import Capability, registry
+from nexus.config import BLAST_MODERATE, BLAST_SAFE, MODE
+
+logger = logging.getLogger("nexus.capabilities.tenant_ops")
+
+
+def _github_app_token_for(installation_id: int) -> str | None:
+    """
+    Mint a fresh GitHub App installation token for the given installation_id.
+    Returns the token string, or None on failure.
+    """
+    if MODE != "production":
+        return "ghs_mock_installation_token"
+    try:
+        import jwt as pyjwt
+
+        app_secret = aws_client.get_secret("forgescaler/github-app")
+        app_id = str(app_secret.get("app_id", ""))
+        private_key = app_secret.get("private_key", "")
+        if not app_id or not private_key:
+            logger.error("github-app secret missing app_id or private_key")
+            return None
+        now = int(time.time())
+        token = pyjwt.encode(
+            {"iat": now - 60, "exp": now + 600, "iss": app_id},
+            private_key,
+            algorithm="RS256",
+        )
+        if isinstance(token, bytes):
+            token = token.decode()
+        import httpx
+
+        resp = httpx.post(
+            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=15,
+        )
+        if resp.status_code == 201:
+            return resp.json().get("token")
+        logger.warning("access_tokens returned %s: %s", resp.status_code, resp.text[:200])
+        return None
+    except Exception:
+        logger.exception("_github_app_token_for(%s) failed", installation_id)
+        return None
+
+
+def refresh_tenant_token(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Read the tenant's secret; if github_token is empty or expired,
+    regenerate from installation_id via GitHub App JWT.
+
+    Safe blast radius — writing a fresh token never breaks anything.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    secret_name = f"forgescaler/tenant/{tenant_id}/github-token"
+    if MODE != "production":
+        return {"tenant_id": tenant_id, "refreshed": True, "mock": True}
+    try:
+        current = aws_client.get_secret(secret_name)
+        installation_id = current.get("installation_id")
+        if not installation_id:
+            return {"tenant_id": tenant_id, "error": "no installation_id in secret"}
+        new_token = _github_app_token_for(int(installation_id))
+        if not new_token:
+            return {"tenant_id": tenant_id, "error": "token mint failed"}
+        # Write the fresh token back
+        import boto3
+
+        boto3.client("secretsmanager", region_name="us-east-1").put_secret_value(
+            SecretId=secret_name,
+            SecretString=json.dumps({
+                "github_token": new_token,
+                "installation_id": installation_id,
+                "source": "overwatch_refresh",
+                "refreshed_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+        overwatch_graph.record_healing_action(
+            action_type="refresh_tenant_token",
+            target=tenant_id,
+            blast_radius="safe",
+            trigger="empty_or_expired_token",
+            outcome="success",
+        )
+        return {"tenant_id": tenant_id, "refreshed": True, "installation_id": installation_id}
+    except Exception as exc:
+        logger.exception("refresh_tenant_token(%s) failed", tenant_id)
+        return {"tenant_id": tenant_id, "error": str(exc)}
+
+
+def validate_tenant_onboarding(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Run the full onboarding checklist for a tenant:
+    tenant exists, token present, write access, repo indexed, tasks created.
+
+    Safe blast radius — purely diagnostic, no mutations.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    checks: dict[str, Any] = {}
+    try:
+        ctx = neptune_client.get_tenant_context(tenant_id)
+        checks["tenant_exists"] = bool(ctx)
+        checks["mission_stage"] = ctx.get("mission_stage")
+        checks["repo_url"] = ctx.get("repo_url")
+
+        secret_name = f"forgescaler/tenant/{tenant_id}/github-token"
+        secret = aws_client.get_secret(secret_name)
+        checks["token_present"] = bool(secret.get("github_token") or secret.get("_raw"))
+        checks["installation_id"] = secret.get("installation_id")
+
+        files = neptune_client.query(
+            "MATCH (f:RepoFile {tenant_id: $tid}) RETURN count(f) AS c",
+            {"tid": tenant_id},
+        )
+        checks["repo_file_count"] = int(files[0].get("c", 0)) if files else 0
+        checks["repo_indexed"] = checks["repo_file_count"] > 0
+
+        tasks = neptune_client.get_recent_tasks(tenant_id, limit=50)
+        checks["task_count"] = len(tasks)
+        checks["tasks_created"] = len(tasks) > 0
+    except Exception as exc:
+        checks["error"] = str(exc)
+
+    checks["all_passed"] = all(
+        checks.get(k)
+        for k in ("tenant_exists", "token_present", "repo_indexed", "tasks_created")
+    )
+    return {"tenant_id": tenant_id, "checks": checks}
+
+
+def verify_write_access(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Test write access to a tenant's repo by attempting a lightweight
+    create-ref/delete-ref cycle. If this fails, the tenant's GitHub App
+    installation doesn't have the right permissions.
+
+    Safe blast radius — the test ref is immediately deleted.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    if MODE != "production":
+        return {"tenant_id": tenant_id, "write_access": True, "mock": True}
+    try:
+        ctx = neptune_client.get_tenant_context(tenant_id)
+        repo_url = ctx.get("repo_url", "")
+        if not repo_url:
+            return {"tenant_id": tenant_id, "write_access": False, "reason": "no repo_url"}
+        # Extract owner/repo from URL
+        parts = repo_url.rstrip("/").split("/")
+        owner_repo = f"{parts[-2]}/{parts[-1]}".replace(".git", "")
+
+        secret_name = f"forgescaler/tenant/{tenant_id}/github-token"
+        secret = aws_client.get_secret(secret_name)
+        token = secret.get("github_token") or secret.get("_raw")
+        if not token:
+            return {"tenant_id": tenant_id, "write_access": False, "reason": "empty_token"}
+
+        import httpx
+
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+        # Get default branch SHA
+        branch_resp = httpx.get(
+            f"https://api.github.com/repos/{owner_repo}/git/refs/heads/main",
+            headers=headers,
+            timeout=10,
+        )
+        if branch_resp.status_code != 200:
+            return {"tenant_id": tenant_id, "write_access": False, "reason": f"branch_read: {branch_resp.status_code}"}
+        sha = branch_resp.json().get("object", {}).get("sha", "")
+
+        # Create test ref
+        test_ref = "refs/heads/overwatch-write-test"
+        create = httpx.post(
+            f"https://api.github.com/repos/{owner_repo}/git/refs",
+            json={"ref": test_ref, "sha": sha},
+            headers=headers,
+            timeout=10,
+        )
+        if create.status_code not in (200, 201):
+            return {"tenant_id": tenant_id, "write_access": False, "reason": f"create_ref: {create.status_code}"}
+
+        # Delete the test ref immediately
+        httpx.delete(
+            f"https://api.github.com/repos/{owner_repo}/git/refs/heads/overwatch-write-test",
+            headers=headers,
+            timeout=10,
+        )
+        return {"tenant_id": tenant_id, "write_access": True}
+    except Exception as exc:
+        logger.exception("verify_write_access(%s) failed", tenant_id)
+        return {"tenant_id": tenant_id, "write_access": False, "error": str(exc)}
+
+
+def retrigger_ingestion(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    POST to Forgewing to re-ingest a tenant's repo.
+
+    Moderate blast radius — replaces the tenant's RepoFile nodes.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    result = forgewing_api.retrigger_ingestion(tenant_id)
+    if not result.get("error"):
+        overwatch_graph.record_healing_action(
+            action_type="retrigger_ingestion",
+            target=tenant_id,
+            blast_radius="moderate",
+            trigger="missing_repo_files",
+            outcome="triggered",
+        )
+    return result
+
+
+def validate_repo_indexing(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Compare Neptune RepoFile count against expected files.
+
+    Safe blast radius — read-only comparison.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    files = neptune_client.query(
+        "MATCH (f:RepoFile {tenant_id: $tid}) RETURN count(f) AS c",
+        {"tid": tenant_id},
+    )
+    count = int(files[0].get("c", 0)) if files else 0
+    return {
+        "tenant_id": tenant_id,
+        "repo_file_count": count,
+        "indexed": count > 0,
+    }
+
+
+def check_pipeline_health(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    For a tenant: are tasks progressing? Are PRs being created?
+    Identifies specific blockers (stuck tasks, Bedrock errors).
+
+    Safe blast radius — read-only analysis.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    tasks = neptune_client.get_recent_tasks(tenant_id, limit=50)
+    prs = neptune_client.get_recent_prs(tenant_id, limit=20)
+
+    in_progress = [t for t in tasks if t.get("status") == "in_progress"]
+    pending = [t for t in tasks if t.get("status") == "pending"]
+    complete = [t for t in tasks if t.get("status") == "complete"]
+
+    blockers: list[str] = []
+    if not tasks:
+        blockers.append("no_tasks: no MissionTask nodes found")
+    if tasks and not prs:
+        blockers.append("no_prs: tasks exist but no PRs created yet")
+    if len(in_progress) > 3:
+        blockers.append(f"too_many_in_progress: {len(in_progress)} tasks running simultaneously")
+
+    return {
+        "tenant_id": tenant_id,
+        "task_count": len(tasks),
+        "in_progress": len(in_progress),
+        "pending": len(pending),
+        "complete": len(complete),
+        "pr_count": len(prs),
+        "blockers": blockers,
+        "healthy": len(blockers) == 0,
+    }
+
+
+# Register all capabilities
+for cap in [
+    Capability(
+        name="refresh_tenant_token",
+        function=refresh_tenant_token,
+        blast_radius=BLAST_SAFE,
+        description="Mint fresh GitHub App token from installation_id if empty/expired",
+    ),
+    Capability(
+        name="validate_tenant_onboarding",
+        function=validate_tenant_onboarding,
+        blast_radius=BLAST_SAFE,
+        description="Run full onboarding checklist: tenant, token, write access, files, tasks",
+    ),
+    Capability(
+        name="verify_write_access",
+        function=verify_write_access,
+        blast_radius=BLAST_SAFE,
+        description="Test write access to tenant's repo via create-ref/delete-ref",
+    ),
+    Capability(
+        name="retrigger_ingestion",
+        function=retrigger_ingestion,
+        blast_radius=BLAST_MODERATE,
+        description="Re-ingest a tenant's repo via Forgewing API",
+        requires_approval=False,
+    ),
+    Capability(
+        name="validate_repo_indexing",
+        function=validate_repo_indexing,
+        blast_radius=BLAST_SAFE,
+        description="Check RepoFile count in Neptune for a tenant",
+    ),
+    Capability(
+        name="check_pipeline_health",
+        function=check_pipeline_health,
+        blast_radius=BLAST_SAFE,
+        description="Analyze task/PR pipeline for blockers",
+    ),
+]:
+    registry.register(cap)

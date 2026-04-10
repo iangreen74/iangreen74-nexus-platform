@@ -155,6 +155,93 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
         "diagnosis": "GitHub Actions workflows are failing.",
         "resolution": "Inspect failing workflow logs and push a fix.",
     },
+    # ----- Patterns learned from Ben's onboarding (2026-04-09) -----
+    {
+        "name": "tenant_no_prs_after_tasks",
+        "match": lambda e: (
+            e.get("type") == "tenant_health"
+            and e.get("task_count", 0) > 0
+            and e.get("pr_count", 0) == 0
+            and e.get("hours_since_first_task", 0) > 2
+        ),
+        "action": "validate_tenant_onboarding",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.9,
+        "reasoning": (
+            "Tenant has pending tasks but no PRs created. Pipeline is blocked "
+            "somewhere: token, write access, file indexing, or Bedrock parsing."
+        ),
+        "diagnosis": "Tasks exist but no PRs — pipeline is stuck.",
+        "resolution": "Run validate_tenant_onboarding to identify the specific blocker.",
+    },
+    {
+        "name": "missing_repo_files",
+        "match": lambda e: (
+            e.get("type") == "tenant_health"
+            and e.get("repo_file_count", -1) == 0
+            and e.get("ingestion_complete", False)
+        ),
+        "action": "retrigger_ingestion",
+        "blast_radius": BLAST_MODERATE,
+        "confidence": 0.9,
+        "reasoning": (
+            "Ingestion completed but no RepoFile nodes in Neptune. "
+            "Files were not persisted. Auto-retriggering ingestion."
+        ),
+        "diagnosis": "Zero RepoFile nodes after ingestion.",
+        "resolution": "POST /reingest/{tenant_id} to re-run the ingestion pipeline.",
+    },
+    {
+        "name": "empty_tenant_token",
+        "match": lambda e: (
+            e.get("type") == "tenant_health"
+            and e.get("token_empty", False) is True
+        ),
+        "action": "refresh_tenant_token",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.95,
+        "reasoning": (
+            "Tenant's GitHub token is empty. Auto-refreshing from "
+            "installation_id via the GitHub App."
+        ),
+        "diagnosis": "Empty github_token in Secrets Manager.",
+        "resolution": "Mint a fresh installation token from the GitHub App.",
+    },
+    {
+        "name": "write_access_denied",
+        "match": lambda e: (
+            e.get("type") == "tenant_health"
+            and e.get("write_access") is False
+        ),
+        "action": "escalate_to_operator",
+        "blast_radius": BLAST_MODERATE,
+        "confidence": 0.95,
+        "reasoning": (
+            "GitHub App can read but not write to tenant's repo. "
+            "Customer needs to accept updated permissions."
+        ),
+        "diagnosis": "Write access denied on tenant's repo.",
+        "resolution": (
+            "Customer must visit https://github.com/settings/installations/"
+            "and accept the GitHub App permissions."
+        ),
+    },
+    {
+        "name": "daemon_timeout_recurring",
+        "match": lambda e: (
+            e.get("type") == "daemon_health"
+            and e.get("timeout_count_1h", 0) >= 3
+        ),
+        "action": "restart_daemon_service",
+        "blast_radius": BLAST_MODERATE,
+        "confidence": 0.85,
+        "reasoning": (
+            "Daemon has timed out 3+ times in the last hour. A hook is "
+            "likely hanging. Auto-restarting."
+        ),
+        "diagnosis": "Recurring daemon timeouts — likely a hanging hook.",
+        "resolution": "Force new ECS deployment + run diagnose_daemon_timeout.",
+    },
 ]
 
 

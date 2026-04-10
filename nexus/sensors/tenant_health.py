@@ -70,12 +70,29 @@ def _pipeline_snapshot(tenant_id: str) -> dict[str, Any]:
         if created and now - created > timedelta(hours=6):
             stuck.append(task.get("id"))
     last_pr_ts = _parse_ts((prs[0] if prs else {}).get("created_at"))
+
+    # Enriched fields for new triage patterns
+    first_task_ts = _parse_ts((tasks[-1] if tasks else {}).get("created_at"))
+    hours_since_first = (
+        (now - first_task_ts).total_seconds() / 3600.0
+        if first_task_ts
+        else 0.0
+    )
+    repo_files = neptune_client.query(
+        "MATCH (f:RepoFile {tenant_id: $tid}) RETURN count(f) AS c",
+        {"tid": tenant_id},
+    )
+    repo_file_count = int(repo_files[0].get("c", 0)) if repo_files else 0
+
     return {
         "last_pr_at": last_pr_ts.isoformat() if last_pr_ts else None,
         "tasks_in_progress": len(in_progress),
         "stuck_task_count": len(stuck),
         "stuck_task_ids": stuck,
         "total_recent_tasks": len(tasks),
+        "pr_count": len(prs),
+        "repo_file_count": repo_file_count,
+        "hours_since_first_task": round(hours_since_first, 1),
     }
 
 
@@ -92,6 +109,23 @@ def _conversation_snapshot(tenant_id: str) -> dict[str, Any]:
         "last_message_at": last_ts.isoformat() if last_ts else None,
         "inactive": inactive,
     }
+
+
+def _check_token(tenant_id: str) -> dict[str, Any]:
+    """Check the tenant's GitHub token secret — is it present and non-empty?"""
+    secret_name = f"forgescaler/tenant/{tenant_id}/github-token"
+    try:
+        secret = aws_client.get_secret(secret_name)
+        token = secret.get("github_token") or secret.get("_raw", "")
+        installation_id = secret.get("installation_id")
+        return {
+            "present": bool(token),
+            "empty": not bool(token),
+            "installation_id": installation_id,
+            "source": secret.get("source"),
+        }
+    except Exception:
+        return {"present": False, "empty": True, "error": "secret_not_found"}
 
 
 def _rollup(deployment: dict, pipeline: dict, conversation: dict) -> str:
@@ -121,6 +155,10 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
         # Only do an HTTP reachability check for tenants that have a stack;
         # an unprovisioned tenant has no app URL to hit.
         reachability = _check_app_reachable(tenant_id) if provisioned else {"reachable": None}
+
+        # Token status — check if the tenant has a non-empty github_token
+        token_status = _check_token(tenant_id)
+
         deployment = {
             "stack": infra.get("stack"),
             "services": infra.get("services", []),
@@ -137,6 +175,7 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             "deployment": deployment,
             "pipeline": pipeline,
             "conversation": conversation,
+            "token": token_status,
             "overall_status": _rollup(deployment, pipeline, conversation),
             "checked_at": _now().isoformat(),
         }
