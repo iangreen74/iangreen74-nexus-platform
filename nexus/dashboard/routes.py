@@ -236,9 +236,11 @@ async def platform_status() -> dict[str, Any]:
 @router.get("/tenants")
 async def list_tenants() -> dict[str, Any]:
     reports = tenant_health.check_all_tenants()
-    # Enrich each tenant with capability score
+    # Enrich each tenant with capability score + display name
     for report in reports:
         tid = report.get("tenant_id", "")
+        ctx = report.get("context", {}) or {}
+        report["display_name"] = ctx.get("name") or ctx.get("company_name") or tid
         try:
             cap_report = capability_validator.validate_tenant_capabilities(tid)
             report["capability_score"] = capability_validator.capability_score(cap_report)

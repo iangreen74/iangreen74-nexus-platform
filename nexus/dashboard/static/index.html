@@ -70,6 +70,9 @@
     text-transform: uppercase; color: var(--text-dim);
   }
   .section-head .meta { font-size: 11px; color: var(--text-dim); }
+  .section-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 12px; font-style: italic; }
+  @keyframes gentle-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+  .badge.waiting { animation: gentle-pulse 2s ease-in-out infinite; }
 
   /* Metric cards */
   .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
@@ -207,7 +210,7 @@
     <div class="brand">
       <span class="dot" id="online-dot"></span>
       <h1>OVERWATCH</h1>
-      <span class="sub">AUTONOMOUS PLATFORM ENGINEERING · FORGEWING CONTROL PLANE</span>
+      <span class="sub">Watching over Forgewing so you don't have to.</span>
     </div>
     <div class="header-actions">
       <button class="btn" id="copy-report-btn" onclick="copyDiagnostic()" title="Copy a structured diagnostic to the clipboard for pasting into Claude">Copy Report</button>
@@ -225,12 +228,13 @@
 
   <section>
     <div class="section-head">
-      <h2>Heal Chains</h2>
-      <span class="meta" id="heal-chains-meta">0 active · 6 defined</span>
+      <h2>Active Recovery</h2>
+      <span class="meta" id="heal-chains-meta">0 active</span>
     </div>
+    <div class="section-sub">Multi-step fixes in progress — Overwatch works through each step and verifies before moving on.</div>
     <table id="heal-chains-table">
       <thead>
-        <tr><th>Source</th><th>Chain</th><th>Step</th><th>Status</th><th>Progress</th></tr>
+        <tr><th>What's affected</th><th>Recovery plan</th><th>Progress</th><th>Waiting for</th><th>Steps taken</th></tr>
       </thead>
       <tbody id="heal-chains-body">
         <tr><td colspan="5" class="empty">No active heal chains</td></tr>
@@ -258,6 +262,9 @@
   <section>
     <div class="section-head">
       <h2>Tenant Health</h2>
+    </div>
+    <div class="section-sub">Your customers' pipeline health — names, stages, and what's happening right now.</div>
+    <div class="section-head" style="display:none">
       <span class="meta" id="tenants-meta"></span>
     </div>
     <table id="tenants-table">
@@ -273,12 +280,13 @@
       <h2>Triage Feed</h2>
       <span class="meta" id="triage-meta"></span>
     </div>
+    <div class="section-sub">What Overwatch decided to do this cycle.</div>
     <div class="feed" id="triage-feed"><div class="empty">Loading triage decisions…</div></div>
   </section>
 
   <section>
     <div class="section-head">
-      <h2>Predictive Alerts</h2>
+      <h2>Early Warnings</h2>
       <span class="meta" id="predictive-meta"></span>
     </div>
     <table id="predictive-table">
@@ -307,9 +315,10 @@
       <h2>Failure Patterns</h2>
       <span class="meta" id="patterns-meta"></span>
     </div>
+    <div class="section-sub">Patterns Overwatch has learned from real incidents.</div>
     <table id="patterns-table">
       <thead>
-        <tr><th>Pattern</th><th>Confidence</th><th>Occurrences</th><th>Blast Radius</th><th>Auto-heal</th></tr>
+        <tr><th>Pattern</th><th>Confidence</th><th>Times seen</th><th>Risk level</th><th>Can Overwatch fix this?</th></tr>
       </thead>
       <tbody id="patterns-body"><tr><td colspan="5" class="empty">Loading patterns…</td></tr></tbody>
     </table>
@@ -320,6 +329,7 @@
       <h2>Pattern Candidates</h2>
       <span class="meta" id="candidates-meta"></span>
     </div>
+    <div class="section-sub">Patterns Overwatch is learning. Approve 3 times to make permanent.</div>
     <table id="candidates-table">
       <thead>
         <tr><th>Name</th><th>Capability</th><th>Confidence</th><th>Approvals</th><th>Status</th><th></th></tr>
@@ -346,6 +356,7 @@
       <h2>Capabilities</h2>
       <span class="meta" id="capabilities-meta"></span>
     </div>
+    <div class="section-sub">Everything Overwatch can do. Risk level determines when it acts autonomously.</div>
     <table id="capabilities-table">
       <thead>
         <tr><th>Name</th><th>Blast Radius</th><th>Description</th><th>Approval</th></tr>
@@ -359,6 +370,7 @@
       <h2>Actions History</h2>
       <span class="meta" id="actions-meta"></span>
     </div>
+    <div class="section-sub">What Overwatch actually did recently. Every action is logged and tracked.</div>
     <table id="actions-table">
       <thead>
         <tr><th>Time</th><th>Action</th><th>Blast Radius</th><th>Outcome</th></tr>
@@ -367,7 +379,7 @@
     </table>
   </section>
 
-  <footer>OVERWATCH · AUTOREFRESH 30s · <span id="graph-stats">graph: —</span> · platform.vaultscaler.com</footer>
+  <footer>OVERWATCH · Polls every 30s · Data refreshes automatically · Click Copy Report for a diagnostic snapshot · <span id="graph-stats">graph: —</span></footer>
 </div>
 
 <div id="teach-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;" onclick="if(event.target===this)closeTeachModal()">
@@ -472,8 +484,9 @@ async function loadOverview() {
   _lastStatusData = data;  // stash for loadTriageFeed
 
   const badge = document.getElementById('overall-badge');
-  badge.textContent = (data.overall || 'unknown').toUpperCase();
-  badge.className = 'status-badge ' + (data.overall === 'healthy' ? '' : data.overall);
+  const ov = data.overall || 'unknown';
+  badge.textContent = ov === 'healthy' ? 'HEALTHY — All systems normal' : 'DEGRADED — Issues detected';
+  badge.className = 'status-badge ' + (ov === 'healthy' ? '' : ov);
 
   const onlineDot = document.getElementById('online-dot');
   onlineDot.className = 'dot ' + (data.overall === 'healthy' ? '' : statusClass(data.overall));
@@ -522,11 +535,11 @@ async function loadOverview() {
         : `${data.infrastructure?.violation_count ?? 0} violation(s)`
     },
     {
-      label: 'Execution Loop',
-      value: `${data.execution_stats?.executed ?? 0} healed`,
+      label: 'This Cycle',
+      value: `${data.execution_stats?.total ?? 0} checks`,
       cls: (data.execution_stats?.executed ?? 0) > 0 ? 'teal' :
            (data.execution_stats?.escalated ?? 0) > 0 ? 'amber' : 'teal',
-      sub: `${data.execution_stats?.escalated ?? 0} escalated · ${data.execution_stats?.total ?? 0} decisions this cycle`
+      sub: `${data.execution_stats?.executed ?? 0} fixed automatically · ${data.execution_stats?.escalated ?? 0} flagged for you`
     }
   ];
   document.getElementById('overview').innerHTML = cards.map(c => `
@@ -554,17 +567,22 @@ async function loadTenants() {
   body.innerHTML = data.tenants.map((t, idx) => {
     const ctx = t.context || {};
     const conv = t.conversation || {};
-    const pipe = t.pipeline || {};
     const stage = t.pipeline_stage || ctx.plan || '—';
     const summary = t.pipeline_summary || '—';
+    const displayName = t.display_name || ctx.name || t.tenant_id;
+    const shortId = t.tenant_id.length > 14 ? t.tenant_id.slice(0,14) + '...' : t.tenant_id;
+    const statusText = t.overall_status || 'unknown';
+    const statusNote = statusText === 'pending'
+      ? '<br><span style="font-size:10px;color:var(--text-dim)">No deploy infra yet — normal during Build phase</span>'
+      : '';
     return `
       <tr class="clickable" data-tid="${t.tenant_id}" data-row="${idx}">
         <td>${dotFor(t.overall_status)}</td>
-        <td>${ctx.name || t.tenant_id}</td>
+        <td><strong>${displayName}</strong><br><span style="font-size:10px;color:var(--text-dim)">${shortId}</span></td>
         <td>${stage.toUpperCase()}</td>
         <td>${summary}</td>
         <td>${fmtAge(conv.last_message_at)}</td>
-        <td>${(t.overall_status || 'unknown').toUpperCase()}</td>
+        <td>${statusText.toUpperCase()}${statusNote}</td>
       </tr>
     `;
   }).join('');
@@ -662,20 +680,28 @@ async function loadTriageFeed() {
     else if (st === 'failed') statusBadge = '<span class="badge failed">FAILED</span>';
     else statusBadge = `<span class="badge">${st}</span>`;
     const reason = e.reason || e.outcome || e.action || '';
-    const isCandidateProposal = e.candidate_proposal;
-    const candidateTag = isCandidateProposal
-      ? ` <span class="badge moderate" style="font-size:9px">🧪 CANDIDATE</span>`
-      : '';
-    // Show TEACH button for escalated items so operator can capture the resolution
+    const candidateTag = e.candidate_proposal
+      ? ` <span class="badge moderate" style="font-size:9px">🧪 CANDIDATE</span>` : '';
+
+    // Human-readable descriptions
+    let description = reason;
+    if (st === 'skipped' && e.action === 'noop') description = 'All good — no action needed';
+    else if (reason.includes('heal chain') && reason.includes('waiting'))
+      description = reason.replace(/heal chain '(\w+)' step (\d+): waiting (\d+)\/(\d+) cycles/,
+        (_, chain, step, done, total) => `Recovery plan "${chain}" — verifying fix (${done} of ${total} checks)`);
+    else if (reason.includes('escalation dedup')) description = 'Needs your attention (notification sent, suppressing duplicates)';
+    else if (e.outcome === 'awaiting_verification') description = 'Fix applied — verifying it worked...';
+
+    // TEACH button for escalated/failed
     const escapedSrc = (e.source || '').replace(/'/g, '');
     const escapedAct = (e.action || '').replace(/'/g, '');
-    const teachBtn = (st === 'escalated' || st === 'failed')
-      ? ` <button class="teach-btn" onclick="openTeachModal('${escapedSrc}','${escapedAct}')">TEACH</button>`
-      : '';
+    const showTeach = st === 'escalated' || st === 'failed' || (e.action || '').includes('escalat');
+    const teachBtn = showTeach
+      ? ` <button class="teach-btn" onclick="openTeachModal('${escapedSrc}','${escapedAct}')">TEACH</button>` : '';
     return `
       <div class="feed-item">
         <span class="ts">${e.source || '—'}</span>
-        <span class="reasoning">${e.action || '—'}${candidateTag} ${reason ? '· ' + reason : ''}</span>
+        <span class="reasoning">${description}${candidateTag}</span>
         <span class="action">${e.action_taken || '—'}${teachBtn}</span>
         <span class="conf">${statusBadge}</span>
       </div>
@@ -740,8 +766,8 @@ async function loadPatterns() {
       <td><strong>${p.name || '—'}</strong><br><span style="color:var(--text-dim)">${(p.diagnosis || '').slice(0,80)}</span></td>
       <td>${((p.confidence ?? 0) * 100).toFixed(0)}%</td>
       <td>${p.occurrence_count ?? 0}</td>
-      <td><span class="badge ${p.blast_radius || 'safe'}">${p.blast_radius || '—'}</span></td>
-      <td>${p.auto_healable ? 'yes' : 'no'}</td>
+      <td><span class="badge ${p.blast_radius || 'safe'}">${{safe:'Low risk',moderate:'Medium risk',dangerous:'High risk'}[p.blast_radius] || p.blast_radius || '—'}</span></td>
+      <td>${p.auto_healable ? '<span style="color:var(--teal)">Yes — automatic</span>' : '<span style="color:var(--text-dim)">No — needs you</span>'}</td>
     </tr>
   `).join('');
 }
@@ -753,7 +779,7 @@ async function loadCandidates() {
   document.getElementById('candidates-meta').textContent =
     `${data.pending} pending · ${data.graduated} graduated · ${data.count} total`;
   if (!data.candidates || data.candidates.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">No candidates yet — resolve an incident to teach Overwatch</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="empty">No candidates yet. Click <strong>TEACH</strong> on any escalated issue above to start teaching Overwatch.</td></tr>';
     return;
   }
   body.innerHTML = data.candidates.map(c => {
@@ -769,8 +795,8 @@ async function loadCandidates() {
         <td><strong>${c.name}</strong><br><span style="color:var(--text-dim)">${(c.diagnosis || '').slice(0,60)}</span></td>
         <td>${c.heal_capability || '—'}</td>
         <td>${statusBadge}</td>
-        <td>${c.success_count || 0}✓ / ${c.failure_count || 0}✗</td>
-        <td>${grad ? '🎓' : 'pending'}</td>
+        <td>${(() => { const s = c.success_count || 0; const dots = '●'.repeat(Math.min(s,3)) + '○'.repeat(Math.max(3-s,0)); return `${dots} (${s} of 3)`; })()}</td>
+        <td>${grad ? '🎓 Graduated' : 'Learning...'}</td>
         <td>${actions}</td>
       </tr>
     `;
@@ -827,22 +853,22 @@ async function loadHealChains() {
   document.getElementById('heal-chains-meta').textContent =
     `${entries.length} active · ${definedCount} defined`;
   if (entries.length === 0) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">No active heal chains — all systems healing normally</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="empty">All clear — no active recovery needed right now.</td></tr>';
     return;
   }
   body.innerHTML = entries.map(([source, c]) => {
-    const status = c.awaiting_verification
-      ? `waiting ${c.cycles_waited}/${c.cycles_to_wait}`
-      : `step ${c.step} complete`;
+    const waitMsg = c.awaiting_verification
+      ? `Verifying... (${c.cycles_waited} of ${c.cycles_to_wait} checks)`
+      : `Ready for next step`;
     const steps = (c.step_results || []).map(
       s => `${s.capability}: ${s.result}`
-    ).join(' → ') || '—';
+    ).join(' → ') || 'Starting...';
     return `
       <tr>
         <td>${source}</td>
         <td><strong>${c.chain}</strong></td>
-        <td>${c.step} / ${c.total_attempts}</td>
-        <td><span class="badge ${c.awaiting_verification ? 'moderate' : 'safe'}">${status}</span></td>
+        <td>Step ${c.step + 1} (${c.total_attempts} attempted)</td>
+        <td><span class="badge ${c.awaiting_verification ? 'moderate waiting' : 'safe'}">${waitMsg}</span></td>
         <td style="font-size:11px; color:var(--text-dim)">${steps}</td>
       </tr>
     `;
@@ -855,8 +881,10 @@ async function loadSRE() {
   const trendIcon = t => t === 'improving' ? '↗' : t === 'degrading' ? '↘' : '→';
   const trendCls = t => t === 'improving' ? 'teal' : t === 'degrading' ? 'red' : '';
 
+  const af = data.antifragile_score ?? 0;
+  const afNote = af < 30 ? ' — score is low because the system is young; it climbs as incidents resolve and patterns graduate' : '';
   document.getElementById('sre-meta').textContent =
-    `ANTIFRAGILE SCORE: ${data.antifragile_score ?? 0}/100 · ${data.open_incidents ?? 0} open · ${data.resolved_24h ?? 0} resolved (24h)`;
+    `ANTIFRAGILE SCORE: ${af}/100${afNote} · ${data.open_incidents ?? 0} open · ${data.resolved_24h ?? 0} resolved (24h)`;
 
   const fmt = (v, unit, decimals) => v != null ? v.toFixed(decimals ?? 0) + unit : '—';
   const cards = [
@@ -902,7 +930,7 @@ async function loadPredictive() {
   const real = data.alerts.filter(a => a.status !== 'unknown_needs_wiring');
   const stubs = data.alerts.filter(a => a.status === 'unknown_needs_wiring');
   document.getElementById('predictive-meta').textContent =
-    `${real.length} active · ${stubs.length} unwired`;
+    `${real.length} active warnings · ${stubs.length} not yet wired`;
   if (data.alerts.length === 0) {
     body.innerHTML = '<tr><td colspan="4" class="empty">No predictive alerts</td></tr>';
     return;
