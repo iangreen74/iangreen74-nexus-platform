@@ -22,6 +22,7 @@ from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_I
 from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
+from nexus.reasoning.executor import execute_decision
 from nexus.sensors import (
     ci_monitor,
     daemon_monitor,
@@ -57,9 +58,14 @@ async def platform_status() -> dict[str, Any]:
         else "degraded"
     )
 
-    # Fire Telegram alerts for any escalation-worthy decisions. Dedup
-    # lives inside maybe_alert so the 30s dashboard polling doesn't
-    # turn into a notification flood.
+    # Triage → Alert → Execute loop. For each sensor domain:
+    #   1. Triage the health report to get a decision
+    #   2. Fire Telegram alert (maybe_alert has 1h dedup)
+    #   3. Execute the decision (executor has 30m cooldown + safety gates)
+    # The executor is what makes Overwatch autonomous — it closes the
+    # loop between "I see a problem" and "I fix it."
+    executions: list[dict[str, Any]] = []
+
     daemon_decision = triage.triage_daemon_health(daemon)
     maybe_alert(
         "daemon", daemon_decision,
@@ -67,6 +73,9 @@ async def platform_status() -> dict[str, Any]:
         context={"running": daemon.get("running"), "stale": daemon.get("stale"),
                  "cycle_age_minutes": daemon.get("cycle_age_minutes")},
     )
+    daemon_exec = execute_decision(daemon_decision, {"source": "daemon", "target": "aria-daemon"})
+    executions.append({"source": "daemon", "action": daemon_decision.action, **daemon_exec.to_dict()})
+
     ci_decision = triage.triage_ci_health(ci)
     maybe_alert(
         "ci", ci_decision,
@@ -74,6 +83,9 @@ async def platform_status() -> dict[str, Any]:
         context={"green_rate_24h": ci.get("green_rate_24h"),
                  "failing_workflows": ",".join(ci.get("failing_workflows", []) or [])},
     )
+    ci_exec = execute_decision(ci_decision, {"source": "ci", "target": "ci"})
+    executions.append({"source": "ci", "action": ci_decision.action, **ci_exec.to_dict()})
+
     for t in tenants:
         decision = triage.triage_tenant_health(t)
         tid = t.get("tenant_id", "unknown")
@@ -82,12 +94,18 @@ async def platform_status() -> dict[str, Any]:
             dedup_key=f"tenant:{tid}:{decision.action}",
             context={"overall_status": t.get("overall_status")},
         )
+        t_exec = execute_decision(decision, {"source": f"tenant:{tid}", "target": tid, "tenant_id": tid})
+        executions.append({"source": f"tenant:{tid}", "action": decision.action, **t_exec.to_dict()})
 
     locks = infrastructure_lock.check_locks()
     preemptive_alerts = preemptive.run_preemptive_checks()
     if not locks.get("all_locked"):
         # Lock violations are always critical and override the rollup.
         overall = "degraded"
+
+    # Execution stats
+    executed_count = sum(1 for e in executions if e.get("status") == "executed")
+    escalated_count = sum(1 for e in executions if e.get("status") == "escalated")
 
     return {
         "overall": overall,
@@ -103,6 +121,12 @@ async def platform_status() -> dict[str, Any]:
         "preemptive": {
             "alert_count": len(preemptive_alerts),
             "alerts": preemptive_alerts,
+        },
+        "executions": executions,
+        "execution_stats": {
+            "executed": executed_count,
+            "escalated": escalated_count,
+            "total": len(executions),
         },
     }
 

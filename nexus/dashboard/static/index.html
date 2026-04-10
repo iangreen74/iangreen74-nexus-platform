@@ -326,6 +326,7 @@
 <script>
 const API = '/api';
 const REFRESH_MS = 30000;
+let _lastStatusData = null;  // shared between loadOverview and loadTriageFeed
 
 function fmtTime(iso) {
   if (!iso) return '—';
@@ -377,6 +378,7 @@ async function fetchJSON(url) {
 async function loadOverview() {
   const data = await fetchJSON(`${API}/status`);
   if (!data) return;
+  _lastStatusData = data;  // stash for loadTriageFeed
 
   const badge = document.getElementById('overall-badge');
   badge.textContent = (data.overall || 'unknown').toUpperCase();
@@ -427,6 +429,13 @@ async function loadOverview() {
       sub: data.infrastructure?.all_locked
         ? 'all constants verified'
         : `${data.infrastructure?.violation_count ?? 0} violation(s)`
+    },
+    {
+      label: 'Execution Loop',
+      value: `${data.execution_stats?.executed ?? 0} healed`,
+      cls: (data.execution_stats?.executed ?? 0) > 0 ? 'teal' :
+           (data.execution_stats?.escalated ?? 0) > 0 ? 'amber' : 'teal',
+      sub: `${data.execution_stats?.escalated ?? 0} escalated · ${data.execution_stats?.total ?? 0} decisions this cycle`
     }
   ];
   document.getElementById('overview').innerHTML = cards.map(c => `
@@ -488,41 +497,35 @@ async function toggleTenantDetail(row) {
 }
 
 async function loadTriageFeed() {
-  // Build a synthetic feed by triaging the current daemon, CI, and tenant reports.
-  const [daemon, ci, tenants] = await Promise.all([
-    fetchJSON(`${API}/daemon`),
-    fetchJSON(`${API}/ci`),
-    fetchJSON(`${API}/tenants`)
-  ]);
-  const items = [];
-  const now = new Date().toISOString();
-  if (daemon && daemon.decision) items.push({ ts: now, source: 'daemon', decision: daemon.decision });
-  if (ci && ci.decision) items.push({ ts: now, source: 'ci', decision: ci.decision });
-  if (tenants && tenants.tenants) {
-    tenants.tenants.forEach(t => {
-      if (t.overall_status && t.overall_status !== 'healthy') {
-        items.push({
-          ts: t.checked_at || now,
-          source: `tenant ${t.tenant_id}`,
-          decision: { action: t.overall_status, reasoning: `tenant ${t.tenant_id} is ${t.overall_status}`, confidence: 0.9 }
-        });
-      }
-    });
-  }
-  document.getElementById('triage-meta').textContent = `${items.length} event${items.length === 1 ? '' : 's'}`;
+  // The /api/status response now includes an `executions` array with
+  // execution results for each triage decision this cycle. We use
+  // _lastStatusData which is captured by loadOverview.
+  const data = _lastStatusData;
+  const execs = (data && data.executions) || [];
+  document.getElementById('triage-meta').textContent = `${execs.length} decision${execs.length === 1 ? '' : 's'} this cycle`;
   const feed = document.getElementById('triage-feed');
-  if (items.length === 0) {
-    feed.innerHTML = '<div class="empty">All clear — no triage events</div>';
+  if (execs.length === 0) {
+    feed.innerHTML = '<div class="empty">No triage decisions this cycle</div>';
     return;
   }
-  feed.innerHTML = items.map(i => `
-    <div class="feed-item">
-      <span class="ts">${fmtTime(i.ts)}</span>
-      <span class="reasoning">${i.source}: ${i.decision.reasoning || ''}</span>
-      <span class="action">${i.decision.action || '—'}</span>
-      <span class="conf">${((i.decision.confidence ?? 0) * 100).toFixed(0)}%</span>
-    </div>
-  `).join('');
+  feed.innerHTML = execs.map(e => {
+    let statusBadge = '';
+    const st = e.status || 'unknown';
+    if (st === 'executed') statusBadge = '<span class="badge success">HEALED</span>';
+    else if (st === 'escalated') statusBadge = '<span class="badge moderate">ESCALATED</span>';
+    else if (st === 'skipped') statusBadge = '<span class="badge safe">SKIPPED</span>';
+    else if (st === 'failed') statusBadge = '<span class="badge failed">FAILED</span>';
+    else statusBadge = `<span class="badge">${st}</span>`;
+    const reason = e.reason || e.outcome || e.action || '';
+    return `
+      <div class="feed-item">
+        <span class="ts">${e.source || '—'}</span>
+        <span class="reasoning">${e.action || '—'} ${reason ? '· ' + reason : ''}</span>
+        <span class="action">${e.action_taken || '—'}</span>
+        <span class="conf">${statusBadge}</span>
+      </div>
+    `;
+  }).join('');
 }
 
 async function loadCapabilities() {
