@@ -361,6 +361,30 @@
   <footer>OVERWATCH · AUTOREFRESH 30s · <span id="graph-stats">graph: —</span> · platform.vaultscaler.com</footer>
 </div>
 
+<div id="teach-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:200; display:none; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:28px; width:480px; max-width:90vw;">
+    <h3 style="margin-bottom:16px; font-size:14px;">Teach Overwatch</h3>
+    <p style="color:var(--text-dim); font-size:11px; margin-bottom:16px;">Capture what you did so Overwatch can learn to handle this automatically.</p>
+    <label class="label">Incident Source</label>
+    <input id="teach-source" type="text" readonly style="width:100%; background:var(--bg); color:var(--text-dim); border:1px solid var(--border); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit;" />
+    <label class="label">Capability that resolved it</label>
+    <select id="teach-capability" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit;">
+      <option value="">Select…</option>
+    </select>
+    <label class="label">Root cause</label>
+    <textarea id="teach-root" rows="2" placeholder="What was actually wrong?" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit; resize:vertical;"></textarea>
+    <label class="label">Resolution</label>
+    <textarea id="teach-resolution" rows="2" placeholder="What did you do to fix it?" style="width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit; resize:vertical;"></textarea>
+    <label style="display:flex; align-items:center; gap:8px; margin-bottom:16px; font-size:12px;">
+      <input type="checkbox" id="teach-auto" /> Auto-heal next time
+    </label>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn" onclick="closeTeachModal()">Cancel</button>
+      <button class="btn" style="background:var(--teal); color:var(--bg); border-color:var(--teal);" onclick="submitTeach()">Teach Overwatch</button>
+    </div>
+  </div>
+</div>
+
 <div id="ops-chat">
   <input id="ops-input" type="text"
          placeholder="Ask Ops about the platform..."
@@ -616,11 +640,19 @@ async function loadTriageFeed() {
     else if (st === 'failed') statusBadge = '<span class="badge failed">FAILED</span>';
     else statusBadge = `<span class="badge">${st}</span>`;
     const reason = e.reason || e.outcome || e.action || '';
+    const isCandidateProposal = e.candidate_proposal;
+    const candidateTag = isCandidateProposal
+      ? ` <span class="badge moderate" style="font-size:9px">🧪 CANDIDATE</span>`
+      : '';
+    // Show "Teach" button for escalated items so operator can capture the resolution
+    const teachBtn = (st === 'escalated' || st === 'failed')
+      ? ` <button class="btn" style="padding:2px 6px;font-size:9px;margin-left:4px" onclick="openTeachModal('${(e.source||'').replace(/'/g,'')}',' ${(e.action||'').replace(/'/g,'')}')">Teach</button>`
+      : '';
     return `
       <div class="feed-item">
         <span class="ts">${e.source || '—'}</span>
-        <span class="reasoning">${e.action || '—'} ${reason ? '· ' + reason : ''}</span>
-        <span class="action">${e.action_taken || '—'}</span>
+        <span class="reasoning">${e.action || '—'}${candidateTag} ${reason ? '· ' + reason : ''}</span>
+        <span class="action">${e.action_taken || '—'}${teachBtn}</span>
         <span class="conf">${statusBadge}</span>
       </div>
     `;
@@ -912,6 +944,50 @@ async function loadAll() {
     loadActions(),
     loadGraphStats()
   ]);
+}
+
+// --- Teach Overwatch modal ---
+let _teachAction = '';
+async function openTeachModal(source, action) {
+  _teachAction = action.trim();
+  document.getElementById('teach-source').value = source;
+  // Populate capability dropdown from registered capabilities
+  const caps = await fetchJSON(`${API}/capabilities`);
+  const sel = document.getElementById('teach-capability');
+  sel.innerHTML = '<option value="">Select…</option>';
+  if (caps && caps.capabilities) {
+    for (const c of caps.capabilities) {
+      sel.innerHTML += `<option value="${c.name}">${c.name} [${c.blast_radius}]</option>`;
+    }
+  }
+  document.getElementById('teach-modal').style.display = 'flex';
+}
+function closeTeachModal() {
+  document.getElementById('teach-modal').style.display = 'none';
+}
+async function submitTeach() {
+  const source = document.getElementById('teach-source').value;
+  const capability = document.getElementById('teach-capability').value;
+  const rootCause = document.getElementById('teach-root').value;
+  const resolution = document.getElementById('teach-resolution').value;
+  const autoHeal = document.getElementById('teach-auto').checked;
+  if (!capability || !rootCause || !resolution) { alert('All fields required'); return; }
+  const resp = await fetch(`${API}/patterns/capture-resolution`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      incident_source: source,
+      incident_action: _teachAction || 'escalate_to_operator',
+      heal_capability: capability,
+      root_cause: rootCause,
+      resolution: resolution,
+      should_auto_heal: autoHeal,
+    }),
+  });
+  const data = await resp.json();
+  closeTeachModal();
+  loadCandidates();
+  if (data.candidate) alert('Candidate created: ' + data.candidate.name);
 }
 
 loadAll();

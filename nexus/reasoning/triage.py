@@ -348,6 +348,62 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Graduated patterns — learned from human resolutions.
+# Loaded from learned_patterns.json on startup and appended to KNOWN_PATTERNS
+# so they're matched alongside hand-coded ones. This is how Overwatch programs
+# itself: every graduated pattern was once an escalation a human resolved.
+# ---------------------------------------------------------------------------
+
+def _load_graduated_into_known() -> int:
+    """Load graduated patterns from persistence and add to KNOWN_PATTERNS."""
+    from nexus.reasoning.pattern_learner import load_graduated_patterns
+
+    graduated = load_graduated_patterns()
+    count = 0
+    for gp in graduated:
+        if not gp.graduated:
+            continue
+        # Avoid duplicates on reload
+        if any(p.get("name") == gp.name for p in KNOWN_PATTERNS):
+            continue
+
+        _source = gp.match_source
+        _action = gp.match_action
+
+        def _make_matcher(src: str, act: str):
+            def matcher(e: dict) -> bool:
+                e_source = e.get("_source", "")
+                e_action = e.get("_original_action", "")
+                return (
+                    (e_source == src or (src.endswith(":*") and e_source.startswith(src[:-1])))
+                    and e_action == act
+                )
+            return matcher
+
+        KNOWN_PATTERNS.append({
+            "name": gp.name,
+            "match": _make_matcher(_source, _action),
+            "action": gp.heal_capability,
+            "blast_radius": gp.blast_radius,
+            "confidence": gp.confidence,
+            "reasoning": f"Learned pattern: {gp.resolution}",
+            "diagnosis": gp.diagnosis,
+            "resolution": gp.resolution,
+            "_graduated": True,
+        })
+        count += 1
+    return count
+
+
+_graduated_count = _load_graduated_into_known()
+if _graduated_count > 0:
+    import logging as _logging
+    _logging.getLogger("nexus.triage").info(
+        "Loaded %d graduated patterns into KNOWN_PATTERNS", _graduated_count
+    )
+
+
 def event_or_empty(e: dict[str, Any]) -> str:
     """Helper used by lambdas: full event payload as a single searchable string."""
     return " ".join(str(v) for v in e.values())
@@ -422,12 +478,26 @@ def triage_tenant_health(report: dict[str, Any]) -> TriageDecision:
                 blast_radius=BLAST_MODERATE,
             )
         else:
-            decision = TriageDecision(
-                action="escalate_to_operator",
-                confidence=0.9,
-                reasoning=f"Tenant {tenant_id} critical but deployment healthy — needs human eyes.",
-                blast_radius=BLAST_DANGEROUS,
-            )
+            # Check if a learned candidate can handle this
+            from nexus.reasoning.pattern_learner import find_matching_candidate
+
+            candidate = find_matching_candidate(f"tenant:{tenant_id}", "escalate_to_operator")
+            if candidate:
+                decision = TriageDecision(
+                    action=candidate.heal_capability,
+                    confidence=candidate.confidence,
+                    reasoning=f"Candidate '{candidate.name}': {candidate.resolution}",
+                    blast_radius=candidate.blast_radius,
+                    metadata={"candidate_name": candidate.name, "candidate_match": True,
+                              "diagnosis": candidate.diagnosis, "resolution": candidate.resolution},
+                )
+            else:
+                decision = TriageDecision(
+                    action="escalate_to_operator",
+                    confidence=0.9,
+                    reasoning=f"Tenant {tenant_id} critical but deployment healthy — needs human eyes.",
+                    blast_radius=BLAST_DANGEROUS,
+                )
     else:
         decision = TriageDecision(
             action="escalate_to_operator",
@@ -463,12 +533,25 @@ def triage_daemon_health(report: dict[str, Any]) -> TriageDecision:
             blast_radius=BLAST_SAFE,
         )
     else:
-        decision = TriageDecision(
-            action="escalate_to_operator",
-            confidence=0.6,
-            reasoning="Daemon unhealthy but unclear pattern — escalate.",
-            blast_radius=BLAST_MODERATE,
-        )
+        from nexus.reasoning.pattern_learner import find_matching_candidate
+
+        candidate = find_matching_candidate("daemon", "escalate_to_operator")
+        if candidate:
+            decision = TriageDecision(
+                action=candidate.heal_capability,
+                confidence=candidate.confidence,
+                reasoning=f"Candidate '{candidate.name}': {candidate.resolution}",
+                blast_radius=candidate.blast_radius,
+                metadata={"candidate_name": candidate.name, "candidate_match": True,
+                          "diagnosis": candidate.diagnosis, "resolution": candidate.resolution},
+            )
+        else:
+            decision = TriageDecision(
+                action="escalate_to_operator",
+                confidence=0.6,
+                reasoning="Daemon unhealthy but unclear pattern — escalate.",
+                blast_radius=BLAST_MODERATE,
+            )
 
     decision.auto_approved = should_auto_heal(decision)
     _record_triage("daemon", decision,

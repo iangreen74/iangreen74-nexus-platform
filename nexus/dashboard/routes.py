@@ -646,6 +646,15 @@ async def api_reject_candidate(name: str, body: dict[str, Any] = Body(default={}
     return {"candidate": cp.to_dict(), "status": "rejected"}
 
 
+@router.post("/patterns/reload")
+async def reload_patterns() -> dict[str, Any]:
+    """Reload graduated patterns into triage. Call after manual graduation."""
+    from nexus.reasoning.triage import _load_graduated_into_known
+
+    count = _load_graduated_into_known()
+    return {"reloaded": count, "status": "ok"}
+
+
 @router.get("/diagnostic-report")
 async def diagnostic_report() -> dict[str, Any]:
     """Generate a structured text diagnostic for pasting into Claude."""

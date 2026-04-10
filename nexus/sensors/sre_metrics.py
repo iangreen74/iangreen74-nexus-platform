@@ -239,6 +239,18 @@ def compute_antifragile_score() -> int:
     budget = compute_error_budget()
     if budget["consumed_percent"] < 50:
         score += 10
+    # Graduated patterns — the ultimate antifragile signal.
+    # Each graduated pattern is proof the system learned from a human.
+    try:
+        from nexus.reasoning.pattern_learner import get_candidates
+
+        graduated = [c for c in get_candidates() if c.graduated]
+        if len(graduated) >= 3:
+            score += 15
+        elif len(graduated) >= 1:
+            score += 10
+    except Exception:
+        pass
     return min(score, 100)
 
 
