@@ -22,7 +22,7 @@ from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_I
 from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
-from nexus.reasoning.executor import execute_decision
+from nexus.reasoning.executor import execute_decision, execute_or_continue_chain, get_all_active_chains
 from nexus.sensors import (
     capability_validator,
     ci_monitor,
@@ -75,7 +75,11 @@ async def platform_status() -> dict[str, Any]:
         context={"running": daemon.get("running"), "stale": daemon.get("stale"),
                  "cycle_age_minutes": daemon.get("cycle_age_minutes")},
     )
-    daemon_exec = execute_decision(daemon_decision, {"source": "daemon", "target": "aria-daemon"})
+    daemon_exec = execute_or_continue_chain(
+        daemon_decision,
+        {"source": "daemon", "target": "aria-daemon"},
+        sensor_healthy=daemon.get("healthy", False),
+    )
     executions.append({"source": "daemon", "action": daemon_decision.action, **daemon_exec.to_dict()})
 
     ci_decision = triage.triage_ci_health(ci)
@@ -85,7 +89,11 @@ async def platform_status() -> dict[str, Any]:
         context={"green_rate_24h": ci.get("green_rate_24h"),
                  "failing_workflows": ",".join(ci.get("failing_workflows", []) or [])},
     )
-    ci_exec = execute_decision(ci_decision, {"source": "ci", "target": "ci"})
+    ci_exec = execute_or_continue_chain(
+        ci_decision,
+        {"source": "ci", "target": "ci"},
+        sensor_healthy=ci.get("healthy", False),
+    )
     executions.append({"source": "ci", "action": ci_decision.action, **ci_exec.to_dict()})
 
     for t in tenants:
@@ -96,7 +104,11 @@ async def platform_status() -> dict[str, Any]:
             dedup_key=f"tenant:{tid}:{decision.action}",
             context={"overall_status": t.get("overall_status")},
         )
-        t_exec = execute_decision(decision, {"source": f"tenant:{tid}", "target": tid, "tenant_id": tid})
+        t_exec = execute_or_continue_chain(
+            decision,
+            {"source": f"tenant:{tid}", "target": tid, "tenant_id": tid},
+            sensor_healthy=(t.get("overall_status") == "healthy"),
+        )
         executions.append({"source": f"tenant:{tid}", "action": decision.action, **t_exec.to_dict()})
 
         # Capability validation — triage blocked/degraded tenants
@@ -110,9 +122,10 @@ async def platform_status() -> dict[str, Any]:
                     context={"capability_overall": cap_report.overall,
                              "score": capability_validator.capability_score(cap_report)},
                 )
-                cap_exec = execute_decision(
+                cap_exec = execute_or_continue_chain(
                     cap_decision,
                     {"source": f"capability:{tid}", "target": tid, "tenant_id": tid},
+                    sensor_healthy=(cap_report.overall == "fully_operational"),
                 )
                 executions.append({"source": f"capability:{tid}", "action": cap_decision.action, **cap_exec.to_dict()})
         except Exception:
@@ -149,6 +162,7 @@ async def platform_status() -> dict[str, Any]:
             "escalated": escalated_count,
             "total": len(executions),
         },
+        "active_heal_chains": get_all_active_chains(),
     }
 
 
@@ -495,6 +509,21 @@ async def sre_incidents() -> dict[str, Any]:
         "open_count": len(open_inc),
         "resolved": resolved,
         "resolved_count": len(resolved),
+    }
+
+
+@router.get("/heal-chains")
+async def heal_chains() -> dict[str, Any]:
+    """Active heal chains and their progress."""
+    from nexus.reasoning.heal_chain import CHAINS
+
+    chains = get_all_active_chains()
+    available = {name: {"steps": len(c.steps), "pattern": c.pattern_name} for name, c in CHAINS.items()}
+    return {
+        "active": chains,
+        "active_count": len(chains),
+        "available_chains": available,
+        "available_count": len(available),
     }
 
 

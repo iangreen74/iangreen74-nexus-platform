@@ -27,6 +27,7 @@ from typing import Any, Callable
 from nexus import overwatch_graph
 from nexus.capabilities.registry import RateLimitExceeded, registry
 from nexus.config import BLAST_DANGEROUS, BLAST_MODERATE, BLAST_SAFE, FORGEWING_CLUSTER
+from nexus.reasoning.heal_chain import ChainProgress, HealStep, get_chain
 from nexus.reasoning.triage import TriageDecision
 
 logger = logging.getLogger("nexus.executor")
@@ -200,6 +201,231 @@ def _escalate(
     except Exception as exc:
         logger.exception("escalation send failed")
         return ExecutionResult(status="failed", error=str(exc), action_taken="send_escalation")
+
+
+# ---- Active heal chains -----------------------------------------------------
+# Tracks in-progress heal chains by incident source key.
+# When a chain is active, the executor drives it instead of re-triaging.
+_chain_lock = threading.Lock()
+_active_chains: dict[str, ChainProgress] = {}
+
+
+def get_active_chain(source: str) -> ChainProgress | None:
+    with _chain_lock:
+        return _active_chains.get(source)
+
+
+def set_active_chain(source: str, progress: ChainProgress) -> None:
+    with _chain_lock:
+        _active_chains[source] = progress
+
+
+def clear_active_chain(source: str) -> None:
+    with _chain_lock:
+        _active_chains.pop(source, None)
+
+
+def get_all_active_chains() -> dict[str, dict]:
+    """For the dashboard — return all active chains and their progress."""
+    with _chain_lock:
+        return {
+            source: {
+                "chain": p.chain_name,
+                "step": p.current_step,
+                "awaiting_verification": p.awaiting_verification(),
+                "cycles_waited": p.cycles_waited,
+                "cycles_to_wait": p.cycles_to_wait,
+                "total_attempts": p.total_attempts,
+                "step_results": p.step_results,
+            }
+            for source, p in _active_chains.items()
+        }
+
+
+def reset_chains() -> None:
+    """Test hook."""
+    with _chain_lock:
+        _active_chains.clear()
+
+
+# ---- Chain-aware entry point ------------------------------------------------
+def execute_or_continue_chain(
+    decision: TriageDecision,
+    context: dict[str, Any],
+    sensor_healthy: bool,
+) -> ExecutionResult:
+    """
+    Main entry point for the autonomous loop with heal chains.
+
+    If a heal chain is active for this source:
+      - If awaiting verification and sensor is now healthy → resolve
+      - If awaiting verification and not yet time to check → skip (waiting)
+      - If verification failed → advance chain to next step
+      - If chain exhausted → escalate with full context
+    If no chain is active:
+      - Check if the pattern has a heal chain defined
+      - If yes, start the chain at step 0
+      - If no, fall through to execute_decision (existing behavior)
+    """
+    source = context.get("source", "unknown")
+
+    # Check for active chain
+    progress = get_active_chain(source)
+
+    if progress is not None:
+        # Active chain — are we waiting for verification?
+        if progress.awaiting_verification():
+            progress.tick()
+            if progress.awaiting_verification():
+                # Still waiting — don't do anything
+                return ExecutionResult(
+                    status="skipped",
+                    reason=f"heal chain '{progress.chain_name}' step {progress.current_step}: "
+                           f"waiting {progress.cycles_waited}/{progress.cycles_to_wait} cycles",
+                )
+
+        # Verification window expired — check if sensor is healthy
+        if sensor_healthy:
+            # Healed! Resolve the incident.
+            clear_active_chain(source)
+            try:
+                overwatch_graph.resolve_incident(source, auto_healed=True)
+                overwatch_graph.record_event(
+                    "heal_chain_success",
+                    source,
+                    {
+                        "chain": progress.chain_name,
+                        "step": progress.current_step,
+                        "total_attempts": progress.total_attempts,
+                        "summary": progress.summary(),
+                    },
+                    "info",
+                )
+            except Exception:
+                pass
+            return ExecutionResult(
+                status="executed",
+                outcome="verified_healed",
+                action_taken=f"heal_chain:{progress.chain_name}",
+                result={"step": progress.current_step, "verified": True},
+            )
+
+        # Still unhealthy — advance to next step
+        chain = get_chain(progress.chain_name)
+        if chain is None or chain.is_exhausted(progress.current_step + 1):
+            # Chain exhausted — escalate with full context
+            clear_active_chain(source)
+            decision.metadata = decision.metadata or {}
+            decision.metadata["heal_chain_summary"] = progress.summary()
+            decision.metadata["diagnosis"] = (
+                f"Heal chain '{progress.chain_name}' exhausted after "
+                f"{progress.total_attempts} steps. None resolved the issue."
+            )
+            result = _escalate(decision, context,
+                              failure_reason=f"heal chain exhausted: {progress.summary()}")
+            _record(decision, context, result)
+            return result
+
+        # Execute next step
+        progress.advance()
+        next_step = chain.step_at(progress.current_step)
+        if next_step is None:
+            clear_active_chain(source)
+            return ExecutionResult(status="skipped", reason="chain step missing")
+
+        progress.cycles_to_wait = next_step.verify_after_cycles
+        return _execute_chain_step(next_step, progress, decision, context)
+
+    # No active chain — check if this pattern has one
+    if decision.action in _SKIP_ACTIONS:
+        return execute_decision(decision, context)
+
+    pattern_name = (decision.metadata or {}).get("pattern_name")
+    chain = get_chain(pattern_name) if pattern_name else None
+
+    if chain is None:
+        # No chain for this pattern — use existing single-action behavior
+        return execute_decision(decision, context)
+
+    # Start a new chain
+    progress = ChainProgress(
+        chain_name=chain.pattern_name,
+        current_step=0,
+        cycles_to_wait=chain.steps[0].verify_after_cycles,
+    )
+    set_active_chain(source, progress)
+
+    first_step = chain.steps[0]
+    return _execute_chain_step(first_step, progress, decision, context)
+
+
+def _execute_chain_step(
+    step: HealStep,
+    progress: ChainProgress,
+    decision: TriageDecision,
+    context: dict[str, Any],
+) -> ExecutionResult:
+    """Execute a single step in a heal chain."""
+    source = context.get("source", "unknown")
+    target = context.get("target", "global")
+    cooldown_key = f"{step.capability}:{target}"
+
+    # Safety gates still apply
+    if decision.blast_radius == BLAST_DANGEROUS:
+        clear_active_chain(source)
+        result = _escalate(decision, context, failure_reason="dangerous action in heal chain")
+        _record(decision, context, result)
+        return result
+
+    try:
+        kwargs = step.build_kwargs(context)
+        record = registry.execute(step.capability, **kwargs)
+
+        if record.ok:
+            _set_cooldown(cooldown_key, "success")
+            progress.record_step(step.capability, "success", str(record.result)[:200])
+            try:
+                overwatch_graph.acknowledge_incident(source, step.capability)
+                overwatch_graph.record_event(
+                    "heal_chain_step",
+                    source,
+                    {
+                        "chain": progress.chain_name,
+                        "step": progress.current_step,
+                        "capability": step.capability,
+                        "description": step.description,
+                        "result": "success",
+                    },
+                    "info",
+                )
+            except Exception:
+                pass
+            return ExecutionResult(
+                status="executed",
+                outcome="awaiting_verification",
+                action_taken=step.capability,
+                result={
+                    "chain": progress.chain_name,
+                    "step": progress.current_step,
+                    "verify_after_cycles": progress.cycles_to_wait,
+                    "description": step.description,
+                },
+            )
+        else:
+            progress.record_step(step.capability, "failed", record.error or "")
+            # Don't escalate yet — advance to next step on next cycle
+            progress.cycles_waited = progress.cycles_to_wait  # skip verification wait
+            return ExecutionResult(
+                status="executed",
+                outcome="step_failed_advancing",
+                action_taken=step.capability,
+                error=record.error,
+            )
+    except RateLimitExceeded:
+        return ExecutionResult(status="skipped", reason="rate limit exceeded")
+    except Exception as exc:
+        progress.record_step(step.capability, "error", str(exc))
+        return ExecutionResult(status="failed", error=str(exc), action_taken=step.capability)
 
 
 # ---- Main entry point -------------------------------------------------------

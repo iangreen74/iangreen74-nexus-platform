@@ -216,6 +216,21 @@
 
   <section>
     <div class="section-head">
+      <h2>Heal Chains</h2>
+      <span class="meta" id="heal-chains-meta">0 active · 6 defined</span>
+    </div>
+    <table id="heal-chains-table">
+      <thead>
+        <tr><th>Source</th><th>Chain</th><th>Step</th><th>Status</th><th>Progress</th></tr>
+      </thead>
+      <tbody id="heal-chains-body">
+        <tr><td colspan="5" class="empty">No active heal chains</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>SRE Metrics</h2>
       <span class="meta" id="sre-meta"></span>
     </div>
@@ -693,6 +708,36 @@ async function loadGraphStats() {
   document.getElementById('graph-stats').textContent = `graph: ${data.total} nodes · ${parts.join(' · ')}`;
 }
 
+async function loadHealChains() {
+  const data = _lastStatusData;
+  const chains = (data && data.active_heal_chains) || {};
+  const entries = Object.entries(chains);
+  const body = document.getElementById('heal-chains-body');
+  document.getElementById('heal-chains-meta').textContent =
+    `${entries.length} active · 6 defined`;
+  if (entries.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">No active heal chains — all systems healing normally</td></tr>';
+    return;
+  }
+  body.innerHTML = entries.map(([source, c]) => {
+    const status = c.awaiting_verification
+      ? `waiting ${c.cycles_waited}/${c.cycles_to_wait}`
+      : `step ${c.step} complete`;
+    const steps = (c.step_results || []).map(
+      s => `${s.capability}: ${s.result}`
+    ).join(' → ') || '—';
+    return `
+      <tr>
+        <td>${source}</td>
+        <td><strong>${c.chain}</strong></td>
+        <td>${c.step} / ${c.total_attempts}</td>
+        <td><span class="badge ${c.awaiting_verification ? 'moderate' : 'safe'}">${status}</span></td>
+        <td style="font-size:11px; color:var(--text-dim)">${steps}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
 async function loadSRE() {
   const data = await fetchJSON(`${API}/sre`);
   if (!data) return;
@@ -799,6 +844,7 @@ async function loadSupport() {
 async function loadAll() {
   await Promise.all([
     loadOverview(),
+    loadHealChains(),
     loadSRE(),
     loadTenants(),
     loadTriageFeed(),
