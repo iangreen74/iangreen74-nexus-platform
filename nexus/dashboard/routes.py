@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
-from nexus import overwatch_graph
+from nexus import neptune_client, overwatch_graph
 from nexus.capabilities import alert, ci_ops, daemon_ops, ecs_ops, tenant_ops  # noqa: F401 — register
 from nexus.capabilities.registry import registry
 from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
