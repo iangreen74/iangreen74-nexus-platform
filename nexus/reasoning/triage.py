@@ -345,6 +345,23 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
         "diagnosis": "Accretion context health below threshold.",
         "resolution": "Check which intelligence sources are missing and why.",
     },
+    # ----- Deploy stuck pattern -----
+    {
+        "name": "tenant_deploy_stuck",
+        "match": lambda e: (
+            e.get("type") == "tenant_health"
+            and e.get("deploy_stuck", False) is True
+        ),
+        "action": "retry_tenant_deploy",
+        "blast_radius": BLAST_MODERATE,
+        "confidence": 0.85,
+        "reasoning": (
+            "Tenant deployment is stuck — the infrastructure provisioning "
+            "started but hasn't completed. Retrying the deploy."
+        ),
+        "diagnosis": "CloudFormation stack creation stalled or failed silently.",
+        "resolution": "POST /deploy/{tenant_id} to retry the full deployment.",
+    },
 ]
 
 
@@ -443,6 +460,17 @@ def triage_tenant_health(report: dict[str, Any]) -> TriageDecision:
     """Decide what to do about a TenantHealthReport."""
     status = report.get("overall_status", "unknown")
     tenant_id = report.get("tenant_id", "unknown")
+
+    # Check for stuck deploy FIRST — highest priority for tenants
+    if report.get("deploy_stuck"):
+        event = {"type": "tenant_health", "deploy_stuck": True, "tenant_id": tenant_id}
+        pattern = _match_pattern(event)
+        if pattern:
+            decision = _decision_from_pattern(pattern)
+            decision.metadata["tenant_id"] = tenant_id
+            decision.auto_approved = should_auto_heal(decision)
+            _record_triage(f"tenant:{tenant_id}", decision, severity="warning")
+            return decision
 
     if status == "healthy":
         decision = TriageDecision(

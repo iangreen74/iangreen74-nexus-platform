@@ -293,6 +293,107 @@ def check_pipeline_health(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     }
 
 
+def diagnose_tenant_deploy(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Diagnose a stuck or failed tenant deployment.
+
+    Checks DeploymentProgress in Neptune, deploy status via Forgewing API,
+    and Deployment DNA. Returns a detailed diagnosis with recommended action.
+    Safe blast radius — purely diagnostic, no mutations.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    if MODE != "production":
+        return {"tenant_id": tenant_id, "mock": True, "diagnosis": "mock deploy check", "status": "healthy"}
+
+    diagnosis: dict[str, Any] = {"tenant_id": tenant_id, "checks": {}, "issues": [], "recommended_action": ""}
+
+    # 1. Check DeploymentProgress in Neptune
+    try:
+        progress = neptune_client.query(
+            "MATCH (d:DeploymentProgress {tenant_id: $tid}) "
+            "RETURN d.stage AS stage, d.message AS message, "
+            "d.updated_at AS updated_at",
+            {"tid": tenant_id},
+        )
+        if progress:
+            dp = progress[0]
+            diagnosis["checks"]["deploy_progress"] = dp
+            stage = dp.get("stage", "")
+            if stage and stage not in ("live", "complete"):
+                diagnosis["issues"].append(f"Deploy stuck at stage '{stage}'")
+        else:
+            diagnosis["checks"]["deploy_progress"] = None
+            diagnosis["issues"].append("No DeploymentProgress node — deploy may never have started")
+    except Exception as exc:
+        diagnosis["checks"]["deploy_progress_error"] = str(exc)
+
+    # 2. Check deploy status via Forgewing API
+    try:
+        deploy_status = forgewing_api.call_api("GET", f"/deploy-progress/{tenant_id}")
+        diagnosis["checks"]["api_deploy_progress"] = deploy_status
+        api_stage = deploy_status.get("stage", "")
+        if api_stage and api_stage not in ("live", "complete", ""):
+            diagnosis["issues"].append(f"API reports deploy stage: {api_stage}")
+    except Exception as exc:
+        diagnosis["checks"]["api_error"] = str(exc)
+
+    # 3. Check Deployment DNA
+    try:
+        dna = forgewing_api.call_api("GET", f"/deployment-dna/{tenant_id}")
+        diagnosis["checks"]["deployment_dna"] = {
+            "recommendation": dna.get("recommendation"),
+            "has_workflows": dna.get("workflow_count", 0) > 0,
+        }
+    except Exception as exc:
+        diagnosis["checks"]["dna_error"] = str(exc)
+
+    # 4. Determine recommended action
+    issues = diagnosis["issues"]
+    if not issues:
+        diagnosis["recommended_action"] = "none — deploy appears healthy"
+        diagnosis["status"] = "healthy"
+    elif any("never have started" in i for i in issues):
+        diagnosis["recommended_action"] = "retry_deploy"
+        diagnosis["status"] = "stuck"
+    elif any("stuck" in i.lower() for i in issues):
+        diagnosis["recommended_action"] = "retry_deploy"
+        diagnosis["status"] = "stuck"
+    else:
+        diagnosis["recommended_action"] = "escalate — unknown deploy issue"
+        diagnosis["status"] = "unknown"
+
+    return diagnosis
+
+
+def retry_tenant_deploy(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Retry a stuck tenant deployment by POSTing to the Forgewing deploy endpoint.
+
+    Moderate blast radius — triggers infrastructure provisioning in the
+    customer's AWS account. Runs diagnosis first to confirm it's stuck.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    if MODE != "production":
+        return {"tenant_id": tenant_id, "action": "deploy_triggered", "mock": True}
+
+    diag = diagnose_tenant_deploy(tenant_id=tenant_id)
+    if diag.get("status") == "healthy":
+        return {"tenant_id": tenant_id, "action": "none", "reason": "deploy is healthy"}
+
+    result = forgewing_api.call_api("POST", f"/deploy/{tenant_id}")
+    if not result.get("error"):
+        overwatch_graph.record_healing_action(
+            action_type="retry_tenant_deploy",
+            target=tenant_id,
+            blast_radius="moderate",
+            trigger="stuck_deploy",
+            outcome="triggered",
+        )
+    return {"tenant_id": tenant_id, "action": "deploy_triggered", "api_response": result, "diagnosis": diag}
+
+
 # Register all capabilities
 for cap in [
     Capability(
@@ -331,6 +432,19 @@ for cap in [
         function=check_pipeline_health,
         blast_radius=BLAST_SAFE,
         description="Analyze task/PR pipeline for blockers",
+    ),
+    Capability(
+        name="diagnose_tenant_deploy",
+        function=diagnose_tenant_deploy,
+        blast_radius=BLAST_SAFE,
+        description="Diagnose a stuck or failed tenant deployment — checks CF, CodeBuild, progress state",
+    ),
+    Capability(
+        name="retry_tenant_deploy",
+        function=retry_tenant_deploy,
+        blast_radius=BLAST_MODERATE,
+        description="Retry a stuck tenant deployment via the Forgewing deploy API",
+        requires_approval=False,
     ),
 ]:
     registry.register(cap)

@@ -284,6 +284,31 @@ CHAINS: dict[str, HealChain] = {
             ),
         ],
     ),
+
+    # ----- Deploy stuck chain -----
+    "tenant_deploy_stuck": HealChain(
+        pattern_name="tenant_deploy_stuck",
+        steps=[
+            HealStep(
+                capability="diagnose_tenant_deploy",
+                description="Diagnose what's blocking the deployment",
+                verify_after_cycles=1,
+                kwargs_builder=_tenant_id,
+            ),
+            HealStep(
+                capability="retry_tenant_deploy",
+                description="Retry the deployment via Forgewing API",
+                verify_after_cycles=10,  # ~5 min for CF to provision
+                kwargs_builder=_tenant_id,
+            ),
+            HealStep(
+                capability="validate_tenant_onboarding",
+                description="Verify deployment completed successfully",
+                verify_after_cycles=2,
+                kwargs_builder=_tenant_id,
+            ),
+        ],
+    ),
 }
 
 

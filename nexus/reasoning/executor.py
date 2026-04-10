@@ -64,6 +64,8 @@ ACTION_CAPABILITY_MAP: dict[str, tuple[str, Callable[[dict[str, Any]], dict[str,
     }),
     "investigate_stuck_tasks": ("check_pipeline_health", _TENANT_ID),
     "verify_write_access": ("verify_write_access", _TENANT_ID),
+    "retry_tenant_deploy": ("retry_tenant_deploy", _TENANT_ID),
+    "diagnose_tenant_deploy": ("diagnose_tenant_deploy", _TENANT_ID),
 }
 
 # Actions that are purely informational — no execution needed.

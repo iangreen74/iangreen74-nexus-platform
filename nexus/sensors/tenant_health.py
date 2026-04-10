@@ -236,6 +236,19 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
                 summary_parts.append(f"{pipeline['tasks_pending']} pending")
         summary = " · ".join(summary_parts) if summary_parts else "no activity"
 
+        # Deploy health — detect stuck deployments
+        deploy_stuck = False
+        deploy_stage = None
+        try:
+            from nexus.capabilities.forgewing_api import call_api
+
+            dp = call_api("GET", f"/deploy-progress/{tenant_id}")
+            deploy_stage = dp.get("stage")
+            if deploy_stage and deploy_stage not in ("live", "complete", None, ""):
+                deploy_stuck = True
+        except Exception:
+            pass
+
         report = {
             "tenant_id": tenant_id,
             "context": ctx,
@@ -245,6 +258,8 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             "pipeline_summary": summary,
             "conversation": conversation,
             "token": token_status,
+            "deploy_stage": deploy_stage,
+            "deploy_stuck": deploy_stuck,
             "overall_status": _rollup(deployment, pipeline, conversation),
             "checked_at": _now().isoformat(),
         }
