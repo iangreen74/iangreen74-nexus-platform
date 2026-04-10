@@ -275,6 +275,76 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
         "diagnosis": "Recurring daemon timeouts — likely a hanging hook.",
         "resolution": "Force new ECS deployment + run diagnose_daemon_timeout.",
     },
+    # ----- Performance drift patterns (Level 3) -----
+    {
+        "name": "daemon_cycle_drift",
+        "match": lambda e: (
+            e.get("type") == "performance_alert"
+            and e.get("metric") == "daemon_cycle_duration"
+            and e.get("anomalous") is True
+        ),
+        "action": "diagnose_daemon_timeout",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.85,
+        "reasoning": (
+            "Daemon cycle duration trending above baseline — proactive "
+            "investigation before it becomes a stall."
+        ),
+        "diagnosis": "Daemon cycle duration anomaly detected.",
+        "resolution": "Run diagnose_daemon_timeout to identify the slow hook.",
+    },
+    {
+        "name": "pr_generation_slowdown",
+        "match": lambda e: (
+            e.get("type") == "performance_alert"
+            and e.get("metric") == "pr_generation_time"
+            and e.get("trend") == "degrading"
+        ),
+        "action": "investigate_stuck_tasks",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.75,
+        "reasoning": (
+            "PR generation time is trending slower for this tenant. "
+            "Investigating task pipeline for bottlenecks."
+        ),
+        "diagnosis": "PR generation time degrading.",
+        "resolution": "Check task executor, Bedrock latency, and quality gate.",
+    },
+    {
+        "name": "tenant_velocity_drop",
+        "match": lambda e: (
+            e.get("type") == "performance_alert"
+            and e.get("metric") == "task_velocity"
+            and e.get("tasks_per_day", 1) == 0
+            and e.get("was_active", False) is True
+        ),
+        "action": "validate_tenant_onboarding",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.8,
+        "reasoning": (
+            "Tenant was completing tasks but has dropped to zero — "
+            "pipeline may be stalled or customer disengaged."
+        ),
+        "diagnosis": "Task velocity dropped to zero for a previously active tenant.",
+        "resolution": "Validate onboarding + check pipeline health. Alert operator if customer appears disengaged.",
+    },
+    {
+        "name": "context_health_decline",
+        "match": lambda e: (
+            e.get("type") == "performance_alert"
+            and e.get("metric") == "context_health"
+            and e.get("active", 8) < 4
+        ),
+        "action": "validate_tenant_onboarding",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.7,
+        "reasoning": (
+            "Accretion Core has fewer than 4 active sources — intelligence "
+            "quality is degraded. Running onboarding validation to diagnose."
+        ),
+        "diagnosis": "Accretion context health below threshold.",
+        "resolution": "Check which intelligence sources are missing and why.",
+    },
 ]
 
 
@@ -486,6 +556,31 @@ def triage_capability_report(report: dict[str, Any]) -> TriageDecision:
     decision.auto_approved = should_auto_heal(decision)
     _record_triage(f"capability:{tenant_id}", decision,
                    severity="warning" if overall == "blocked" else "info")
+    return decision
+
+
+def triage_performance_alert(alert: dict[str, Any]) -> TriageDecision:
+    """Decide what to do about a performance anomaly."""
+    alert["type"] = "performance_alert"  # ensure type is set for pattern matching
+    pattern = _match_pattern(alert)
+    if pattern:
+        decision = _decision_from_pattern(pattern)
+        decision.metadata["metric"] = alert.get("metric")
+        decision.metadata["value"] = alert.get("value")
+        decision.metadata["baseline_mean"] = alert.get("baseline_mean")
+    else:
+        decision = TriageDecision(
+            action="monitor",
+            confidence=0.6,
+            reasoning=f"Performance drift detected ({alert.get('metric')}) but no pattern matched.",
+            blast_radius=BLAST_SAFE,
+        )
+    decision.auto_approved = should_auto_heal(decision)
+    source = f"performance:{alert.get('metric', 'unknown')}"
+    if alert.get("tenant_id"):
+        source += f":{alert['tenant_id']}"
+    _record_triage(source, decision,
+                   severity="warning" if pattern else "info")
     return decision
 
 

@@ -131,6 +131,64 @@ async def platform_status() -> dict[str, Any]:
         except Exception:
             logger.debug("capability validation failed for %s", tid, exc_info=True)
 
+    # Performance drift detection — proactive alerts
+    from nexus.sensors import performance
+    from nexus.reasoning.triage import triage_performance_alert
+
+    perf_daemon = performance.daemon_cycle_performance(hours=24)
+    if perf_daemon.get("anomalous"):
+        perf_decision = triage_performance_alert({
+            "metric": "daemon_cycle_duration",
+            "anomalous": True,
+            "value": perf_daemon.get("latest"),
+            "baseline_mean": (perf_daemon.get("stats") or {}).get("mean"),
+            "trend": perf_daemon.get("trend"),
+        })
+        perf_exec = execute_or_continue_chain(
+            perf_decision,
+            {"source": "performance:daemon_cycle", "target": "aria-daemon"},
+            sensor_healthy=not perf_daemon.get("anomalous", False),
+        )
+        executions.append({"source": "performance:daemon_cycle", "action": perf_decision.action, **perf_exec.to_dict()})
+
+    for t in tenants:
+        tid = t.get("tenant_id", "")
+        if not tid:
+            continue
+        try:
+            tv = performance.task_velocity(tid, hours=168)
+            if tv.get("tasks_per_day", 0) == 0 and len(tv.get("daily_counts", [])) > 3:
+                vel_decision = triage_performance_alert({
+                    "metric": "task_velocity",
+                    "tasks_per_day": 0,
+                    "was_active": any(c > 0 for c in tv.get("daily_counts", [])),
+                    "tenant_id": tid,
+                })
+                vel_exec = execute_or_continue_chain(
+                    vel_decision,
+                    {"source": f"performance:velocity:{tid}", "target": tid, "tenant_id": tid},
+                    sensor_healthy=tv.get("tasks_per_day", 0) > 0,
+                )
+                executions.append({"source": f"performance:velocity:{tid}", "action": vel_decision.action, **vel_exec.to_dict()})
+
+            ch = performance.context_health(tid)
+            if ch.get("active", 8) < 4:
+                ctx_decision = triage_performance_alert({
+                    "metric": "context_health",
+                    "active": ch.get("active"),
+                    "expected": ch.get("expected"),
+                    "missing": ch.get("missing"),
+                    "tenant_id": tid,
+                })
+                ctx_exec = execute_or_continue_chain(
+                    ctx_decision,
+                    {"source": f"performance:context:{tid}", "target": tid, "tenant_id": tid},
+                    sensor_healthy=ch.get("healthy", True),
+                )
+                executions.append({"source": f"performance:context:{tid}", "action": ctx_decision.action, **ctx_exec.to_dict()})
+        except Exception:
+            logger.debug("performance checks failed for %s", tid, exc_info=True)
+
     locks = infrastructure_lock.check_locks()
     preemptive_alerts = preemptive.run_preemptive_checks()
     if not locks.get("all_locked"):
@@ -163,6 +221,9 @@ async def platform_status() -> dict[str, Any]:
             "total": len(executions),
         },
         "active_heal_chains": get_all_active_chains(),
+        "performance": {
+            "daemon_cycle": perf_daemon,
+        },
     }
 
 

@@ -713,8 +713,11 @@ async function loadHealChains() {
   const chains = (data && data.active_heal_chains) || {};
   const entries = Object.entries(chains);
   const body = document.getElementById('heal-chains-body');
+  // Fetch chain catalog count from the dedicated endpoint
+  const chainData = await fetchJSON(`${API}/heal-chains`);
+  const definedCount = chainData ? chainData.available_count : '?';
   document.getElementById('heal-chains-meta').textContent =
-    `${entries.length} active · 6 defined`;
+    `${entries.length} active · ${definedCount} defined`;
   if (entries.length === 0) {
     body.innerHTML = '<tr><td colspan="5" class="empty">No active heal chains — all systems healing normally</td></tr>';
     return;

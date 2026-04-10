@@ -220,6 +220,70 @@ CHAINS: dict[str, HealChain] = {
             ),
         ],
     ),
+    # ----- Performance drift chains (Level 3) -----
+    "daemon_cycle_drift": HealChain(
+        pattern_name="daemon_cycle_drift",
+        steps=[
+            HealStep(
+                capability="diagnose_daemon_timeout",
+                description="Identify which hook is causing cycle time drift",
+                verify_after_cycles=3,
+            ),
+            HealStep(
+                capability="check_daemon_code_version",
+                description="Check if old code is causing slowdown",
+                verify_after_cycles=1,
+            ),
+        ],
+    ),
+
+    "pr_generation_slowdown": HealChain(
+        pattern_name="pr_generation_slowdown",
+        steps=[
+            HealStep(
+                capability="check_pipeline_health",
+                description="Analyze task pipeline for bottlenecks",
+                verify_after_cycles=2,
+                kwargs_builder=_tenant_id,
+            ),
+            HealStep(
+                capability="validate_tenant_onboarding",
+                description="Full checklist to find the constraint",
+                verify_after_cycles=1,
+                kwargs_builder=_tenant_id,
+            ),
+        ],
+    ),
+
+    "tenant_velocity_drop": HealChain(
+        pattern_name="tenant_velocity_drop",
+        steps=[
+            HealStep(
+                capability="validate_tenant_onboarding",
+                description="Check if pipeline is blocked",
+                verify_after_cycles=1,
+                kwargs_builder=_tenant_id,
+            ),
+            HealStep(
+                capability="check_pipeline_health",
+                description="Identify specific task-level blockers",
+                verify_after_cycles=1,
+                kwargs_builder=_tenant_id,
+            ),
+        ],
+    ),
+
+    "context_health_decline": HealChain(
+        pattern_name="context_health_decline",
+        steps=[
+            HealStep(
+                capability="validate_tenant_onboarding",
+                description="Diagnose which intelligence sources are missing",
+                verify_after_cycles=1,
+                kwargs_builder=_tenant_id,
+            ),
+        ],
+    ),
 }
 
 
