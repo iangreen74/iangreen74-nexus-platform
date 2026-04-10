@@ -201,6 +201,13 @@
     margin-left: 8px; font-family: inherit;
   }
   .teach-btn:hover { filter: brightness(1.15); }
+  .teach-option {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; transition: border-color 0.15s;
+  }
+  .teach-option:hover { border-color: var(--text-dim); }
+  .teach-option:has(input:checked) { border-color: var(--amber); background: var(--amber-dim); }
 </style>
 </head>
 <body>
@@ -383,27 +390,29 @@
 </div>
 
 <div id="teach-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;" onclick="if(event.target===this)closeTeachModal()">
-  <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:24px; width:480px; max-width:90vw;">
-    <h3 style="color:var(--text); margin:0 0 12px 0; font-size:14px; letter-spacing:0.1em;">TEACH OVERWATCH</h3>
-    <p style="color:var(--text-dim); font-size:11px; margin:0 0 16px 0;">Capture what you did so Overwatch learns to handle this automatically next time.</p>
-    <label class="label">INCIDENT SOURCE</label>
-    <input id="teach-source" type="text" readonly style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text-dim); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit; font-size:12px;" />
-    <label class="label">INCIDENT ACTION</label>
-    <input id="teach-action" type="text" readonly style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text-dim); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit; font-size:12px;" />
-    <label class="label">WHAT CAPABILITY RESOLVED IT?</label>
-    <select id="teach-capability" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit; font-size:12px;">
-      <option value="">Select a capability...</option>
-      <option value="restart_daemon">restart_daemon</option>
-      <option value="restart_service">restart_service</option>
-      <option value="retrigger_workflow">retrigger_workflow</option>
-      <option value="refresh_tenant_token">refresh_tenant_token</option>
-      <option value="retrigger_ingestion">retrigger_ingestion</option>
-      <option value="validate_tenant_onboarding">validate_tenant_onboarding</option>
-      <option value="check_pipeline_health">check_pipeline_health</option>
-      <option value="diagnose_daemon_timeout">diagnose_daemon_timeout</option>
-      <option value="check_daemon_code_version">check_daemon_code_version</option>
-      <option value="verify_write_access">verify_write_access</option>
-    </select>
+  <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:24px; width:520px; max-width:90vw; max-height:90vh; overflow-y:auto;">
+    <h3 style="color:var(--text); margin:0 0 8px 0; font-size:14px; letter-spacing:0.1em;">TEACH OVERWATCH</h3>
+    <p style="color:var(--text-dim); font-size:11px; margin:0 0 16px 0;">Tell Overwatch what you did so it can handle this automatically next time.</p>
+    <label class="label">WHAT HAPPENED</label>
+    <input id="teach-source" type="text" readonly style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text-dim); padding:8px; border-radius:4px; margin-bottom:14px; font-family:inherit; font-size:12px;" />
+    <input id="teach-action-field" type="hidden" />
+    <label class="label">WHAT DID YOU DO TO FIX IT?</label>
+    <div id="teach-actions" style="display:flex; flex-direction:column; gap:6px; margin-bottom:14px;">
+      <label class="teach-option"><input type="radio" name="teach-action" value="restart_daemon" />
+        <div><div style="color:var(--text); font-size:12px;">I restarted the service</div><div style="color:var(--text-dim); font-size:10px;">Force-restarted the daemon or API to clear a stuck state</div></div></label>
+      <label class="teach-option"><input type="radio" name="teach-action" value="retrigger_workflow" />
+        <div><div style="color:var(--text); font-size:12px;">I re-ran the CI/CD</div><div style="color:var(--text-dim); font-size:10px;">Retriggered a failed GitHub Actions workflow</div></div></label>
+      <label class="teach-option"><input type="radio" name="teach-action" value="refresh_tenant_token" />
+        <div><div style="color:var(--text); font-size:12px;">I refreshed the GitHub token</div><div style="color:var(--text-dim); font-size:10px;">Re-minted the tenant's GitHub App installation token</div></div></label>
+      <label class="teach-option"><input type="radio" name="teach-action" value="retrigger_ingestion" />
+        <div><div style="color:var(--text); font-size:12px;">I re-indexed the repo</div><div style="color:var(--text-dim); font-size:10px;">Re-ran ingestion to rebuild the file index in Neptune</div></div></label>
+      <label class="teach-option"><input type="radio" name="teach-action" value="validate_tenant_onboarding" />
+        <div><div style="color:var(--text); font-size:12px;">I ran diagnostics on the tenant</div><div style="color:var(--text-dim); font-size:10px;">Checked onboarding, token, write access, and pipeline health</div></div></label>
+      <label class="teach-option"><input type="radio" name="teach-action" value="manual_code_fix" />
+        <div><div style="color:var(--text); font-size:12px;">I pushed a code fix</div><div style="color:var(--text-dim); font-size:10px;">Fixed the issue by changing code — Overwatch can't automate this yet</div></div></label>
+      <label class="teach-option"><input type="radio" name="teach-action" value="other" />
+        <div><div style="color:var(--text); font-size:12px;">Something else</div><div style="color:var(--text-dim); font-size:10px;">Describe what you did in the fields below</div></div></label>
+    </div>
     <label class="label">ROOT CAUSE</label>
     <textarea id="teach-root-cause" rows="2" placeholder="What was actually wrong?" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; margin-bottom:10px; font-family:inherit; font-size:12px; resize:vertical;"></textarea>
     <label class="label">RESOLUTION</label>
@@ -1001,8 +1010,19 @@ async function loadAll() {
 // --- Teach Overwatch modal ---
 function openTeachModal(source, action) {
   document.getElementById('teach-source').value = source;
-  document.getElementById('teach-action').value = action;
-  document.getElementById('teach-capability').value = '';
+  document.getElementById('teach-action-field').value = action;
+  document.querySelectorAll('input[name="teach-action"]').forEach(r => r.checked = false);
+  // Auto-suggest based on incident type
+  if (source.includes('ci') || (action || '').includes('ci')) {
+    const el = document.querySelector('input[name="teach-action"][value="retrigger_workflow"]');
+    if (el) el.checked = true;
+  } else if (source.includes('daemon') || (action || '').includes('daemon')) {
+    const el = document.querySelector('input[name="teach-action"][value="restart_daemon"]');
+    if (el) el.checked = true;
+  } else if (source.includes('tenant') || source.includes('context') || source.includes('capability')) {
+    const el = document.querySelector('input[name="teach-action"][value="validate_tenant_onboarding"]');
+    if (el) el.checked = true;
+  }
   document.getElementById('teach-root-cause').value = '';
   document.getElementById('teach-resolution').value = '';
   document.getElementById('teach-auto-heal').checked = false;
@@ -1012,21 +1032,23 @@ function openTeachModal(source, action) {
 function closeTeachModal() {
   document.getElementById('teach-modal').style.display = 'none';
 }
+function showTeachResult(msg, success) {
+  const el = document.getElementById('teach-result');
+  el.style.display = 'block';
+  el.style.color = success ? 'var(--teal)' : 'var(--red)';
+  el.textContent = msg;
+}
 async function submitTeach() {
   const source = document.getElementById('teach-source').value;
-  const action = document.getElementById('teach-action').value;
-  const capability = document.getElementById('teach-capability').value;
+  const action = document.getElementById('teach-action-field').value;
+  const selected = document.querySelector('input[name="teach-action"]:checked');
+  const capability = selected ? selected.value : '';
   const rootCause = document.getElementById('teach-root-cause').value;
   const resolution = document.getElementById('teach-resolution').value;
   const autoHeal = document.getElementById('teach-auto-heal').checked;
-  const resultEl = document.getElementById('teach-result');
-
-  if (!capability || !rootCause || !resolution) {
-    resultEl.style.display = 'block';
-    resultEl.style.color = 'var(--red)';
-    resultEl.textContent = 'Please fill in all fields.';
-    return;
-  }
+  if (!capability) { showTeachResult('Please select what you did to fix it.', false); return; }
+  if (!rootCause || !resolution) { showTeachResult('Please fill in root cause and resolution.', false); return; }
+  const canAutoHeal = autoHeal && !['manual_code_fix', 'other'].includes(capability);
   try {
     const resp = await fetch(`${API}/patterns/capture-resolution`, {
       method: 'POST',
@@ -1037,24 +1059,19 @@ async function submitTeach() {
         heal_capability: capability,
         root_cause: rootCause,
         resolution: resolution,
-        should_auto_heal: autoHeal,
+        should_auto_heal: canAutoHeal,
         blast_radius: 'safe',
       }),
     });
     const data = await resp.json();
-    resultEl.style.display = 'block';
     if (data.candidate) {
-      resultEl.style.color = 'var(--teal)';
-      resultEl.textContent = 'Candidate created: ' + data.candidate.name;
-      setTimeout(() => { closeTeachModal(); loadCandidates(); }, 1500);
+      showTeachResult("Overwatch learned a new pattern. It'll suggest this fix next time this happens.", true);
+      setTimeout(() => { closeTeachModal(); loadCandidates(); }, 2500);
     } else {
-      resultEl.style.color = 'var(--red)';
-      resultEl.textContent = 'Error: ' + (data.error || JSON.stringify(data));
+      showTeachResult('Error: ' + (data.error || JSON.stringify(data)), false);
     }
   } catch (err) {
-    resultEl.style.display = 'block';
-    resultEl.style.color = 'var(--red)';
-    resultEl.textContent = 'Request failed: ' + err.message;
+    showTeachResult('Request failed: ' + err.message, false);
   }
 }
 
