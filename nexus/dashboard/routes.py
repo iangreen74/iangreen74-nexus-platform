@@ -1027,30 +1027,36 @@ async def support_escalations(limit: int = 50) -> dict[str, Any]:
 
 
 @router.post("/ops/chat")
-async def ops_chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    """Conversational platform-engineering assistant powered by Bedrock."""
+async def ops_chat_endpoint(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Ops Chat — ask questions, get answers, execute actions."""
+    from nexus.dashboard.ops_chat import chat as _ops_chat
+
     message = (payload or {}).get("message", "").strip()
+    history = (payload or {}).get("history", [])
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
 
-    if MODE != "production":
-        return {
-            "response": (
-                f"[Local mode] You asked: {message}\n\n"
-                "In production this would call Bedrock with the full Overwatch "
-                f"context (model={OPS_CHAT_MODEL_ID}). Set NEXUS_MODE=production "
-                "to enable real responses."
-            ),
-            "model": OPS_CHAT_MODEL_ID,
-            "mode": MODE,
-        }
-
+    # Gather rich context from all sensors
     try:
-        status = await platform_status()
-        tenants = await list_tenants()
-        system_prompt = _build_ops_system_prompt(status, tenants)
-        text = await asyncio.to_thread(_invoke_bedrock, system_prompt, message)
-        return {"response": text or "(empty response)", "model": OPS_CHAT_MODEL_ID, "mode": MODE}
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("ops_chat failed")
-        return {"response": f"Bedrock call failed: {exc}", "error": True, "model": OPS_CHAT_MODEL_ID}
+        status_data = await platform_status()
+        tenants_data = await list_tenants()
+        patterns_data = await failure_patterns(min_confidence=0.0)
+    except Exception:
+        status_data, tenants_data, patterns_data = {}, {"tenants": []}, {"patterns": []}
+
+    context = {
+        "status": status_data,
+        "tenants": tenants_data.get("tenants", []),
+        "heal_chains": status_data.get("active_heal_chains", {}),
+        "executions": status_data.get("executions", []),
+        "patterns": patterns_data.get("patterns", []),
+        "capabilities": [
+            {"name": c.name, "description": c.description, "blast_radius": c.blast_radius}
+            for c in registry.list_all()
+        ],
+    }
+
+    result = await asyncio.to_thread(_ops_chat, message, context, history)
+    result["mode"] = MODE
+    result["model"] = OPS_CHAT_MODEL_ID
+    return result
