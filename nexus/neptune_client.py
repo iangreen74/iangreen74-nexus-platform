@@ -156,7 +156,7 @@ def get_recent_tasks(tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
     return rows
 
 
-def get_recent_prs(tenant_id: str, limit: int = 10) -> list[dict[str, Any]]:
+def get_recent_prs(tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
     """
     Return recent PRs for a tenant. PRs are properties on MissionTask
     nodes (pr_url, pr_number, submitted_at) — the schema has no separate PR node.

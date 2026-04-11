@@ -225,12 +225,13 @@ def _find_stack_for_tenant(tenant_id: str) -> dict[str, Any] | None:
 
 def describe_tenant_infra(tenant_id: str) -> dict[str, Any]:
     """
-    Summarize a tenant's deployment infrastructure.
+    Summarize a tenant's deployment infrastructure using ground truth.
 
-    Reads from Neptune (DeployedService, DeploymentStack nodes) rather
-    than calling the CloudFormation API, because the ECS task role
-    doesn't have cloudformation:ListStacks/DescribeStacks. Neptune is
-    the source of truth — the daemon writes these nodes after deploys.
+    Priority 1: Check the actual app URL (live HTTP check)
+    Priority 2: Check DeploymentProgress / DeployedService / DeploymentStack in Neptune
+    Priority 3: Report as not provisioned
+
+    This gives the REAL deploy state, not stale Neptune data.
     """
     if MODE != "production":
         return {
@@ -241,52 +242,42 @@ def describe_tenant_infra(tenant_id: str) -> dict[str, Any]:
             "provisioned": True,
         }
 
-    # Query Neptune for deployment artifacts instead of calling CF API.
-    # Import here to avoid circular imports.
-    from nexus import neptune_client
+    from nexus.sensors.ground_truth import get_deploy_ground_truth
 
-    # 1. Check DeployedService — this means the app is actually running
-    svc_rows = neptune_client.query(
-        "MATCH (s:DeployedService {tenant_id: $tid}) "
-        "RETURN s.url AS url, s.accessible AS accessible, "
-        "s.environment AS env, s.last_checked AS checked",
-        {"tid": tenant_id},
-    )
-    if svc_rows:
-        svc = svc_rows[0]
-        accessible = svc.get("accessible")
+    gt = get_deploy_ground_truth(tenant_id)
+    deploy_status = gt.get("deploy_status", "unknown")
+
+    if deploy_status == "live":
         return {
             "tenant_id": tenant_id,
-            "stack": {"url": svc.get("url"), "environment": svc.get("env")},
-            "services": [{"url": svc.get("url"), "accessible": accessible}],
-            "healthy": bool(accessible),
+            "stack": {"app_url": gt.get("app_url"), "status": "live", "http_status": gt.get("http_status")},
+            "services": [{"url": gt.get("app_url"), "healthy": True}],
+            "healthy": True,
             "provisioned": True,
         }
-
-    # 2. Check DeploymentStack — infra exists but maybe not live yet
-    stack_rows = neptune_client.query(
-        "MATCH (s:DeploymentStack {tenant_id: $tid}) "
-        "RETURN s.stack_name AS name, s.status AS status, s.checked_at AS checked",
-        {"tid": tenant_id},
-    )
-    if stack_rows:
-        st = stack_rows[0]
-        status = st.get("status", "")
-        healthy = status.endswith("_COMPLETE") and "ROLLBACK" not in status
+    elif deploy_status == "deploying":
         return {
             "tenant_id": tenant_id,
-            "stack": {"stack_name": st.get("name"), "status": status},
+            "stack": {"stage": gt.get("stage"), "status": "deploying"},
             "services": [],
-            "healthy": healthy,
+            "healthy": False,
             "provisioned": True,
         }
-
-    # 3. No deployment artifacts in Neptune → not provisioned
-    return {
-        "tenant_id": tenant_id,
-        "stack": None,
-        "services": [],
-        "healthy": False,
-        "provisioned": False,
-        "reason": "no DeployedService or DeploymentStack in Neptune",
-    }
+    elif deploy_status == "not_started":
+        return {
+            "tenant_id": tenant_id,
+            "stack": None,
+            "services": [],
+            "healthy": False,
+            "provisioned": False,
+            "reason": "no deploy progress or app URL found",
+        }
+    else:
+        return {
+            "tenant_id": tenant_id,
+            "stack": {"app_url": gt.get("app_url"), "status": deploy_status, "http_status": gt.get("http_status")},
+            "services": [],
+            "healthy": False,
+            "provisioned": gt.get("app_url") is not None,
+            "reason": f"deploy status: {deploy_status}",
+        }

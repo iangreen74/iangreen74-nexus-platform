@@ -573,6 +573,32 @@ def _format_report(
             pass
         lines.append("")
 
+    # --- Ground truth + velocity ---
+    try:
+        from nexus.sensors.ground_truth import get_tenant_ground_truth
+
+        lines.append("GROUND TRUTH (live checks):")
+        for t in tenants.get("tenants", []):
+            tid = t.get("tenant_id", "unknown")
+            gt = get_tenant_ground_truth(tid)
+            dep = gt.get("deploy", {})
+            prs = gt.get("prs", {})
+            tasks = gt.get("tasks", {})
+            vel = gt.get("velocity", {})
+            url_str = dep.get("app_url") or "no URL"
+            http_str = f"HTTP {dep.get('http_status')}" if dep.get("http_status") else dep.get("deploy_status", "—")
+            lines.append(f"  {tid}:")
+            lines.append(f"    App: {url_str} → {http_str}")
+            lines.append(f"    PRs: {prs.get('total', 0)} ({prs.get('merged', 0)} merged, {prs.get('pending', 0)} pending)")
+            lines.append(f"    Tasks: {tasks.get('total', 0)} ({tasks.get('complete', 0)} complete, {tasks.get('pending', 0)} pending)")
+            if vel.get("avg_pr_cycle_minutes"):
+                lines.append(f"    Avg PR cycle: {vel['avg_pr_cycle_minutes']}m | Last PR: {vel.get('last_pr_age_hours', '—')}h ago")
+            lines.append(f"    Completion rate: {vel.get('completion_rate', 0)}%")
+        lines.append("")
+    except Exception:
+        lines.append("GROUND TRUTH: unavailable")
+        lines.append("")
+
     # --- Section 3: Active heal chains ---
     chains = status.get("active_heal_chains", {})
     if chains:
