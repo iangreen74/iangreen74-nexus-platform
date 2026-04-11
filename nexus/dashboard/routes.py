@@ -555,20 +555,35 @@ def _format_report(
                 parts.append(f"smoke {rate}%" if rate is not None else "smoke ✓")
             if parts:
                 lines.append(f"  Features: {' · '.join(parts)}")
-        # Project lifecycle
+        # Project lifecycle — per-project breakdown
         try:
             from nexus.capabilities.project_lifecycle import get_project_lifecycle
+            from nexus.capabilities.forgewing_api import call_api as _fw
+
             lc = get_project_lifecycle(tenant_id=tid)
             proj = lc.get("active_project")
+            archived_count = lc.get("archived_count", 0)
+            lines.append(f"  Projects: {1 if proj else 0} active, {archived_count} archived")
             if proj:
-                lines.append(f"  Project: {proj.get('name', '—')} | Repo: {proj.get('repo_url', '—')}")
-            else:
-                lines.append(f"  Project: none active | Archived: {lc.get('archived_count', 0)}")
+                lines.append(f"    ● {proj.get('name', '—')} (active) | Repo: {proj.get('repo_url', '—')}")
+            # Try to get full project list from Forgewing API
+            projects_resp = _fw("GET", f"/projects/{tid}")
+            if not projects_resp.get("error") and isinstance(projects_resp.get("projects"), list):
+                for p in projects_resp["projects"]:
+                    status = p.get("status", "unknown")
+                    name = p.get("name") or p.get("repo_url", "?")
+                    marker = "●" if status == "active" else "○"
+                    extra = ""
+                    if p.get("task_count"):
+                        extra += f" | {p['task_count']} tasks"
+                    if p.get("pr_count"):
+                        extra += f", {p['pr_count']} PRs"
+                    lines.append(f"    {marker} {name} ({status}){extra}")
             if lc.get("pending_restart"):
-                lines.append("  ⚠ pending_restart flag set")
+                lines.append("    ⚠ pending_restart flag set")
             if lc.get("last_event"):
                 ev = lc["last_event"]
-                lines.append(f"  Last lifecycle: {ev.get('type', '?')} at {ev.get('at', '?')}")
+                lines.append(f"    Last lifecycle: {ev.get('type', '?')} at {ev.get('at', '?')}")
         except Exception:
             pass
         lines.append("")

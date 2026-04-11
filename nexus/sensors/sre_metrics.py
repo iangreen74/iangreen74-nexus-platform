@@ -145,27 +145,33 @@ def compute_change_failure_rate(hours: int = 168) -> float | None:
 
 def compute_availability(hours: int = 24) -> float:
     """
-    Availability = 1 - (total incident duration / total period).
-    Returns a percentage (0-100).
+    Availability = (window - actual_downtime) / window * 100.
+
+    Downtime = time between incident open and resolved. Pattern fires
+    are NOT downtime — only actual incidents count. Each incident's
+    duration is capped at the window, and total is capped at 100%.
+    Result is always in [0, 100].
     """
-    incidents = overwatch_graph.get_resolved_incidents(hours=hours)
+    window_seconds = hours * 3600
+    if window_seconds == 0:
+        return 100.0
     total_downtime = 0.0
-    for inc in incidents:
+    for inc in overwatch_graph.get_resolved_incidents(hours=hours):
         dur = inc.get("duration_seconds")
         if dur is not None:
             try:
-                total_downtime += float(dur)
+                total_downtime += min(float(dur), window_seconds)
             except (TypeError, ValueError):
                 pass
-    # Add ongoing incidents
+    # Open incidents: count time since detection, capped at window
     for inc in overwatch_graph.get_open_incidents():
         detected = _parse(inc.get("detected_at"))
         if detected:
-            total_downtime += (_now() - detected).total_seconds()
-    total_seconds = hours * 3600
-    if total_seconds == 0:
-        return 100.0
-    return round((1 - total_downtime / total_seconds) * 100, 3)
+            elapsed = (_now() - detected).total_seconds()
+            total_downtime += min(max(elapsed, 0), window_seconds)
+    # Cap total at window (can't have >100% downtime)
+    total_downtime = min(total_downtime, window_seconds)
+    return round(max(0.0, (window_seconds - total_downtime) / window_seconds * 100), 1)
 
 
 def compute_error_budget(period_days: int = 30) -> dict[str, float]:
@@ -209,48 +215,56 @@ def _trend(current: float | None, previous: float | None, lower_is_better: bool 
 
 def compute_antifragile_score() -> int:
     """
-    Composite score (0-100) measuring how antifragile the system is.
-    The score can only go up over time if the antifragile loop is working.
+    Composite score (0-100). Weights:
+      +15  patterns learned (>0 with confidence ≥ 0.5)
+      +15  pattern match volume (>100 total matches = active detection)
+      +15  graduated patterns (self-programming working)
+      +15  availability ≥ 99%
+      +10  heal actions with >80% success rate
+      +10  MTTR < 5 min (fast recovery)
+      +10  error budget < 50% consumed
+      +10  MTTD < 60s (fast detection)
     """
     score = 0
-    mttd = compute_mttd()
-    if mttd is not None and mttd < 60:
-        score += 20
-    mttr = compute_mttr()
-    if mttr is not None and mttr < 300:
-        score += 20
+    # Patterns learned
     patterns = overwatch_graph.get_failure_patterns(min_confidence=0.5)
-    if len(patterns) > 5:
+    if len(patterns) > 0:
         score += 15
-    elif len(patterns) > 0:
+    # Pattern match volume — system is actively detecting
+    total_matches = sum(p.get("occurrence_count", 0) for p in patterns)
+    if total_matches > 100:
+        score += 15
+    # Graduated patterns
+    try:
+        from nexus.reasoning.pattern_learner import get_candidates
+        graduated = [c for c in get_candidates() if c.graduated]
+        if len(graduated) >= 1:
+            score += 15
+    except Exception:
+        pass
+    # Availability
+    avail = compute_availability(24)
+    if avail >= 99.0:
+        score += 15
+    elif avail >= 95.0:
         score += 5
+    # Heal action success rate
     heal_actions = overwatch_graph.get_healing_history(hours=168)
     successes = sum(1 for a in heal_actions if a.get("outcome") == "success")
-    total = len(heal_actions)
-    if total > 0 and successes / total > 0.8:
-        score += 15
-    mtbf = compute_mtbf()
-    # Can't easily compute trend without historical snapshots, so give partial credit
-    if mtbf is not None and mtbf > 12:
+    if len(heal_actions) > 0 and successes / len(heal_actions) > 0.8:
         score += 10
-    cfr = compute_change_failure_rate()
-    if cfr is not None and cfr < 0.1:
+    # MTTR
+    mttr = compute_mttr()
+    if mttr is not None and mttr < 300:
         score += 10
+    # Error budget
     budget = compute_error_budget()
     if budget["consumed_percent"] < 50:
         score += 10
-    # Graduated patterns — the ultimate antifragile signal.
-    # Each graduated pattern is proof the system learned from a human.
-    try:
-        from nexus.reasoning.pattern_learner import get_candidates
-
-        graduated = [c for c in get_candidates() if c.graduated]
-        if len(graduated) >= 3:
-            score += 15
-        elif len(graduated) >= 1:
-            score += 10
-    except Exception:
-        pass
+    # MTTD
+    mttd = compute_mttd()
+    if mttd is not None and mttd < 60:
+        score += 10
     return min(score, 100)
 
 
