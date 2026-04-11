@@ -345,22 +345,38 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
         "diagnosis": "Accretion context health below threshold.",
         "resolution": "Check which intelligence sources are missing and why.",
     },
-    # ----- Deploy stuck pattern -----
+    # ----- Deploy stuck patterns -----
     {
         "name": "tenant_deploy_stuck",
         "match": lambda e: (
             e.get("type") == "tenant_health"
             and e.get("deploy_stuck", False) is True
         ),
-        "action": "retry_tenant_deploy",
+        "action": "diagnose_and_fix_deploy",
         "blast_radius": BLAST_MODERATE,
         "confidence": 0.85,
         "reasoning": (
-            "Tenant deployment is stuck — the infrastructure provisioning "
-            "started but hasn't completed. Retrying the deploy."
+            "Tenant deployment is stuck. Running diagnostic heal: "
+            "check readiness, identify blockers, fix if possible, retry only if clear."
         ),
-        "diagnosis": "CloudFormation stack creation stalled or failed silently.",
-        "resolution": "POST /deploy/{tenant_id} to retry the full deployment.",
+        "diagnosis": "Deploy stuck — diagnosing before retry.",
+        "resolution": "Check readiness, fix auto-fixable blockers, retry only if clear.",
+    },
+    {
+        "name": "tenant_deploy_precondition_failed",
+        "match": lambda e: (
+            e.get("type") == "deploy_readiness"
+            and e.get("user_action_count", 0) > 0
+        ),
+        "action": "escalate_to_operator",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.9,
+        "reasoning": (
+            "Deploy readiness found blockers that require user action "
+            "(e.g., reconnect AWS, fix stuck CF stack). Cannot auto-fix."
+        ),
+        "diagnosis": "Deploy blocked by user-action-required preconditions.",
+        "resolution": "Guide tenant to fix: reconnect AWS, clean up stuck stacks.",
     },
     # ----- QA feature patterns -----
     {

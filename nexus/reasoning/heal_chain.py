@@ -285,19 +285,19 @@ CHAINS: dict[str, HealChain] = {
         ],
     ),
 
-    # ----- Deploy stuck chain -----
+    # ----- Deploy stuck chain (diagnostic, not blind retry) -----
     "tenant_deploy_stuck": HealChain(
         pattern_name="tenant_deploy_stuck",
         steps=[
             HealStep(
-                capability="diagnose_tenant_deploy",
-                description="Diagnose what's blocking the deployment",
+                capability="check_deploy_readiness",
+                description="Check readiness — identify blockers before retry",
                 verify_after_cycles=1,
                 kwargs_builder=_tenant_id,
             ),
             HealStep(
-                capability="retry_tenant_deploy",
-                description="Retry the deployment via Forgewing API",
+                capability="diagnose_and_fix_deploy",
+                description="Fix auto-fixable blockers, retry only if clear",
                 verify_after_cycles=10,  # ~5 min for CF to provision
                 kwargs_builder=_tenant_id,
             ),

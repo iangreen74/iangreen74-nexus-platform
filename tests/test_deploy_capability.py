@@ -34,8 +34,8 @@ def test_deploy_stuck_chain_exists():
     chain = get_chain("tenant_deploy_stuck")
     assert chain is not None
     assert len(chain.steps) == 3
-    assert chain.steps[0].capability == "diagnose_tenant_deploy"
-    assert chain.steps[1].capability == "retry_tenant_deploy"
+    assert chain.steps[0].capability == "check_deploy_readiness"
+    assert chain.steps[1].capability == "diagnose_and_fix_deploy"
     assert chain.steps[2].capability == "validate_tenant_onboarding"
 
 
@@ -43,7 +43,7 @@ def test_deploy_stuck_pattern_matches():
     match = _match_pattern({"type": "tenant_health", "deploy_stuck": True})
     assert match is not None
     assert match["name"] == "tenant_deploy_stuck"
-    assert match["action"] == "retry_tenant_deploy"
+    assert match["action"] == "diagnose_and_fix_deploy"
 
 
 def test_deploy_not_stuck_no_match():
