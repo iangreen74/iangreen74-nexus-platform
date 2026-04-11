@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from nexus import neptune_client, overwatch_graph
-from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, tenant_ops  # noqa: F401 — register
+from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, project_lifecycle, tenant_ops  # noqa: F401
 from nexus.capabilities.registry import registry
 from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
 from nexus.forge import aria_repo, deploy_manager, fix_generator
@@ -555,6 +555,22 @@ def _format_report(
                 parts.append(f"smoke {rate}%" if rate is not None else "smoke ✓")
             if parts:
                 lines.append(f"  Features: {' · '.join(parts)}")
+        # Project lifecycle
+        try:
+            from nexus.capabilities.project_lifecycle import get_project_lifecycle
+            lc = get_project_lifecycle(tenant_id=tid)
+            proj = lc.get("active_project")
+            if proj:
+                lines.append(f"  Project: {proj.get('name', '—')} | Repo: {proj.get('repo_url', '—')}")
+            else:
+                lines.append(f"  Project: none active | Archived: {lc.get('archived_count', 0)}")
+            if lc.get("pending_restart"):
+                lines.append("  ⚠ pending_restart flag set")
+            if lc.get("last_event"):
+                ev = lc["last_event"]
+                lines.append(f"  Last lifecycle: {ev.get('type', '?')} at {ev.get('at', '?')}")
+        except Exception:
+            pass
         lines.append("")
 
     # --- Section 3: Active heal chains ---

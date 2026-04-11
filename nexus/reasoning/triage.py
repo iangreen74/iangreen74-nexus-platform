@@ -378,6 +378,59 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
         "diagnosis": "Deploy blocked by user-action-required preconditions.",
         "resolution": "Guide tenant to fix: reconnect AWS, clean up stuck stacks.",
     },
+    # ----- Project lifecycle patterns -----
+    {
+        "name": "tenant_project_archived",
+        "match": lambda e: (
+            e.get("type") == "project_lifecycle"
+            and e.get("event_type") == "archived"
+        ),
+        "action": "noop",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 1.0,
+        "reasoning": "Project archived — intentional user action. No healing needed.",
+        "diagnosis": "Tenant archived their project.",
+        "resolution": "Log only. Include in diagnostic report.",
+    },
+    {
+        "name": "tenant_project_restart",
+        "match": lambda e: (
+            e.get("type") == "project_lifecycle"
+            and e.get("event_type") == "restart"
+        ),
+        "action": "validate_tenant_onboarding",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.8,
+        "reasoning": "Tenant restarted project — verify new project enters ingestion correctly.",
+        "diagnosis": "Project restart detected.",
+        "resolution": "Run onboarding validation to ensure ingestion starts for new project.",
+    },
+    {
+        "name": "tenant_no_active_project",
+        "match": lambda e: (
+            e.get("type") == "project_lifecycle"
+            and e.get("no_active_project", False) is True
+        ),
+        "action": "monitor",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.7,
+        "reasoning": "Tenant has no active project — all projects archived. Possible abandonment.",
+        "diagnosis": "No active project for this tenant.",
+        "resolution": "Flag in report. Consider proactive engagement if inactive >7 days.",
+    },
+    {
+        "name": "tenant_pending_restart_stale",
+        "match": lambda e: (
+            e.get("type") == "project_lifecycle"
+            and e.get("stale_restart", False) is True
+        ),
+        "action": "escalate_to_operator",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.75,
+        "reasoning": "Tenant started restart flow but never confirmed — stale pending_restart flag.",
+        "diagnosis": "Stale pending_restart flag — user abandoned the restart flow.",
+        "resolution": "Clear the pending_restart flag or contact the user.",
+    },
     # ----- QA feature patterns -----
     {
         "name": "smoke_test_failures",
