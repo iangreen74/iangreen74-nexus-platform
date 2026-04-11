@@ -479,12 +479,13 @@ def _format_report(
     actions: list[dict[str, Any]],
     patterns: list[dict[str, Any]],
 ) -> str:
-    """Build the human-readable text diagnostic for clipboard paste."""
+    """Build a comprehensive diagnostic — one paste gives full context."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     lines: list[str] = [f"OVERWATCH DIAGNOSTIC — {now}"]
     lines.append(f"Platform: {status.get('overall', 'unknown').upper()}")
     lines.append("")
 
+    # --- Section 1: Platform overview ---
     daemon = status.get("daemon", {}) or {}
     age = daemon.get("cycle_age_minutes")
     age_str = f"{age:.0f}m" if isinstance(age, (int, float)) else "—"
@@ -515,29 +516,93 @@ def _format_report(
     )
     lines.append("")
 
+    # --- Section 2: Enhanced tenant health ---
     for t in tenants.get("tenants", []):
         tid = t.get("tenant_id", "unknown")
-        lines.append(f"TENANT {tid}: {(t.get('overall_status') or 'unknown').upper()}")
+        display = t.get("display_name", tid)
+        lines.append(f"TENANT {display} ({tid}): {(t.get('overall_status') or 'unknown').upper()}")
+        ctx = t.get("context", {}) or {}
+        lines.append(f"  Stage: {ctx.get('mission_stage', '—')} | Pipeline: {t.get('pipeline_summary', '—')}")
         deployment = t.get("deployment", {}) or {}
         if deployment.get("provisioned") is False:
-            lines.append("  Deployment: NO_STACK (no ForgeScaler-* CF stack matched)")
+            lines.append(f"  Deploy: not provisioned | Reason: {deployment.get('reason', 'no infra in Neptune')}")
         else:
             stack = deployment.get("stack") or {}
-            lines.append(f"  Deployment: stack={stack.get('stack_name', '—')} status={stack.get('status', '—')}")
+            url = stack.get("url") or stack.get("stack_name") or "—"
+            lines.append(f"  Deploy: {url} | Status: {stack.get('status', '—')}")
         pipeline = t.get("pipeline", {}) or {}
         lines.append(
-            f"  Pipeline: stuck_tasks={pipeline.get('stuck_task_count', 0)}, "
-            f"in_progress={pipeline.get('tasks_in_progress', 0)}, "
-            f"last_pr={pipeline.get('last_pr_at', '—')}"
+            f"  Tasks: {pipeline.get('total_recent_tasks', 0)} total, "
+            f"{pipeline.get('tasks_in_progress', 0)} in progress, "
+            f"{pipeline.get('tasks_pending', 0)} pending, "
+            f"{pipeline.get('stuck_task_count', 0)} stuck"
         )
+        lines.append(f"  PRs: {pipeline.get('pr_count', 0)} | Last PR: {pipeline.get('last_pr_at', '—')}")
         conv = t.get("conversation", {}) or {}
-        lines.append(
-            f"  Conversation: messages={conv.get('message_count', 0)}, "
-            f"last_message={conv.get('last_message_at', '—')}, "
-            f"inactive={conv.get('inactive')}"
-        )
+        lines.append(f"  Messages: {conv.get('message_count', 0)} | Last: {conv.get('last_message_at', '—')}")
+        token = t.get("token", {}) or {}
+        lines.append(f"  Token: {'present' if token.get('present') else 'EMPTY'} | Installation: {token.get('installation_id', '—')}")
+        deploy_stuck = t.get("deploy_stuck", False)
+        if deploy_stuck:
+            lines.append(f"  ⚠ DEPLOY STUCK at stage: {t.get('deploy_stage', '—')}")
+        feat = t.get("deploy_features", {}) or {}
+        if feat:
+            parts = []
+            if feat.get("preview_available"):
+                parts.append("preview ✓")
+            if feat.get("smoke_test_available"):
+                rate = feat.get("smoke_pass_rate")
+                parts.append(f"smoke {rate}%" if rate is not None else "smoke ✓")
+            if parts:
+                lines.append(f"  Features: {' · '.join(parts)}")
         lines.append("")
 
+    # --- Section 3: Active heal chains ---
+    chains = status.get("active_heal_chains", {})
+    if chains:
+        lines.append("ACTIVE HEAL CHAINS:")
+        for source, c in chains.items():
+            results = c.get("step_results", [])
+            steps_desc = " → ".join(f"{s['capability']}:{s['result']}" for s in results) or "starting..."
+            wait = f"waiting {c.get('cycles_waited', 0)}/{c.get('cycles_to_wait', 0)}" if c.get("awaiting_verification") else "ready"
+            lines.append(f"  {source} → {c.get('chain', '?')}")
+            lines.append(f"    Step {c.get('step', 0)}, attempts {c.get('total_attempts', 0)}, {wait}")
+            lines.append(f"    Progress: {steps_desc}")
+    else:
+        lines.append("ACTIVE HEAL CHAINS: none")
+    lines.append("")
+
+    # --- Section 4: Triage decisions ---
+    execs = status.get("executions", [])
+    if execs:
+        lines.append(f"TRIAGE DECISIONS ({len(execs)} this cycle):")
+        for e in execs:
+            src = e.get("source", "?")
+            act = e.get("action", "?")
+            st = e.get("status", "?")
+            reason = e.get("reason") or e.get("outcome") or ""
+            taken = e.get("action_taken", "")
+            lines.append(f"  {src}: {act} → {st.upper()} {taken or reason}")
+    lines.append("")
+
+    # --- Section 5: Forgewing capabilities ---
+    fw = status.get("forgewing_capabilities", {})
+    if fw.get("total"):
+        lines.append(f"FORGEWING CAPABILITIES: {fw.get('available', 0)}/{fw['total']} available (avg {fw.get('avg_response_ms', 0)}ms)")
+    else:
+        lines.append("FORGEWING CAPABILITIES: not yet discovered")
+
+    # --- Section 6: Infrastructure locks ---
+    infra = status.get("infrastructure", {})
+    if infra.get("all_locked"):
+        lines.append("INFRASTRUCTURE: ALL LOCKED ✓")
+    else:
+        lines.append(f"INFRASTRUCTURE: {infra.get('violation_count', 0)} VIOLATIONS")
+        for v in infra.get("violations", [])[:5]:
+            lines.append(f"  ⚠ {v.get('lock', '?')}: {v.get('reason', '?')}")
+    lines.append("")
+
+    # --- Section 7: Patterns ---
     if patterns:
         lines.append("LEARNED FAILURE PATTERNS:")
         for p in patterns[:10]:
@@ -548,15 +613,108 @@ def _format_report(
             )
         lines.append("")
 
+    # --- Section 8: Recent actions with context ---
     if actions:
         lines.append("RECENT ACTIONS:")
-        for a in actions[:10]:
+        for a in actions[:15]:
             outcome = "OK" if a.get("ok") else (a.get("error") or "FAILED")
-            lines.append(f"  - {a.get('started_at', '')}  {a.get('name', '')}  →  {outcome}")
+            kwargs = a.get("kwargs", {}) or {}
+            target = kwargs.get("tenant_id") or kwargs.get("service") or kwargs.get("cluster") or ""
+            hint = f" [{target}]" if target else ""
+            lines.append(f"  {a.get('started_at', '')[:19]}  {a.get('name', '')}{hint}  →  {outcome}")
         lines.append("")
 
+    # --- Section 9: Graph stats ---
+    try:
+        stats = overwatch_graph.graph_stats()
+        total = sum(stats.values())
+        parts = [f"{k.replace('Overwatch', '')}:{v}" for k, v in stats.items() if v > 0]
+        lines.append(f"GRAPH: {total} nodes — {' · '.join(parts)}")
+    except Exception:
+        pass
+    lines.append("")
+
     lines.append("---")
-    lines.append("Paste this into Claude with: 'Diagnose what's wrong and suggest concrete fixes.'")
+    lines.append("Paste this into Claude with: 'Here is the latest Overwatch report.'")
+    return "\n".join(lines)
+
+
+def _format_tenant_report(tenant_id: str) -> str:
+    """Focused diagnostic for a single tenant."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines = [f"TENANT REPORT — {tenant_id}", f"Generated: {now}", ""]
+
+    # Full detail from the tenant detail endpoint
+    ctx = neptune_client.get_tenant_context(tenant_id)
+    lines.append(f"Name: {ctx.get('name') or ctx.get('company_name') or tenant_id}")
+    lines.append(f"Mission stage: {ctx.get('mission_stage', '—')}")
+    lines.append(f"Repo: {ctx.get('repo_url', '—')}")
+    lines.append("")
+
+    # Tasks
+    tasks = neptune_client.get_recent_tasks(tenant_id, limit=20)
+    by_status: dict[str, int] = {}
+    for t in tasks:
+        s = t.get("status", "unknown")
+        by_status[s] = by_status.get(s, 0) + 1
+    lines.append(f"TASKS ({len(tasks)} total):")
+    for s, c in sorted(by_status.items()):
+        lines.append(f"  {s}: {c}")
+    for t in tasks[:10]:
+        lines.append(f"  [{t.get('status', '?'):12}] {(t.get('description') or t.get('id') or '?')[:70]}")
+    lines.append("")
+
+    # PRs
+    prs = neptune_client.get_recent_prs(tenant_id, limit=10)
+    lines.append(f"PRS ({len(prs)}):")
+    for p in prs[:5]:
+        lines.append(f"  [{p.get('state', '?'):8}] {p.get('pr_url', '—')}")
+    lines.append("")
+
+    # Token
+    from nexus.sensors.tenant_health import _check_token
+    token = _check_token(tenant_id)
+    lines.append(f"Token: {'present' if token.get('present') else 'EMPTY'} | Installation: {token.get('installation_id', '—')}")
+
+    # Repo files
+    files = neptune_client.query(
+        "MATCH (f:RepoFile {tenant_id: $tid}) RETURN count(f) AS c",
+        {"tid": tenant_id},
+    )
+    file_count = int(files[0].get("c", 0)) if files else 0
+    lines.append(f"Repo files indexed: {file_count}")
+
+    # Conversation
+    conv_count = neptune_client.get_conversation_count(tenant_id)
+    lines.append(f"Conversation messages: {conv_count}")
+    lines.append("")
+
+    # Deploy state
+    dp = neptune_client.query(
+        "MATCH (d:DeploymentProgress {tenant_id: $tid}) RETURN d.stage AS stage, d.message AS msg",
+        {"tid": tenant_id},
+    )
+    if dp:
+        lines.append(f"Deploy progress: stage={dp[0].get('stage')} msg={dp[0].get('msg', '')[:80]}")
+    else:
+        lines.append("Deploy progress: none (no DeploymentProgress node)")
+
+    # Validation
+    alerts = tenant_validator.validate_tenant(tenant_id)
+    if alerts:
+        lines.append(f"\nVALIDATION ALERTS ({len(alerts)}):")
+        for a in alerts:
+            lines.append(f"  [{a.get('severity', '?')}] {a.get('check', '?')}: {a.get('message', '')[:80]}")
+
+    # Health + triage
+    report = tenant_health.check_tenant(tenant_id)
+    decision = triage.triage_tenant_health(report)
+    lines.append(f"\nTriage: {decision.action} (confidence={decision.confidence:.0%}, blast={decision.blast_radius})")
+    lines.append(f"  {decision.reasoning}")
+
+    lines.append("")
+    lines.append("---")
+    lines.append("Paste this into Claude with: 'Diagnose this tenant.'")
     return "\n".join(lines)
 
 
@@ -683,7 +841,7 @@ async def diagnostic_report() -> dict[str, Any]:
     """Generate a structured text diagnostic for pasting into Claude."""
     status = await platform_status()
     tenants = await list_tenants()
-    actions_resp = await actions(limit=10)
+    actions_resp = await actions(limit=15)
     patterns_resp = await failure_patterns(min_confidence=0.0)
     text = _format_report(
         status=status,
@@ -692,6 +850,13 @@ async def diagnostic_report() -> dict[str, Any]:
         patterns=patterns_resp.get("patterns", []),
     )
     return {"report": text, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/tenant-report/{tenant_id}")
+async def tenant_report(tenant_id: str) -> dict[str, Any]:
+    """Focused diagnostic report for a single tenant."""
+    text = _format_tenant_report(tenant_id)
+    return {"report": text, "tenant_id": tenant_id, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
 # --- Ops Chat (Bedrock) ----------------------------------------------------

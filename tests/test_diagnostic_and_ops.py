@@ -29,7 +29,7 @@ def test_diagnostic_report_returns_text():
     assert "CI:" in text
     assert "Tenants:" in text
     # Mock tenants in local mode
-    assert "TENANT tenant-alpha" in text
+    assert "TENANT" in text and "tenant-alpha" in text
     assert "Paste this into Claude" in text
 
 

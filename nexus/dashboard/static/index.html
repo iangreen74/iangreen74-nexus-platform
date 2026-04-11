@@ -276,7 +276,7 @@
     </div>
     <table id="tenants-table">
       <thead>
-        <tr><th></th><th>Tenant</th><th>Stage</th><th>Pipeline</th><th>Last Activity</th><th>Status</th></tr>
+        <tr><th></th><th>Tenant</th><th>Stage</th><th>Pipeline</th><th>Last Activity</th><th>Status</th><th></th></tr>
       </thead>
       <tbody id="tenants-body"><tr><td colspan="6" class="empty">Loading tenants…</td></tr></tbody>
     </table>
@@ -610,6 +610,7 @@ async function loadTenants() {
         <td>${summary}</td>
         <td>${fmtAge(conv.last_message_at)}</td>
         <td>${statusText.toUpperCase()}${statusNote}</td>
+        <td><button class="btn" style="padding:3px 8px;font-size:9px" onclick="event.stopPropagation();copyTenantReport('${t.tenant_id}')">Copy</button></td>
       </tr>
     `;
   }).join('');
@@ -1052,6 +1053,21 @@ async function loadAll() {
     loadDiscovery(),
     loadGraphStats()
   ]);
+}
+
+// --- Copy tenant report ---
+async function copyTenantReport(tid) {
+  try {
+    const resp = await fetch(`${API}/tenant-report/${encodeURIComponent(tid)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const text = data.report || 'No report';
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    alert('Tenant report copied to clipboard');
+  } catch (e) { alert('Copy failed: ' + e.message); }
 }
 
 // --- Teach Overwatch modal ---
