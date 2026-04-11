@@ -362,6 +362,24 @@ KNOWN_PATTERNS: list[dict[str, Any]] = [
         "diagnosis": "CloudFormation stack creation stalled or failed silently.",
         "resolution": "POST /deploy/{tenant_id} to retry the full deployment.",
     },
+    # ----- QA feature patterns -----
+    {
+        "name": "smoke_test_failures",
+        "match": lambda e: (
+            e.get("type") == "tenant_health"
+            and e.get("smoke_pass_rate") is not None
+            and float(e.get("smoke_pass_rate", 100)) < 80
+        ),
+        "action": "escalate_to_operator",
+        "blast_radius": BLAST_SAFE,
+        "confidence": 0.75,
+        "reasoning": (
+            "Tenant's app has failing smoke tests — pages are returning errors. "
+            "This may need a code fix or rollback."
+        ),
+        "diagnosis": "Smoke test pass rate below 80%.",
+        "resolution": "Check failing pages. Consider reverting the last PR if recently deployed.",
+    },
 ]
 
 

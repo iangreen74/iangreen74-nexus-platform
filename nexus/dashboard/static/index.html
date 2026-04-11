@@ -364,6 +364,24 @@
       <span class="meta" id="capabilities-meta"></span>
     </div>
     <div class="section-sub">Everything Overwatch can do. Risk level determines when it acts autonomously.</div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Forgewing Capabilities</h2>
+      <span class="meta" id="discovery-meta"></span>
+    </div>
+    <div class="section-sub">What Overwatch can see and monitor in Forgewing — auto-discovered.</div>
+    <table id="discovery-table">
+      <thead>
+        <tr><th>Capability</th><th>Endpoint</th><th>Status</th><th>Response</th></tr>
+      </thead>
+      <tbody id="discovery-body"><tr><td colspan="4" class="empty">Discovering...</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-head" style="display:none">
     <table id="capabilities-table">
       <thead>
         <tr><th>Name</th><th>Blast Radius</th><th>Description</th><th>Approval</th></tr>
@@ -843,6 +861,34 @@ async function loadForge() {
   `).join('');
 }
 
+async function loadDiscovery() {
+  const data = await fetchJSON(`${API}/discovery`);
+  const body = document.getElementById('discovery-body');
+  if (!data || !data.capabilities) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">Discovery not yet run</td></tr>';
+    document.getElementById('discovery-meta').textContent = '';
+    return;
+  }
+  document.getElementById('discovery-meta').textContent =
+    `${data.available} available · ${data.unavailable} unavailable · ${data.errors} errors`;
+  if (data.capabilities.length === 0) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No endpoints probed yet</td></tr>';
+    return;
+  }
+  body.innerHTML = data.capabilities.map(c => {
+    const stCls = c.status === 'available' ? 'success' : c.status === 'unavailable' ? 'safe' : 'failed';
+    const stText = c.status === 'available' ? 'Available' : c.status === 'unavailable' ? 'Not found' : 'Error';
+    return `
+      <tr>
+        <td><strong>${c.name}</strong></td>
+        <td style="font-size:11px; color:var(--text-dim)">${c.endpoint}</td>
+        <td><span class="badge ${stCls}">${stText}</span></td>
+        <td>${c.response_time_ms > 0 ? c.response_time_ms + 'ms' : '—'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
 async function loadGraphStats() {
   const data = await fetchJSON(`${API}/graph/stats`);
   if (!data || !data.stats) return;
@@ -1003,6 +1049,7 @@ async function loadAll() {
     loadForge(),
     loadCapabilities(),
     loadActions(),
+    loadDiscovery(),
     loadGraphStats()
   ]);
 }

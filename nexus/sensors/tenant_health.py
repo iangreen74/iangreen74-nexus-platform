@@ -284,6 +284,20 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
         except Exception:
             pass
 
+        # Deployment innovation features
+        deploy_features: dict[str, Any] = {}
+        try:
+            from nexus.capabilities.forgewing_api import call_api as _fw_call
+
+            preview = _fw_call("GET", f"/deploy-preview/{tenant_id}/0")
+            deploy_features["preview_available"] = not preview.get("error")
+            smoke = _fw_call("GET", f"/smoke-test/{tenant_id}/latest")
+            deploy_features["smoke_test_available"] = not smoke.get("error")
+            if smoke.get("pass_rate") is not None:
+                deploy_features["smoke_pass_rate"] = smoke["pass_rate"]
+        except Exception:
+            pass
+
         report = {
             "tenant_id": tenant_id,
             "context": ctx,
@@ -295,6 +309,7 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             "token": token_status,
             "deploy_stage": deploy_stage,
             "deploy_stuck": deploy_stuck,
+            "deploy_features": deploy_features,
             "overall_status": _rollup(deployment, pipeline, conversation),
             "checked_at": _now().isoformat(),
         }

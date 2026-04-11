@@ -315,3 +315,19 @@ After Level 4, Overwatch programs itself. The more incidents it sees, the more i
 **Closed-Loop:** No fire-and-forget. Every action is verified. Every escalation is a learning opportunity. Every resolution feeds back into the system.
 
 **Performance > Uptime:** Uptime is table stakes. The real competitive advantage is a system that actively optimizes itself — faster daemon cycles, better PR quality, higher tenant engagement.
+
+---
+
+## Level 5 — Auto-Discovery (April 10)
+
+Overwatch no longer needs manual sensor updates when Forgewing adds features.
+
+**capability_discovery.py** probes known endpoint patterns every ~5 minutes:
+- Core: /health
+- Deployment: deploy-progress, deployment-dna, deploy-preview, deployment-intelligence
+- QA: smoke-test
+- Tenant: status, onboarding, conversation, tasks
+
+New endpoints are detected automatically and logged as `capability_discovered` events. The dashboard shows all discovered capabilities and their status.
+
+When a new endpoint appears (e.g., /visual-regression/{tid}), Overwatch starts monitoring it on the next discovery cycle without a code change.

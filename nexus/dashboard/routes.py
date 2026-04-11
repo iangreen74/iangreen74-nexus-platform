@@ -30,6 +30,7 @@ from nexus.reasoning.pattern_learner import (
     reject_candidate,
 )
 from nexus.sensors import (
+    capability_discovery,
     capability_validator,
     ci_monitor,
     daemon_monitor,
@@ -199,6 +200,14 @@ async def platform_status() -> dict[str, Any]:
         except Exception:
             logger.debug("performance checks failed for %s", tid, exc_info=True)
 
+    # Capability discovery — run full probe ~10% of cycles (~every 5 min)
+    import random as _rnd
+    if _rnd.random() < 0.1:
+        capability_discovery.discover_capabilities(
+            tenant_ids=[t.get("tenant_id") for t in tenants if t.get("tenant_id")]
+        )
+    forgewing_health = capability_discovery.get_capability_health()
+
     locks = infrastructure_lock.check_locks()
     preemptive_alerts = preemptive.run_preemptive_checks()
     if not locks.get("all_locked"):
@@ -234,6 +243,7 @@ async def platform_status() -> dict[str, Any]:
         "performance": {
             "daemon_cycle": perf_daemon,
         },
+        "forgewing_capabilities": forgewing_health,
     }
 
 
@@ -583,6 +593,13 @@ async def sre_incidents() -> dict[str, Any]:
         "resolved": resolved,
         "resolved_count": len(resolved),
     }
+
+
+@router.get("/discovery")
+async def api_discovery() -> dict[str, Any]:
+    """Discover Forgewing capabilities and their health."""
+    tenant_ids = neptune_client.get_tenant_ids()
+    return capability_discovery.discover_capabilities(tenant_ids)
 
 
 @router.get("/heal-chains")
