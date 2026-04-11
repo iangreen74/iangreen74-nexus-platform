@@ -236,9 +236,13 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
                 summary_parts.append(f"{pipeline['tasks_pending']} pending")
         summary = " · ".join(summary_parts) if summary_parts else "no activity"
 
-        # Deploy health — query Neptune directly for DeploymentProgress.
-        # The Forgewing API requires auth we don't have; Neptune is the
-        # source of truth and is accessible from the ECS task.
+        # Deploy health — query Neptune for DeploymentProgress.
+        # A deploy is stuck ONLY if:
+        #   1. DeploymentProgress exists with a non-terminal stage
+        #   2. DeploymentStack exists with a non-COMPLETE status
+        # Having DeploymentDNA alone is NOT stuck — the analysis can run
+        # without the deploy ever being triggered. No evidence of deploy
+        # attempt → tenant just hasn't deployed yet → normal.
         deploy_stuck = False
         deploy_stage = None
         try:
@@ -250,37 +254,21 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             )
             if dp_rows:
                 deploy_stage = dp_rows[0].get("stage")
-                # Stage exists and is not terminal → deploy is in progress or stuck
                 if deploy_stage and deploy_stage not in ("live", "complete"):
                     deploy_stuck = True
             else:
-                # No DeploymentProgress node at all. If the tenant is in
-                # executing stage (tasks + PRs happening), they're in the
-                # Build phase and haven't deployed yet — that's normal.
-                # But if they have a DeploymentDNA or DeploymentStack node,
-                # a deploy was attempted and failed to create progress.
-                if mission_stage in ("executing", "complete"):
-                    dna_rows = neptune_client.query(
-                        "MATCH (d:DeploymentDNA {tenant_id: $tid}) "
-                        "RETURN d.recommendation AS rec",
-                        {"tid": tenant_id},
-                    )
-                    stack_rows = neptune_client.query(
-                        "MATCH (s:DeploymentStack {tenant_id: $tid}) "
-                        "RETURN s.status AS status, s.stack_name AS name",
-                        {"tid": tenant_id},
-                    )
-                    # If there's a stack that isn't CREATE_COMPLETE, deploy is stuck
-                    if stack_rows:
-                        stack_status = stack_rows[0].get("status", "")
-                        if stack_status and "COMPLETE" not in stack_status:
-                            deploy_stuck = True
-                            deploy_stage = f"stack:{stack_status}"
-                    elif dna_rows:
-                        # DNA exists (deploy was analyzed) but no stack + no progress
-                        # → deploy never kicked off or silently failed
+                # No progress node — check if there's a stuck stack
+                stack_rows = neptune_client.query(
+                    "MATCH (s:DeploymentStack {tenant_id: $tid}) "
+                    "RETURN s.status AS status, s.stack_name AS name",
+                    {"tid": tenant_id},
+                )
+                if stack_rows:
+                    stack_status = stack_rows[0].get("status", "")
+                    if stack_status and "COMPLETE" not in stack_status:
                         deploy_stuck = True
-                        deploy_stage = "never_started"
+                        deploy_stage = f"stack:{stack_status}"
+                # No progress + no stuck stack → not stuck, just hasn't deployed
         except Exception:
             pass
 

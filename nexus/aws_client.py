@@ -225,13 +225,12 @@ def _find_stack_for_tenant(tenant_id: str) -> dict[str, Any] | None:
 
 def describe_tenant_infra(tenant_id: str) -> dict[str, Any]:
     """
-    Summarize a tenant's actual CF stack + ECS posture.
+    Summarize a tenant's deployment infrastructure.
 
-    The stack name is *discovered* by listing live ForgeScaler-* stacks
-    and prefix-matching against tenant_id, rather than hard-coding a
-    naming convention that may not exist. If no stack is found, the
-    tenant is reported as `unprovisioned` rather than `critical` —
-    that's a meaningful distinction for triage.
+    Reads from Neptune (DeployedService, DeploymentStack nodes) rather
+    than calling the CloudFormation API, because the ECS task role
+    doesn't have cloudformation:ListStacks/DescribeStacks. Neptune is
+    the source of truth — the daemon writes these nodes after deploys.
     """
     if MODE != "production":
         return {
@@ -242,26 +241,52 @@ def describe_tenant_infra(tenant_id: str) -> dict[str, Any]:
             "provisioned": True,
         }
 
-    matched = _find_stack_for_tenant(tenant_id)
-    if matched is None:
+    # Query Neptune for deployment artifacts instead of calling CF API.
+    # Import here to avoid circular imports.
+    from nexus import neptune_client
+
+    # 1. Check DeployedService — this means the app is actually running
+    svc_rows = neptune_client.query(
+        "MATCH (s:DeployedService {tenant_id: $tid}) "
+        "RETURN s.url AS url, s.accessible AS accessible, "
+        "s.environment AS env, s.last_checked AS checked",
+        {"tid": tenant_id},
+    )
+    if svc_rows:
+        svc = svc_rows[0]
+        accessible = svc.get("accessible")
         return {
             "tenant_id": tenant_id,
-            "stack": None,
-            "services": [],
-            "healthy": False,
-            "provisioned": False,
-            "reason": "no ForgeScaler-* stack matched this tenant_id",
+            "stack": {"url": svc.get("url"), "environment": svc.get("env")},
+            "services": [{"url": svc.get("url"), "accessible": accessible}],
+            "healthy": bool(accessible),
+            "provisioned": True,
         }
 
-    stack = get_cf_stack_status(matched["name"])
-    services: list[dict[str, Any]] = []  # tenant ECS services live in their own
-    # cluster (created by their stack); without an authoritative cluster name
-    # mapping we don't synthesize one here. The Phase-2 follow-up that maps
-    # stack outputs -> cluster name will populate this.
+    # 2. Check DeploymentStack — infra exists but maybe not live yet
+    stack_rows = neptune_client.query(
+        "MATCH (s:DeploymentStack {tenant_id: $tid}) "
+        "RETURN s.stack_name AS name, s.status AS status, s.checked_at AS checked",
+        {"tid": tenant_id},
+    )
+    if stack_rows:
+        st = stack_rows[0]
+        status = st.get("status", "")
+        healthy = status.endswith("_COMPLETE") and "ROLLBACK" not in status
+        return {
+            "tenant_id": tenant_id,
+            "stack": {"stack_name": st.get("name"), "status": status},
+            "services": [],
+            "healthy": healthy,
+            "provisioned": True,
+        }
+
+    # 3. No deployment artifacts in Neptune → not provisioned
     return {
         "tenant_id": tenant_id,
-        "stack": stack,
-        "services": services,
-        "healthy": stack.get("healthy", False),
-        "provisioned": True,
+        "stack": None,
+        "services": [],
+        "healthy": False,
+        "provisioned": False,
+        "reason": "no DeployedService or DeploymentStack in Neptune",
     }
