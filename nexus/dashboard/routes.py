@@ -593,15 +593,15 @@ def _format_report(
             projects_resp = _fw("GET", f"/projects/{tid}")
             if not projects_resp.get("error") and isinstance(projects_resp.get("projects"), list):
                 for p in projects_resp["projects"]:
-                    status = p.get("status", "unknown")
+                    p_status = p.get("status", "unknown")
                     name = p.get("name") or p.get("repo_url", "?")
-                    marker = "●" if status == "active" else "○"
+                    marker = "●" if p_status == "active" else "○"
                     extra = ""
                     if p.get("task_count"):
                         extra += f" | {p['task_count']} tasks"
                     if p.get("pr_count"):
                         extra += f", {p['pr_count']} PRs"
-                    lines.append(f"    {marker} {name} ({status}){extra}")
+                    lines.append(f"    {marker} {name} ({p_status}){extra}")
             if lc.get("pending_restart"):
                 lines.append("    ⚠ pending_restart flag set")
             if lc.get("last_event"):
