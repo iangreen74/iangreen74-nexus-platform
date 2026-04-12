@@ -139,6 +139,15 @@ async def platform_status() -> dict[str, Any]:
             logger.debug("lifecycle check failed for %s", tid, exc_info=True)
             t["lifecycle_findings"] = []
 
+        # Consistency auditor — data drift detection + auto-fix
+        try:
+            from nexus.capabilities.consistency_auditor import audit_tenant
+
+            t["consistency_findings"] = audit_tenant(tid, t)
+        except Exception:
+            logger.debug("consistency audit failed for %s", tid, exc_info=True)
+            t["consistency_findings"] = []
+
         # Capability validation — triage blocked/degraded tenants
         try:
             cap_report = capability_validator.validate_tenant_capabilities(tid)
@@ -846,6 +855,22 @@ def _format_report(
             for t in tenants.get("tenants", [])
         }
         lines.append(_lc_fmt(by_tenant))
+        lines.append("")
+    except Exception:
+        pass
+
+    # --- Consistency auditor (Class 2) ---
+    try:
+        from nexus.capabilities.consistency_auditor import (
+            audit_global,
+            format_for_report as _cons_fmt,
+        )
+
+        per_tenant = {
+            t.get("tenant_id", "?"): t.get("consistency_findings") or []
+            for t in tenants.get("tenants", [])
+        }
+        lines.append(_cons_fmt(per_tenant, audit_global()))
         lines.append("")
     except Exception:
         pass
