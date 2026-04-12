@@ -130,6 +130,15 @@ async def platform_status() -> dict[str, Any]:
         except Exception:
             logger.debug("action check failed for %s", tid, exc_info=True)
 
+        # Lifecycle watchdog — stuck-stage detection
+        try:
+            from nexus.capabilities.lifecycle_watchdog import check_lifecycle
+
+            t["lifecycle_findings"] = check_lifecycle(tid, t)
+        except Exception:
+            logger.debug("lifecycle check failed for %s", tid, exc_info=True)
+            t["lifecycle_findings"] = []
+
         # Capability validation — triage blocked/degraded tenants
         try:
             cap_report = capability_validator.validate_tenant_capabilities(tid)
@@ -824,6 +833,19 @@ def _format_report(
         if total > 0:
             for cat, count in summary.get("by_category", {}).items():
                 lines.append(f"  - {cat}: {count}")
+        lines.append("")
+    except Exception:
+        pass
+
+    # --- Lifecycle watchdog (Class 1) ---
+    try:
+        from nexus.capabilities.lifecycle_watchdog import format_for_report as _lc_fmt
+
+        by_tenant = {
+            t.get("tenant_id", "?"): t.get("lifecycle_findings") or []
+            for t in tenants.get("tenants", [])
+        }
+        lines.append(_lc_fmt(by_tenant))
         lines.append("")
     except Exception:
         pass
