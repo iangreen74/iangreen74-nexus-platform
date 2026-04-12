@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import Response
 
 from nexus import neptune_client, overwatch_graph
 from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, project_lifecycle, tenant_ops  # noqa: F401
@@ -806,6 +807,31 @@ def _format_report(
     except Exception:
         pass
 
+    # --- Section 16: Code health (Capability 30) ---
+    try:
+        from nexus.nexus_code_auditor import format_report_text, get_latest_report
+
+        audit = get_latest_report()
+        if audit:
+            lines.append("CODE HEALTH:")
+            lines.append(
+                f"  Score: {audit.get('health_score', '?')}/100 — "
+                f"{audit.get('total_findings', 0)} findings "
+                f"(critical={audit.get('critical', 0)}, high={audit.get('high', 0)}, "
+                f"medium={audit.get('medium', 0)}, low={audit.get('low', 0)})"
+            )
+            for sev in ("critical", "high"):
+                items = [f for f in audit.get("findings", []) if f.get("severity") == sev][:5]
+                for f in items:
+                    lines.append(
+                        f"  [{sev.upper()}][{f.get('rule', '?')}] "
+                        f"{f.get('file', '?')}:{f.get('line', '?')} — {f.get('message', '')}"
+                    )
+            lines.append("")
+    except Exception as exc:
+        lines.append(f"CODE HEALTH: unavailable ({str(exc)[:80]})")
+        lines.append("")
+
     lines.append("---")
     lines.append("Paste this into Claude with: 'Here is the latest Overwatch report.'")
     return "\n".join(lines)
@@ -1008,20 +1034,66 @@ async def reload_patterns() -> dict[str, Any]:
     return {"reloaded": count, "status": "ok"}
 
 
+async def _build_full_report() -> str:
+    """Generate the diagnostic text. Never raises — degrades to partial report."""
+    sections: dict[str, Any] = {
+        "status": {},
+        "tenants": {"tenants": []},
+        "actions": [],
+        "patterns": [],
+    }
+    try:
+        sections["status"] = await platform_status()
+    except Exception as exc:
+        logger.warning("platform_status failed in report: %s", exc)
+        sections["status"] = {"overall": "unknown", "_error": str(exc)[:200]}
+    try:
+        sections["tenants"] = await list_tenants()
+    except Exception as exc:
+        logger.warning("list_tenants failed in report: %s", exc)
+    try:
+        sections["actions"] = (await actions(limit=15)).get("actions", [])
+    except Exception as exc:
+        logger.warning("actions failed in report: %s", exc)
+    try:
+        sections["patterns"] = (await failure_patterns(min_confidence=0.0)).get("patterns", [])
+    except Exception as exc:
+        logger.warning("patterns failed in report: %s", exc)
+    try:
+        return _format_report(**sections)
+    except Exception as exc:
+        logger.exception("_format_report failed")
+        return (
+            f"OVERWATCH DIAGNOSTIC — partial\n"
+            f"Report generation failed: {exc}\n\n"
+            f"Raw status keys: {list(sections['status'].keys())}\n"
+            f"Tenants: {len(sections['tenants'].get('tenants', []))}\n"
+            f"Actions: {len(sections['actions'])}\n"
+            f"Patterns: {len(sections['patterns'])}\n"
+        )
+
+
 @router.get("/diagnostic-report")
 async def diagnostic_report() -> dict[str, Any]:
     """Generate a structured text diagnostic for pasting into Claude."""
-    status = await platform_status()
-    tenants = await list_tenants()
-    actions_resp = await actions(limit=15)
-    patterns_resp = await failure_patterns(min_confidence=0.0)
-    text = _format_report(
-        status=status,
-        tenants=tenants,
-        actions=actions_resp.get("actions", []),
-        patterns=patterns_resp.get("patterns", []),
-    )
+    text = await _build_full_report()
     return {"report": text, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/download-report")
+async def download_report() -> Response:
+    """Download the full diagnostic report as a .md file."""
+    try:
+        text = await _build_full_report()
+    except Exception as exc:
+        text = f"# Report Generation Failed\n\nError: {exc}\n"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"overwatch-report-{timestamp}.md"
+    return Response(
+        content=text,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/tenant-report/{tenant_id}")

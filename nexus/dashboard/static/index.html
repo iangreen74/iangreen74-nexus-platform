@@ -192,7 +192,10 @@
       <span class="sub">Watching over Forgewing so you don't have to.</span>
     </div>
     <div class="header-actions">
-      <button class="btn" id="copy-report-btn" onclick="copyDiagnostic()" title="Copy a structured diagnostic to the clipboard for pasting into Claude">Copy Report</button>
+      <a href="/api/download-report" download
+         style="background:#34d399;color:#000;padding:8px 20px;border-radius:6px;text-decoration:none;font-weight:700;font-family:monospace;font-size:13px;letter-spacing:0.05em;display:inline-block;"
+         title="Download the full diagnostic report as a .md file">DOWNLOAD REPORT</a>
+      <button class="btn" id="copy-report-btn" onclick="copyDiagnostic()" style="padding:6px 14px;font-size:11px;opacity:0.75;margin-left:8px;" title="Copy a structured diagnostic to the clipboard for pasting into Claude">Copy to Clipboard</button>
       <span class="status-badge" id="overall-badge">LOADING</span>
     </div>
   </header>
