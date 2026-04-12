@@ -779,7 +779,17 @@ def _format_report(
     except Exception:
         pass
 
-    # --- Section 14: Synthetic tests ---
+    # --- Section 14: Runner health ---
+    try:
+        from nexus.runner_health import check_all_runners, format_for_report
+
+        runner_results = check_all_runners()
+        lines.append(format_for_report(runner_results))
+        lines.append("")
+    except Exception:
+        pass
+
+    # --- Section 15: Synthetic tests ---
     try:
         from nexus.synthetic_tests import get_summary
 
@@ -1363,3 +1373,20 @@ async def trigger_remediation() -> dict[str, Any]:
     from nexus.auto_remediation import run_and_remediate
 
     return run_and_remediate()
+
+
+@router.get("/runners")
+async def runner_health_summary() -> dict[str, Any]:
+    """Runner health summary — disk, docker, agent, socket per runner."""
+    from nexus.runner_health import get_summary
+
+    return get_summary()
+
+
+@router.post("/runners/check")
+async def trigger_runner_check() -> dict[str, Any]:
+    """Force a fresh runner health check (bypasses cache)."""
+    from nexus.runner_health import check_all_runners
+
+    results = check_all_runners(force=True)
+    return {"runners": results, "total": len(results)}
