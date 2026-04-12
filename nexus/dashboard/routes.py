@@ -508,6 +508,28 @@ def _format_report(
         f"{ci.get('run_count', 0)} runs (failing: {', '.join(failing) or 'none'})"
     )
 
+    # CI enrichment from S3 (real-time, richer than GitHub API)
+    try:
+        from nexus.ci_reader import get_ci_health_summary, get_deploy_outcome_summary
+
+        s3_ci = get_ci_health_summary()
+        if s3_ci.get("status") != "unavailable":
+            lines.append(
+                f"CI (S3): {s3_ci.get('status', '?')} — "
+                f"{s3_ci.get('total_tests', 0)} tests, "
+                f"{s3_ci.get('failed_count', 0)} failed — "
+                f"commit {s3_ci.get('commit_sha', '?')[:8]}"
+            )
+        s3_deploy = get_deploy_outcome_summary()
+        if s3_deploy.get("status") != "unavailable":
+            lines.append(
+                f"Last deploy (S3): {s3_deploy.get('service', '?')} → "
+                f"{s3_deploy.get('status', '?')} — "
+                f"commit {s3_deploy.get('commit_sha', '?')[:8]}"
+            )
+    except Exception:
+        pass
+
     ts = status.get("tenants", {}) or {}
     lines.append(
         f"Tenants: {status.get('tenant_count', 0)} total — "
@@ -1117,3 +1139,67 @@ async def ops_chat_endpoint(payload: dict[str, Any] = Body(...)) -> dict[str, An
     result["mode"] = MODE
     result["model"] = OPS_CHAT_MODEL_ID
     return result
+
+
+# --- AIOps: Deploy Decision + Outcome + CI Reader ----------------------------
+
+
+@router.post("/deploy-decision")
+async def deploy_decision(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """CI calls this before deploying. Returns DEPLOY / HOLD / CANARY."""
+    from nexus.deploy_decision import evaluate_deploy_request
+
+    required = ("commit_sha", "service")
+    for field in required:
+        if not (payload or {}).get(field):
+            raise HTTPException(status_code=400, detail=f"{field} is required")
+
+    result = evaluate_deploy_request(payload)
+    overwatch_graph.record_event(
+        event_type="deploy_decision",
+        service=payload.get("service", ""),
+        severity="info" if result["decision"] == "DEPLOY" else "warning",
+        details={
+            "decision": result["decision"],
+            "reason": result["reason"],
+            "commit_sha": payload.get("commit_sha", ""),
+            "risk_score": payload.get("risk_score"),
+        },
+    )
+    return result
+
+
+@router.post("/deploy-outcome")
+async def deploy_outcome(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """CI reports deploy outcome after completion. Feeds pattern learning."""
+    from nexus.deploy_patterns import record_deploy_outcome
+
+    if not (payload or {}).get("commit_sha"):
+        raise HTTPException(status_code=400, detail="commit_sha is required")
+    if not (payload or {}).get("status"):
+        raise HTTPException(status_code=400, detail="status is required")
+
+    node_id = record_deploy_outcome(payload)
+    return {"recorded": True, "event_id": node_id}
+
+
+@router.get("/ci/s3")
+async def ci_from_s3() -> dict[str, Any]:
+    """Latest CI result read from S3 (faster than GitHub API polling)."""
+    from nexus.ci_reader import get_ci_health_summary, get_deploy_outcome_summary
+
+    return {
+        "ci": get_ci_health_summary(),
+        "last_deploy": get_deploy_outcome_summary(),
+    }
+
+
+@router.get("/deploy-patterns")
+async def deploy_pattern_stats() -> dict[str, Any]:
+    """Deploy success rate and recent failure count."""
+    from nexus.deploy_patterns import get_deploy_success_rate, get_deploy_failure_count
+
+    return {
+        "success_rate_24h": get_deploy_success_rate(hours=24),
+        "failures_6h": get_deploy_failure_count(hours=6),
+    }
