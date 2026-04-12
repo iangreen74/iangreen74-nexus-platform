@@ -623,7 +623,13 @@ def _format_report(
             tasks = gt.get("tasks", {})
             vel = gt.get("velocity", {})
             url_str = dep.get("app_url") or "no URL"
-            http_str = f"HTTP {dep.get('http_status')}" if dep.get("http_status") else dep.get("deploy_status", "—")
+            ds = dep.get("deploy_status", "—")
+            if ds == "not_started":
+                http_str = "not deployed"
+            elif dep.get("http_status"):
+                http_str = f"HTTP {dep['http_status']}"
+            else:
+                http_str = ds
             lines.append(f"  {tid}:")
             lines.append(f"    App: {url_str} → {http_str}")
             lines.append(f"    PRs: {prs.get('total', 0)} ({prs.get('merged', 0)} merged, {prs.get('pending', 0)} pending)")
@@ -713,7 +719,40 @@ def _format_report(
         pass
     lines.append("")
 
-    # --- Section 10: Engineering insights ---
+    # --- Section 10: Intelligence status (per tenant) ---
+    try:
+        lines.append("INTELLIGENCE STATUS:")
+        for t in tenants.get("tenants", []):
+            tid = t.get("tenant_id", "unknown")
+            conv = t.get("conversation", {}) or {}
+            msg_count = conv.get("message_count", 0)
+            profile = "built" if msg_count >= 10 else "not built"
+            profile_detail = f"{msg_count} messages" if msg_count > 0 else "no conversations"
+            lines.append(f"  {tid}:")
+            lines.append(f"    User profile: {profile} ({profile_detail})")
+        lines.append("")
+    except Exception:
+        pass
+
+    # --- Section 11: CI/CD credential status ---
+    try:
+        lines.append("CI/CD CREDENTIALS:")
+        for t in tenants.get("tenants", []):
+            tid = t.get("tenant_id", "unknown")
+            deployment = t.get("deployment", {}) or {}
+            token = t.get("token", {}) or {}
+            has_deploy = deployment.get("provisioned", False)
+            has_token = token.get("present", False)
+            if has_deploy:
+                tier = "Tier 3 (CodeBuild)" if deployment.get("stack") else "Tier 1/2"
+                lines.append(f"  {tid}: deploy={tier}, token={'present' if has_token else 'EMPTY'}")
+            else:
+                lines.append(f"  {tid}: not provisioned, token={'present' if has_token else 'EMPTY'}")
+        lines.append("")
+    except Exception:
+        pass
+
+    # --- Section 12: Engineering insights ---
     try:
         from nexus.engineering_patterns import get_recommendations
 
@@ -726,16 +765,17 @@ def _format_report(
     except Exception:
         pass
 
-    # --- Section 11: Proactive suggestions ---
+    # --- Section 13: Proactive alerts ---
     try:
         from nexus.proactive_scanner import get_all_suggestions_summary
 
         summary = get_all_suggestions_summary()
-        if summary.get("total", 0) > 0:
-            lines.append(f"PROACTIVE ALERTS: {summary['total']} suggestions across {summary['tenants_with_suggestions']} tenants")
+        total = summary.get("total", 0)
+        lines.append(f"PROACTIVE ALERTS: {total} pending across {summary.get('tenants_with_suggestions', 0)} tenants")
+        if total > 0:
             for cat, count in summary.get("by_category", {}).items():
                 lines.append(f"  - {cat}: {count}")
-            lines.append("")
+        lines.append("")
     except Exception:
         pass
 

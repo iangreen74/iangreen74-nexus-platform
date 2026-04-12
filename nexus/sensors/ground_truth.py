@@ -151,11 +151,16 @@ def get_deploy_ground_truth(tenant_id: str) -> dict[str, Any]:
     stage = dp[0].get("stage") if dp else None
     updated = dp[0].get("updated") if dp else None
 
+    # Terminal / safe stages — never classify these as "deploying"
+    _SAFE_STAGES = {"live", "complete", "not_started"}
+
     if app.get("status") == "live":
         deploy_status = "live"
     elif stage == "live":
         deploy_status = "live"
-    elif stage and stage not in ("live", "complete"):
+    elif stage == "not_started":
+        deploy_status = "not_started"
+    elif stage and stage not in _SAFE_STAGES:
         deploy_status = "deploying"
     elif app.get("status") == "no_url" and not stage:
         deploy_status = "not_started"
