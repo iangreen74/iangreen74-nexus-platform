@@ -38,6 +38,8 @@ def build_system_prompt(context: dict[str, Any]) -> str:
         f"{json.dumps(context.get('executions', []), indent=2, default=str)[:1000]}\n\n"
         "FAILURE PATTERNS:\n"
         f"{json.dumps(context.get('patterns', []), indent=2, default=str)[:500]}\n\n"
+        "ENGINEERING INSIGHTS (cross-tenant, anonymous):\n"
+        f"{json.dumps(context.get('engineering_insights', []), indent=2, default=str)[:500]}\n\n"
         "AVAILABLE ACTIONS (you can execute these):\n"
         f"{json.dumps(context.get('capabilities', []), indent=2, default=str)[:1500]}\n\n"
         "RULES:\n"
@@ -47,6 +49,7 @@ def build_system_prompt(context: dict[str, Any]) -> str:
         "- If you don't have enough data, say what data you need\n"
         "- Reference specific tenant IDs, timestamps, and counts\n"
         "- Look for concerning trends and warn proactively\n"
+        "- When asked 'what should we improve?', reference engineering insights\n"
     )
 
 

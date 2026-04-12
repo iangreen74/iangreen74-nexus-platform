@@ -713,6 +713,32 @@ def _format_report(
         pass
     lines.append("")
 
+    # --- Section 10: Engineering insights ---
+    try:
+        from nexus.engineering_patterns import get_recommendations
+
+        recs = get_recommendations(limit=3)
+        if recs:
+            lines.append("ENGINEERING INSIGHTS:")
+            for r in recs:
+                lines.append(f"  - [{r['type']}] {r['insight']} ({r.get('data_points', 0)} data points)")
+            lines.append("")
+    except Exception:
+        pass
+
+    # --- Section 11: Proactive suggestions ---
+    try:
+        from nexus.proactive_scanner import get_all_suggestions_summary
+
+        summary = get_all_suggestions_summary()
+        if summary.get("total", 0) > 0:
+            lines.append(f"PROACTIVE ALERTS: {summary['total']} suggestions across {summary['tenants_with_suggestions']} tenants")
+            for cat, count in summary.get("by_category", {}).items():
+                lines.append(f"  - {cat}: {count}")
+            lines.append("")
+    except Exception:
+        pass
+
     lines.append("---")
     lines.append("Paste this into Claude with: 'Here is the latest Overwatch report.'")
     return "\n".join(lines)
@@ -1123,12 +1149,21 @@ async def ops_chat_endpoint(payload: dict[str, Any] = Body(...)) -> dict[str, An
     except Exception:
         status_data, tenants_data, patterns_data = {}, {"tenants": []}, {"patterns": []}
 
+    # Engineering insights for proactive recommendations
+    try:
+        from nexus.engineering_patterns import get_recommendations
+
+        eng_insights = get_recommendations(limit=3)
+    except Exception:
+        eng_insights = []
+
     context = {
         "status": status_data,
         "tenants": tenants_data.get("tenants", []),
         "heal_chains": status_data.get("active_heal_chains", {}),
         "executions": status_data.get("executions", []),
         "patterns": patterns_data.get("patterns", []),
+        "engineering_insights": eng_insights,
         "capabilities": [
             {"name": c.name, "description": c.description, "blast_radius": c.blast_radius}
             for c in registry.list_all()
@@ -1202,4 +1237,46 @@ async def deploy_pattern_stats() -> dict[str, Any]:
     return {
         "success_rate_24h": get_deploy_success_rate(hours=24),
         "failures_6h": get_deploy_failure_count(hours=6),
+    }
+
+
+@router.get("/engineering-insights")
+async def engineering_insights() -> dict[str, Any]:
+    """Cross-tenant engineering patterns and recommendations."""
+    from nexus.engineering_patterns import analyze_all, get_recommendations
+
+    return {
+        "patterns": [p for p in analyze_all() if p],
+        "recommendations": get_recommendations(limit=5),
+    }
+
+
+@router.get("/proactive-suggestions")
+async def proactive_suggestions() -> dict[str, Any]:
+    """Proactive suggestion summary across all tenants."""
+    from nexus.proactive_scanner import get_all_suggestions_summary
+
+    return get_all_suggestions_summary()
+
+
+@router.get("/proactive-suggestions/{tenant_id}")
+async def tenant_suggestions(tenant_id: str) -> dict[str, Any]:
+    """Proactive suggestions for a specific tenant."""
+    from nexus.proactive_scanner import get_suggestions
+
+    suggestions = get_suggestions(tenant_id)
+    return {"tenant_id": tenant_id, "suggestions": suggestions}
+
+
+@router.post("/proactive-scan")
+async def trigger_proactive_scan() -> dict[str, Any]:
+    """Trigger a proactive scan across all tenants (on-demand)."""
+    from nexus.proactive_scanner import scan_all_tenants
+
+    results = scan_all_tenants()
+    total = sum(len(v) for v in results.values())
+    return {
+        "scanned": len(results),
+        "suggestions": total,
+        "by_tenant": {tid: len(s) for tid, s in results.items()},
     }
