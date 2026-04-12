@@ -1390,3 +1390,35 @@ async def trigger_runner_check() -> dict[str, Any]:
 
     results = check_all_runners(force=True)
     return {"runners": results, "total": len(results)}
+
+
+@router.post("/code-audit")
+async def trigger_code_audit(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Run the full code audit against aria-platform (clones repo)."""
+    from nexus.nexus_code_auditor import run_audit
+
+    body = payload or {}
+    local_path = body.get("local_path")
+    repo_url = body.get("repo_url")
+    return await asyncio.to_thread(
+        run_audit, repo_url=repo_url, local_path=local_path, store_results=True
+    )
+
+
+@router.get("/code-audit")
+async def latest_code_audit() -> dict[str, Any]:
+    """Return the most recent code audit report from the graph."""
+    from nexus.nexus_code_auditor import get_latest_report
+
+    report = get_latest_report()
+    if not report:
+        return {"status": "no_audit_yet", "message": "No audit has been run yet"}
+    return report
+
+
+@router.get("/code-audit/text")
+async def latest_code_audit_text() -> dict[str, Any]:
+    """Return the latest audit report as plain-text (for copy/paste)."""
+    from nexus.nexus_code_auditor import format_report_text, get_latest_report
+
+    return {"report": format_report_text(get_latest_report())}
