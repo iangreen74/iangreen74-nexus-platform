@@ -859,6 +859,15 @@ def _format_report(
     except Exception:
         pass
 
+    # --- Incident signatures (Class 4) ---
+    try:
+        from nexus.capabilities.incident_learner import format_for_report as _il_fmt
+
+        lines.append(_il_fmt())
+        lines.append("")
+    except Exception:
+        pass
+
     # --- Regression guard (Class 3) ---
     try:
         from nexus.capabilities.regression_guard import (
