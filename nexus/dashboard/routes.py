@@ -779,6 +779,23 @@ def _format_report(
     except Exception:
         pass
 
+    # --- Section 14: Synthetic tests ---
+    try:
+        from nexus.synthetic_tests import get_summary
+
+        st = get_summary()
+        score = f"{st['passed']}/{st['total']} ({st['score_pct']}%)"
+        lines.append(f"SYNTHETIC TESTS: {score}")
+        for r in st.get("results", []):
+            marker = "pass" if r["status"] == "pass" else r["status"].upper()
+            ms = f" ({r.get('duration_ms', 0)}ms)" if r.get("duration_ms") else ""
+            detail = f" — {r['details']}" if r.get("details") else ""
+            err = f" — {r['error']}" if r.get("error") else ""
+            lines.append(f"  {marker}: {r['name']}{ms}{detail}{err}")
+        lines.append("")
+    except Exception:
+        pass
+
     lines.append("---")
     lines.append("Paste this into Claude with: 'Here is the latest Overwatch report.'")
     return "\n".join(lines)
@@ -1320,3 +1337,29 @@ async def trigger_proactive_scan() -> dict[str, Any]:
         "suggestions": total,
         "by_tenant": {tid: len(s) for tid, s in results.items()},
     }
+
+
+@router.post("/synthetic-tests")
+async def trigger_synthetic_tests() -> dict[str, Any]:
+    """Run synthetic user journey tests on-demand."""
+    from nexus.synthetic_tests import run_all_journeys
+
+    results = run_all_journeys(force=True)
+    passed = sum(1 for r in results if r["status"] == "pass")
+    return {"results": results, "passed": passed, "total": len(results)}
+
+
+@router.get("/synthetic-tests")
+async def get_synthetic_results() -> dict[str, Any]:
+    """Get cached synthetic test results."""
+    from nexus.synthetic_tests import get_summary
+
+    return get_summary()
+
+
+@router.post("/synthetic-tests/remediate")
+async def trigger_remediation() -> dict[str, Any]:
+    """Run synthetic tests + attempt auto-remediation on failures."""
+    from nexus.auto_remediation import run_and_remediate
+
+    return run_and_remediate()
