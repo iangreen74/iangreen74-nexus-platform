@@ -1,16 +1,8 @@
 """
 Consistency Auditor — detects data drift between Neptune nodes.
 
-Six consistency checks with auto-fix for safe drifts. Every auto-fix
-is recorded as a HealingAction in the Overwatch graph for audit.
-
-Checks:
-1. repo_url_sync: Tenant.repo_url matches active Project.repo_url (auto-fix)
-2. active_project_exists: Tenant has >=1 active Project (alert only)
-3. ingest_stage_sync: stage advances once RepoFile count > 0 (auto-fix)
-4. pr_merge_sync: GitHub PR state matches Neptune PullRequest (alert only)
-5. cloud_connection_valid: token_empty vs mission_stage consistency (alert)
-6. orphan_projects: Project rows with no matching Tenant (alert only)
+Six checks with auto-fix for safe drifts. Every auto-fix recorded
+as a HealingAction.
 """
 from __future__ import annotations
 
@@ -51,126 +43,89 @@ def audit_global() -> list[dict[str, Any]]:
     return findings
 
 
-def _record_fix(tenant_id: str, check: str, detail: str) -> None:
+def _record_fix(tid: str, check: str, detail: str) -> None:
     try:
         overwatch_graph.record_healing_action(
-            action_type=f"consistency_fix:{check}",
-            target=tenant_id,
-            blast_radius=BLAST_SAFE,
-            trigger="consistency_auditor",
-            outcome="success",
-        )
-        logger.info("Auto-fix [%s] %s: %s", check, tenant_id, detail)
+            action_type=f"consistency_fix:{check}", target=tid,
+            blast_radius=BLAST_SAFE, trigger="consistency_auditor",
+            outcome="success")
+        logger.info("Auto-fix [%s] %s: %s", check, tid, detail)
     except Exception:
         pass
 
 
-def _record_finding(tenant_id: str, check: str, issue: str,
+def _record_finding(tid: str, check: str, issue: str,
                     auto_fixed: bool = False, fix_detail: str = "") -> dict[str, Any]:
-    return {
-        "check": check,
-        "tenant_id": tenant_id,
-        "issue": issue,
-        "auto_fixed": auto_fixed,
-        "fix_detail": fix_detail,
-    }
+    return {"check": check, "tenant_id": tid, "issue": issue,
+            "auto_fixed": auto_fixed, "fix_detail": fix_detail}
 
 
 # --- Per-tenant checks -------------------------------------------------------
 
 
-def _check_repo_url_sync(tid: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    """Tenant.repo_url should match active project's repo_url."""
+def _check_repo_url_sync(tid, data):
     ctx = data.get("context") or {}
     tenant_url = (ctx.get("repo_url") or "").strip()
     active = (data.get("active_project") or {}).get("repo_url", "").strip()
-    if not tenant_url or not active:
-        return None
-    if tenant_url == active:
+    if not tenant_url or not active or tenant_url == active:
         return None
     fixed = _auto_fix_repo_url(tid, active) if MODE == "production" else False
     return _record_finding(
         tid, "repo_url_sync",
         f"Tenant.repo_url='{tenant_url[:60]}' != active Project.repo_url='{active[:60]}'",
         auto_fixed=fixed,
-        fix_detail=f"updated Tenant.repo_url → {active[:60]}" if fixed else "",
-    )
+        fix_detail=f"updated to {active[:60]}" if fixed else "")
 
 
-def _auto_fix_repo_url(tid: str, target_url: str) -> bool:
-    """Update Tenant.repo_url to match active project."""
+def _auto_fix_repo_url(tid, url):
     try:
         from nexus import neptune_client
-
         neptune_client.query(
             "MATCH (t:Tenant {tenant_id: $tid}) SET t.repo_url = $url",
-            {"tid": tid, "url": target_url},
-        )
-        _record_fix(tid, "repo_url_sync", f"-> {target_url[:60]}")
+            {"tid": tid, "url": url})
+        _record_fix(tid, "repo_url_sync", url[:60])
         return True
     except Exception:
         return False
 
 
-def _check_active_project_exists(tid: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    """Every tenant past onboarding should have >=1 active project."""
-    ctx = data.get("context") or {}
-    stage = (ctx.get("mission_stage") or "").strip()
+def _check_active_project_exists(tid, data):
+    stage = ((data.get("context") or {}).get("mission_stage") or "").strip()
     if stage in ("awaiting_repo", "ingestion_pending", ""):
         return None
-    active = data.get("active_project")
-    if active:
+    if data.get("active_project"):
         return None
-    return _record_finding(
-        tid, "active_project_exists",
-        f"Tenant stage='{stage}' but no active Project",
-    )
+    return _record_finding(tid, "active_project_exists",
+                           f"Tenant stage='{stage}' but no active Project")
 
 
-def _check_ingest_stage_sync(tid: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    """If repo files are indexed, stage should have advanced past ingestion."""
-    ctx = data.get("context") or {}
-    stage = (ctx.get("mission_stage") or "").strip()
-    pipeline = data.get("pipeline") or {}
+def _check_ingest_stage_sync(tid, data):
+    stage = ((data.get("context") or {}).get("mission_stage") or "").strip()
     if stage not in ("awaiting_repo", "ingestion_pending", "ingesting"):
         return None
-    file_count = pipeline.get("repo_file_count", 0)
-    if file_count < 10:
+    fc = (data.get("pipeline") or {}).get("repo_file_count", 0)
+    if fc < 10:
         return None
-    return _record_finding(
-        tid, "ingest_stage_sync",
-        f"{file_count} RepoFiles indexed but stage still '{stage}'",
-    )
+    return _record_finding(tid, "ingest_stage_sync",
+                           f"{fc} RepoFiles indexed but stage still '{stage}'")
 
 
-def _check_pr_merge_sync(tid: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    """Large gap between Neptune pr_count and GitHub reality."""
+def _check_pr_merge_sync(tid, data):
     pipeline = data.get("pipeline") or {}
-    nep_count = pipeline.get("pr_count", 0)
-    gh_count = pipeline.get("github_pr_count")
-    if gh_count is None or nep_count == 0:
+    nep = pipeline.get("pr_count", 0)
+    gh = pipeline.get("github_pr_count")
+    if gh is None or nep == 0 or abs(nep - gh) <= 1:
         return None
-    if abs(nep_count - gh_count) <= 1:
-        return None
-    return _record_finding(
-        tid, "pr_merge_sync",
-        f"Neptune pr_count={nep_count} diverges from GitHub={gh_count}",
-    )
+    return _record_finding(tid, "pr_merge_sync",
+                           f"Neptune pr_count={nep} diverges from GitHub={gh}")
 
 
-def _check_cloud_connection_valid(tid: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    """Empty token but tenant is past onboarding = broken connection."""
-    ctx = data.get("context") or {}
-    token = data.get("token") or {}
-    stage = (ctx.get("mission_stage") or "").strip()
-    if stage in ("awaiting_repo", ""):
+def _check_cloud_connection_valid(tid, data):
+    stage = ((data.get("context") or {}).get("mission_stage") or "").strip()
+    if stage in ("awaiting_repo", "") or (data.get("token") or {}).get("present"):
         return None
-    if token.get("present"):
-        return None
-    return _record_finding(
-        tid, "cloud_connection_valid",
-        f"Tenant stage='{stage}' but GitHub token is empty",
-    )
+    return _record_finding(tid, "cloud_connection_valid",
+                           f"Tenant stage='{stage}' but GitHub token is empty")
 
 
 # --- Cross-tenant checks -----------------------------------------------------
