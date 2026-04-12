@@ -859,6 +859,18 @@ def _format_report(
     except Exception:
         pass
 
+    # --- Regression guard (Class 3) ---
+    try:
+        from nexus.capabilities.regression_guard import (
+            check_regressions,
+            format_for_report as _rg_fmt,
+        )
+
+        lines.append(_rg_fmt(check_regressions()))
+        lines.append("")
+    except Exception:
+        pass
+
     # --- Consistency auditor (Class 2) ---
     try:
         from nexus.capabilities.consistency_auditor import (
