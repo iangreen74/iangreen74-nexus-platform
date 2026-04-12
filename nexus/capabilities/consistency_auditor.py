@@ -69,24 +69,24 @@ def _check_repo_url_sync(tid, data):
     active = (data.get("active_project") or {}).get("repo_url", "").strip()
     if not tenant_url or not active or tenant_url == active:
         return None
-    fixed = _auto_fix_repo_url(tid, active) if MODE == "production" else False
+    # Auto-fix deliberately disabled: writing Tenant.repo_url is a write
+    # into aria-platform's graph schema — Tier 3 per CLAUDE.md. This
+    # drift is reported so an operator can sync via the Forgewing UI
+    # or a vetted admin path, not from Overwatch.
     return _record_finding(
         tid, "repo_url_sync",
         f"Tenant.repo_url='{tenant_url[:60]}' != active Project.repo_url='{active[:60]}'",
-        auto_fixed=fixed,
-        fix_detail=f"updated to {active[:60]}" if fixed else "")
+        auto_fixed=False,
+        fix_detail="")
 
 
 def _auto_fix_repo_url(tid, url):
-    try:
-        from nexus import neptune_client
-        neptune_client.query(
-            "MATCH (t:Tenant {tenant_id: $tid}) SET t.repo_url = $url",
-            {"tid": tid, "url": url})
-        _record_fix(tid, "repo_url_sync", url[:60])
-        return True
-    except Exception:
-        return False
+    """DISABLED. See _check_repo_url_sync — writing Tenant.repo_url is
+    Tier 3 (cross-system schema write) and must stay an operator-gated
+    escalation, not an autonomous Overwatch action. Kept as a no-op so
+    tests that reference the symbol don't break; remove when the tests
+    no longer import it."""
+    return False
 
 
 def _check_active_project_exists(tid, data):
