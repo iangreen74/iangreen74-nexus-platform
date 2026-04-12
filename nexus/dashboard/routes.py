@@ -868,6 +868,18 @@ def _format_report(
     except Exception:
         pass
 
+    # --- Deploy readiness (CI decision engine) ---
+    try:
+        from nexus.capabilities.ci_decision_engine import (
+            evaluate_deploy_readiness,
+            format_for_report as _ci_fmt,
+        )
+
+        lines.append(_ci_fmt(evaluate_deploy_readiness()))
+        lines.append("")
+    except Exception:
+        logger.debug("deploy readiness section failed", exc_info=True)
+
     # --- Regression guard (Class 3) ---
     try:
         from nexus.capabilities.regression_guard import (
@@ -1247,6 +1259,14 @@ async def _build_full_report() -> str:
             f"Actions: {len(sections['actions'])}\n"
             f"Patterns: {len(sections['patterns'])}\n"
         )
+
+
+@router.get("/ci-decision")
+async def ci_decision() -> dict[str, Any]:
+    """Current deploy readiness — 8-factor evaluation. Read-only."""
+    from nexus.capabilities.ci_decision_engine import evaluate_deploy_readiness
+
+    return evaluate_deploy_readiness()
 
 
 @router.post("/incident-signatures/bootstrap")
