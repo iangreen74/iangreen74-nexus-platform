@@ -50,3 +50,11 @@ def test_deploy_not_stuck_no_match():
     match = _match_pattern({"type": "tenant_health", "deploy_stuck": False})
     # Should not match tenant_deploy_stuck
     assert match is None or match["name"] != "tenant_deploy_stuck"
+
+
+def test_not_started_stage_not_stuck():
+    """A tenant whose deploy stage is 'not_started' is NOT stuck — just hasn't deployed."""
+    # The sensor sets deploy_stuck=False when stage is not_started,
+    # so the triage pattern should never fire for these tenants.
+    match = _match_pattern({"type": "tenant_health", "deploy_stuck": False, "deploy_stage": "not_started"})
+    assert match is None or match["name"] != "tenant_deploy_stuck"

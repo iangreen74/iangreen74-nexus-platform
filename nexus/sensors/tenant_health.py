@@ -254,7 +254,7 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             )
             if dp_rows:
                 deploy_stage = dp_rows[0].get("stage")
-                if deploy_stage and deploy_stage not in ("live", "complete"):
+                if deploy_stage and deploy_stage not in ("live", "complete", "not_started"):
                     deploy_stuck = True
             else:
                 # No progress node — check if there's a stuck stack
