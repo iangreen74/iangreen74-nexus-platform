@@ -36,9 +36,11 @@ def run_audit(
         repo_path = os.path.expanduser(local_path)
         cleanup = False
     else:
-        repo_path = _clone_repo(repo_url or DEFAULT_REPO_URL)
-        if not repo_path:
-            return {"status": "error", "error": "Failed to clone repo"}
+        clone_result = _clone_repo(repo_url or DEFAULT_REPO_URL)
+        if not clone_result.get("path"):
+            return {"status": "error",
+                    "error": clone_result.get("error") or "Failed to clone repo"}
+        repo_path = clone_result["path"]
         cleanup = True
 
     try:
@@ -150,10 +152,12 @@ def format_report_text(report: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
-def _clone_repo(url: str) -> str | None:
-    """Clone the repo to a temp directory (uses github-token if available)."""
+def _clone_repo(url: str) -> dict[str, Any]:
+    """Clone the repo to a temp directory. Returns {"path": str} on success
+    or {"error": str} describing the real failure reason."""
     tmpdir = tempfile.mkdtemp(prefix="audit_")
     clone_url = url
+    token_source = "anonymous"
     if MODE == "production":
         try:
             import boto3  # noqa: WPS433
@@ -164,18 +168,30 @@ def _clone_repo(url: str) -> str | None:
                 token = json.loads(token).get("token", token)
             if token and url.startswith("https://"):
                 clone_url = url.replace("https://", f"https://{token}@")
-        except Exception:
-            logger.debug("No github-token; cloning anonymously", exc_info=True)
+                token_source = "github-token secret"
+        except Exception as exc:
+            logger.warning("github-token fetch failed: %s", exc)
+            token_source = f"anonymous (token fetch failed: {str(exc)[:100]})"
     try:
         r = subprocess.run(["git", "clone", "--depth", "1", clone_url, tmpdir],
                            capture_output=True, timeout=120)
         if r.returncode != 0:
+            stderr = (r.stderr.decode("utf-8", "replace") if r.stderr else "").strip()
+            # Strip the token out of any error message before surfacing
+            safe_stderr = stderr.replace(clone_url, url) if clone_url != url else stderr
             shutil.rmtree(tmpdir, ignore_errors=True)
-            return None
-        return tmpdir
-    except Exception:
+            return {"error": f"git clone failed (rc={r.returncode}, auth={token_source}): "
+                             f"{safe_stderr[:300] or 'no stderr'}"}
+        return {"path": tmpdir}
+    except FileNotFoundError:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return None
+        return {"error": "git binary not found in container — install git in the Dockerfile"}
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return {"error": "git clone timed out after 120s"}
+    except Exception as exc:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return {"error": f"git clone raised: {type(exc).__name__}: {str(exc)[:200]}"}
 
 
 def _store_report(report: dict[str, Any]) -> None:

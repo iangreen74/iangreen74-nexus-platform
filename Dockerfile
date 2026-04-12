@@ -1,8 +1,9 @@
 FROM python:3.11-slim
 WORKDIR /app
-# curl is needed by the ECS container health check (curl -f /health)
+# curl: ECS container health check (curl -f /health)
+# git: code auditor clones aria-platform to run audit rules
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl git \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
