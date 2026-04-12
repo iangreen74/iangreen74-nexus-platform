@@ -122,6 +122,14 @@ async def platform_status() -> dict[str, Any]:
         )
         executions.append({"source": f"tenant:{tid}", "action": decision.action, **t_exec.to_dict()})
 
+        # Surface user-facing ActionRequired nodes for Forgewing's ActionBanner
+        try:
+            from nexus.capabilities.tenant_actions import check_and_create_actions
+
+            check_and_create_actions(tid, t)
+        except Exception:
+            logger.debug("action check failed for %s", tid, exc_info=True)
+
         # Capability validation — triage blocked/degraded tenants
         try:
             cap_report = capability_validator.validate_tenant_capabilities(tid)
@@ -1150,6 +1158,13 @@ async def _build_full_report() -> str:
             f"Actions: {len(sections['actions'])}\n"
             f"Patterns: {len(sections['patterns'])}\n"
         )
+
+
+@router.get("/tenant-actions")
+async def tenant_actions(tenant_id: str = "") -> dict[str, Any]:
+    """Inspect ActionRequired nodes Overwatch has written for tenants."""
+    actions = overwatch_graph.get_tenant_actions(tenant_id or None)
+    return {"count": len(actions), "actions": actions}
 
 
 @router.get("/diagnostic-report")

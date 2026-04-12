@@ -41,6 +41,10 @@ _local_store: dict[str, list[dict[str, Any]]] = {
     "OverwatchHumanDecision": [],
     "OverwatchIncident": [],
     "OverwatchCandidatePattern": [],
+    # Shared-contract label — Forgewing reads these to render the dashboard
+    # ActionBanner. Deliberately unprefixed: this is a cross-system interface,
+    # not Overwatch's internal memory.
+    "ActionRequired": [],
 }
 
 
@@ -571,6 +575,94 @@ def get_candidate_patterns() -> list[dict[str, Any]]:
         "c.failure_count AS failure_count, c.graduated AS graduated, "
         "c.created_at AS created_at "
         "ORDER BY c.created_at DESC"
+    )
+
+
+def write_tenant_action(tenant_id: str, action_type: str, props: dict[str, Any]) -> str:
+    """
+    Upsert an ActionRequired node, keyed on (tenant_id, action_type).
+
+    Shared-contract label: Forgewing reads these to render the dashboard
+    ActionBanner. MERGE semantics mean repeated calls refresh the node
+    rather than creating duplicates.
+    """
+    now = _now_iso()
+    payload = {
+        "tenant_id": tenant_id,
+        "action_type": action_type,
+        "dismissed": False,
+        "updated_at": now,
+        **{k: v for k, v in props.items() if v is not None},
+    }
+    payload.setdefault("created_at", now)
+    if MODE != "production":
+        with _lock:
+            existing = next(
+                (n for n in _local_store["ActionRequired"]
+                 if n.get("tenant_id") == tenant_id and n.get("action_type") == action_type),
+                None,
+            )
+            if existing:
+                existing.update(payload)
+                return existing.get("id", "")
+            node = {"id": _new_id(), **payload}
+            _local_store["ActionRequired"].append(node)
+            return node["id"]
+    query(
+        "MERGE (a:ActionRequired {tenant_id: $tenant_id, action_type: $action_type}) "
+        "ON CREATE SET a.id = $id, a += $props "
+        "ON MATCH SET a += $props",
+        {
+            "tenant_id": tenant_id,
+            "action_type": action_type,
+            "id": _new_id(),
+            "props": payload,
+        },
+    )
+    return f"{tenant_id}:{action_type}"
+
+
+def clear_tenant_action(tenant_id: str, action_type: str) -> bool:
+    """Delete an ActionRequired node. Returns True if something was removed."""
+    if MODE != "production":
+        with _lock:
+            before = len(_local_store["ActionRequired"])
+            _local_store["ActionRequired"] = [
+                n for n in _local_store["ActionRequired"]
+                if not (n.get("tenant_id") == tenant_id and n.get("action_type") == action_type)
+            ]
+            return len(_local_store["ActionRequired"]) < before
+    query(
+        "MATCH (a:ActionRequired {tenant_id: $tenant_id, action_type: $action_type}) "
+        "DETACH DELETE a",
+        {"tenant_id": tenant_id, "action_type": action_type},
+    )
+    return True
+
+
+def get_tenant_actions(tenant_id: str | None = None) -> list[dict[str, Any]]:
+    """Return ActionRequired nodes for a tenant (or all if None)."""
+    if MODE != "production":
+        with _lock:
+            rows = list(_local_store["ActionRequired"])
+        if tenant_id:
+            rows = [r for r in rows if r.get("tenant_id") == tenant_id]
+        return rows
+    if tenant_id:
+        return query(
+            "MATCH (a:ActionRequired {tenant_id: $tid}) "
+            "RETURN a.tenant_id AS tenant_id, a.action_type AS action_type, "
+            "a.severity AS severity, a.title AS title, a.message AS message, "
+            "a.button_label AS button_label, a.destination AS destination, "
+            "a.category AS category, a.dismissed AS dismissed, "
+            "a.created_at AS created_at, a.updated_at AS updated_at",
+            {"tid": tenant_id},
+        )
+    return query(
+        "MATCH (a:ActionRequired) "
+        "RETURN a.tenant_id AS tenant_id, a.action_type AS action_type, "
+        "a.severity AS severity, a.title AS title, a.dismissed AS dismissed, "
+        "a.created_at AS created_at"
     )
 
 
