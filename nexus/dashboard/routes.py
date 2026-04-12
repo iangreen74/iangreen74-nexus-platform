@@ -1249,6 +1249,23 @@ async def _build_full_report() -> str:
         )
 
 
+@router.post("/incident-signatures/bootstrap")
+async def bootstrap_incident_signatures() -> dict[str, Any]:
+    """Seed the 5 canonical incident signatures. Idempotent — merges by
+    (name, detection_key), so repeat calls just bump confidence."""
+    from nexus.capabilities.incident_learner import bootstrap_signatures
+
+    sigs = bootstrap_signatures()
+    return {
+        "count": len(sigs),
+        "signatures": [
+            {"signature_id": s.signature_id, "name": s.name,
+             "confidence": s.confidence, "match_count": s.match_count}
+            for s in sigs
+        ],
+    }
+
+
 @router.get("/tenant-actions")
 async def tenant_actions(tenant_id: str = "") -> dict[str, Any]:
     """Inspect ActionRequired nodes Overwatch has written for tenants."""
