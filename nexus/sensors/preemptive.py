@@ -216,6 +216,68 @@ def check_bedrock_throttling() -> list[dict[str, Any]]:
     ]
 
 
+def check_tenant_no_aws_role() -> list[dict[str, Any]]:
+    """
+    Flag tenants that have been stuck without an aws_role_arn for >24h.
+
+    Deploy healing escalates these as user_action_required, but without
+    a preemptive alert the tenant can sit silently for days. Surface
+    them so the operator can nudge the user.
+    """
+    if MODE != "production":
+        return []
+    alerts: list[dict[str, Any]] = []
+    try:
+        from nexus import neptune_client
+
+        threshold = _now() - timedelta(hours=24)
+        rows = neptune_client.query(
+            "MATCH (t:Tenant) "
+            "WHERE (t.aws_role_arn IS NULL OR t.aws_role_arn = '') "
+            "RETURN t.tenant_id AS tid, t.email AS email, "
+            "t.mission_stage AS stage, t.updated_at AS updated_at, "
+            "t.created_at AS created_at",
+            {},
+        )
+        for r in rows or []:
+            tid = r.get("tid")
+            if not tid:
+                continue
+            stage = r.get("stage") or ""
+            if stage in ("", "pending", "archived"):
+                continue
+            ref_at = r.get("updated_at") or r.get("created_at")
+            age_hours: float | None = None
+            if ref_at:
+                try:
+                    ref_dt = datetime.fromisoformat(ref_at.replace("Z", "+00:00"))
+                    if ref_dt.tzinfo is None:
+                        ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+                    if ref_dt > threshold:
+                        continue
+                    age_hours = (_now() - ref_dt).total_seconds() / 3600.0
+                except (ValueError, TypeError):
+                    pass
+            email = r.get("email") or "unknown"
+            age_str = f"{age_hours:.0f}h" if age_hours is not None else "unknown age"
+            alerts.append(
+                _alert(
+                    "tenant_no_aws_role",
+                    severity="warning",
+                    message=f"{tid} ({email}) stuck without aws_role_arn for {age_str} — stage={stage or '?'}",
+                    suggested_action=(
+                        f"Nudge {email} to connect AWS in Settings. Deploy healing "
+                        "correctly escalates this as user_action_required; there is "
+                        "no autonomous fix."
+                    ),
+                    status="user_action_required",
+                )
+            )
+    except Exception:
+        logger.exception("check_tenant_no_aws_role failed")
+    return alerts
+
+
 def run_preemptive_checks() -> list[dict[str, Any]]:
     """
     Run every preemptive check and return the combined alert list.
@@ -229,6 +291,7 @@ def run_preemptive_checks() -> list[dict[str, Any]]:
         check_github_token_freshness,
         check_neptune_storage,
         check_bedrock_throttling,
+        check_tenant_no_aws_role,
     ):
         try:
             all_alerts.extend(check_fn())

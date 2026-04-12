@@ -644,18 +644,37 @@ def _format_report(
         lines.append("")
 
     # --- Section 3: Active heal chains ---
-    chains = status.get("active_heal_chains", {})
-    if chains:
-        lines.append("ACTIVE HEAL CHAINS:")
-        for source, c in chains.items():
-            results = c.get("step_results", [])
-            steps_desc = " → ".join(f"{s['capability']}:{s['result']}" for s in results) or "starting..."
-            wait = f"waiting {c.get('cycles_waited', 0)}/{c.get('cycles_to_wait', 0)}" if c.get("awaiting_verification") else "ready"
-            lines.append(f"  {source} → {c.get('chain', '?')}")
-            lines.append(f"    Step {c.get('step', 0)}, attempts {c.get('total_attempts', 0)}, {wait}")
-            lines.append(f"    Progress: {steps_desc}")
-    else:
-        lines.append("ACTIVE HEAL CHAINS: none")
+    try:
+        chains = status.get("active_heal_chains", {}) or {}
+        if chains:
+            lines.append("ACTIVE HEAL CHAINS:")
+            for source, c in chains.items():
+                if not isinstance(c, dict):
+                    continue
+                results = c.get("step_results", []) or []
+                wait = (
+                    f"waiting {c.get('cycles_waited', 0)}/{c.get('cycles_to_wait', 0)}"
+                    if c.get("awaiting_verification") else "ready"
+                )
+                lines.append(f"  {source} → {c.get('chain', '?')}")
+                lines.append(
+                    f"    Step {c.get('step', 0)}, attempts {c.get('total_attempts', 0)}, {wait}"
+                )
+                for s in results:
+                    cap = s.get("capability", "?")
+                    res = s.get("result", "?")
+                    detail = s.get("detail")
+                    lines.append(f"    [{s.get('step', '?')}] {cap} → {res}")
+                    if detail:
+                        # detail is often a stringified dict; truncate for readability
+                        detail_str = str(detail).replace("\n", " ")
+                        if len(detail_str) > 300:
+                            detail_str = detail_str[:300] + "..."
+                        lines.append(f"        {detail_str}")
+        else:
+            lines.append("ACTIVE HEAL CHAINS: none")
+    except Exception as exc:
+        lines.append(f"ACTIVE HEAL CHAINS: unavailable ({str(exc)[:80]})")
     lines.append("")
 
     # --- Section 4: Triage decisions ---
@@ -806,6 +825,66 @@ def _format_report(
         lines.append("")
     except Exception:
         pass
+
+    # --- Section 15b: Deploy errors (failed DeploymentProgress nodes) ---
+    try:
+        from nexus import neptune_client
+
+        rows = neptune_client.query(
+            "MATCH (d:DeploymentProgress) "
+            "WHERE d.stage IN ['failed', 'error'] "
+            "RETURN d.tenant_id AS tid, d.stage AS stage, "
+            "d.message AS msg, d.error AS err, "
+            "d.codebuild_phase AS phase, d.updated_at AS updated "
+            "ORDER BY d.updated_at DESC LIMIT 10",
+            {},
+        )
+        if rows:
+            lines.append("DEPLOY ERRORS:")
+            for r in rows:
+                tid = r.get("tid", "?")
+                stage = r.get("stage", "?")
+                msg = (r.get("msg") or r.get("err") or "").strip()
+                phase = r.get("phase") or ""
+                updated = (r.get("updated") or "")[:19]
+                phase_str = f" phase={phase}" if phase else ""
+                lines.append(f"  {tid}: {stage}{phase_str} @ {updated}")
+                if msg:
+                    lines.append(f"    {msg[:250]}")
+            lines.append("")
+    except Exception as exc:
+        lines.append(f"DEPLOY ERRORS: unavailable ({str(exc)[:80]})")
+        lines.append("")
+
+    # --- Section 15c: Project isolation ---
+    try:
+        from nexus.capabilities.project_lifecycle import get_project_lifecycle
+
+        legacy_tenants: list[str] = []
+        clean_count = 0
+        for t in tenants.get("tenants", []) or []:
+            tid = t.get("tenant_id", "")
+            if not tid:
+                continue
+            lc = get_project_lifecycle(tenant_id=tid) or {}
+            proj = lc.get("active_project") or {}
+            pid = proj.get("id") or proj.get("project_id") or ""
+            if pid and pid == tid:
+                legacy_tenants.append(tid)
+            elif pid and pid.startswith("proj-"):
+                clean_count += 1
+        total = clean_count + len(legacy_tenants)
+        if total:
+            lines.append(
+                f"PROJECT ISOLATION: {clean_count}/{total} on proj-* IDs, "
+                f"{len(legacy_tenants)} on legacy default project"
+            )
+            for tid in legacy_tenants:
+                lines.append(f"  ⚠ {tid}: active_project.id == tenant_id (legacy)")
+            lines.append("")
+    except Exception as exc:
+        lines.append(f"PROJECT ISOLATION: unavailable ({str(exc)[:80]})")
+        lines.append("")
 
     # --- Section 16: Code health (Capability 30) ---
     try:
