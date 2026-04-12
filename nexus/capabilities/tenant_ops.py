@@ -257,6 +257,63 @@ def validate_repo_indexing(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     }
 
 
+def check_tenant_repo_sync(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Verify Tenant.repo_url matches the active Project.repo_url.
+
+    After multi-project operations (archive, start-from-scratch, project
+    switch) the Tenant.repo_url can drift out of sync with the active
+    Project, which causes the daemon to skip ingestion because it reads
+    the repo URL from the Tenant node. Detect that mismatch here so
+    Overwatch can surface it as an ActionRequired.
+
+    Safe blast radius — two read-only Neptune queries.
+    """
+    if not tenant_id:
+        return {"error": "tenant_id required"}
+    if MODE != "production":
+        return {"synced": True, "mock": True}
+
+    try:
+        from nexus.capabilities.project_lifecycle import get_project_lifecycle
+
+        ctx = neptune_client.get_tenant_context(tenant_id) or {}
+        tenant_repo = (ctx.get("repo_url") or "").strip()
+
+        lc = get_project_lifecycle(tenant_id=tenant_id)
+        active = lc.get("active_project") or {}
+        project_repo = (active.get("repo_url") or "").strip()
+
+        if not active:
+            return {"synced": True, "reason": "no_active_project"}
+
+        if tenant_repo == project_repo:
+            return {"synced": True, "tenant_repo": tenant_repo,
+                    "project_repo": project_repo}
+
+        if project_repo and not tenant_repo:
+            return {
+                "synced": False,
+                "issue": "tenant_repo_empty",
+                "detail": f"Tenant.repo_url is empty but Project has {project_repo}",
+                "fix": "Set Tenant.repo_url from active Project",
+                "tenant_repo": tenant_repo,
+                "project_repo": project_repo,
+            }
+
+        return {
+            "synced": False,
+            "issue": "repo_mismatch",
+            "detail": f"Tenant={tenant_repo} vs Project={project_repo}",
+            "fix": "Sync Tenant.repo_url to active Project",
+            "tenant_repo": tenant_repo,
+            "project_repo": project_repo,
+        }
+    except Exception as exc:
+        logger.debug("check_tenant_repo_sync failed for %s", tenant_id, exc_info=True)
+        return {"synced": True, "error": str(exc)[:200]}
+
+
 def check_pipeline_health(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     """
     For a tenant: are tasks progressing? Are PRs being created?
@@ -426,6 +483,12 @@ for cap in [
         function=validate_repo_indexing,
         blast_radius=BLAST_SAFE,
         description="Check RepoFile count in Neptune for a tenant",
+    ),
+    Capability(
+        name="check_tenant_repo_sync",
+        function=check_tenant_repo_sync,
+        blast_radius=BLAST_SAFE,
+        description="Verify Tenant.repo_url matches active Project.repo_url",
     ),
     Capability(
         name="check_pipeline_health",

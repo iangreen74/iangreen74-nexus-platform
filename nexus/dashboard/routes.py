@@ -576,6 +576,27 @@ def _format_report(
         deploy_stuck = t.get("deploy_stuck", False)
         if deploy_stuck:
             lines.append(f"  ⚠ DEPLOY STUCK at stage: {t.get('deploy_stage', '—')}")
+        # Ingestion diagnostic — explain WHY a tenant is stuck at ingestion
+        stage_val = (ctx.get("mission_stage") or "").strip()
+        if stage_val in ("ingestion_pending", "ingesting"):
+            diags: list[str] = []
+            if not ctx.get("repo_url"):
+                diags.append("Tenant.repo_url is EMPTY — daemon cannot ingest")
+            if not token.get("present"):
+                diags.append("GitHub token MISSING — daemon cannot clone repo")
+            try:
+                from nexus.capabilities.tenant_ops import check_tenant_repo_sync
+                sync = check_tenant_repo_sync(tenant_id=tid)
+                if not sync.get("synced") and sync.get("fix"):
+                    diags.append(
+                        f"Repo sync: {sync.get('issue', '?')} — {sync.get('detail', '')}"
+                    )
+            except Exception as exc:
+                diags.append(f"Repo sync check failed: {str(exc)[:80]}")
+            if diags:
+                lines.append("  ⚠ INGESTION DIAGNOSTIC:")
+                for d in diags:
+                    lines.append(f"    - {d}")
         feat = t.get("deploy_features", {}) or {}
         if feat:
             parts = []

@@ -12,6 +12,7 @@ refresh rather than duplicate.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from nexus import overwatch_graph
@@ -64,6 +65,17 @@ ACTION_TEMPLATES: dict[str, dict[str, str]] = {
         "destination": "chat",
         "category": "ci",
     },
+    "ingestion_stuck": {
+        "severity": "high",
+        "title": "Code analysis hasn't started",
+        "message": (
+            "Your project has been waiting for analysis for {hours} hours. "
+            "{diagnosis}"
+        ),
+        "button_label": "Check Settings",
+        "destination": "/settings/{tid}",
+        "category": "pipeline",
+    },
     "pr_awaiting_review": {
         "severity": "low",
         "title": "Changes ready for your review",
@@ -114,6 +126,42 @@ def clear_action(tenant_id: str, action_type: str) -> None:
 
 
 # Stages at which the user is expected to have a cloud connected.
+_INGESTION_STAGES = {"ingestion_pending", "ingesting"}
+_INGESTION_STUCK_HOURS = 1.0
+
+
+def _hours_at_stage(ctx: dict[str, Any]) -> float | None:
+    """How long the tenant has been at its current stage (updated_at)."""
+    raw = ctx.get("updated_at") or ctx.get("created_at")
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+    except (ValueError, TypeError):
+        return None
+
+
+def _diagnose_ingestion(tenant_id: str, ctx: dict[str, Any],
+                         token: dict[str, Any]) -> str:
+    """Short, user-facing reason ingestion hasn't progressed."""
+    if not ctx.get("repo_url"):
+        return "Your repository URL is missing — reconnect GitHub in Settings."
+    if not token.get("present"):
+        return "Your GitHub connection needs to be reauthorized."
+    try:
+        from nexus.capabilities.tenant_ops import check_tenant_repo_sync
+
+        sync = check_tenant_repo_sync(tenant_id=tenant_id)
+        if not sync.get("synced") and sync.get("fix"):
+            return "The repository connection is out of sync — reconnect GitHub in Settings."
+    except Exception:
+        pass
+    return "This usually means the repository connection needs attention."
+
+
 _POST_BRIEF_STAGES = {
     "executing",
     "complete",
@@ -136,7 +184,25 @@ def check_and_create_actions(tenant_id: str, tenant_data: dict[str, Any]) -> Non
     ctx = tenant_data.get("context") or {}
     deployment = tenant_data.get("deployment") or {}
     pipeline = tenant_data.get("pipeline") or {}
+    token = tenant_data.get("token") or {}
     stage = (ctx.get("mission_stage") or "").strip()
+
+    # --- ingestion_stuck ---
+    try:
+        if stage in _INGESTION_STAGES:
+            hours = _hours_at_stage(ctx)
+            if hours is not None and hours > _INGESTION_STUCK_HOURS:
+                diagnosis = _diagnose_ingestion(tenant_id, ctx, token)
+                create_action(
+                    tenant_id, "ingestion_stuck",
+                    extra={"hours": f"{hours:.0f}", "diagnosis": diagnosis},
+                )
+            else:
+                clear_action(tenant_id, "ingestion_stuck")
+        else:
+            clear_action(tenant_id, "ingestion_stuck")
+    except Exception:
+        logger.debug("ingestion_stuck check failed for %s", tenant_id, exc_info=True)
 
     # --- no_cloud_connected ---
     try:
