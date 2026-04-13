@@ -306,6 +306,26 @@
 
   <section>
     <div class="section-head">
+      <h2>Investigate</h2>
+      <span class="meta">Ask a question — Overwatch gathers evidence from 6 sources and synthesizes a diagnosis (Tier 1).</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; gap:8px;">
+        <input id="investigate-input" type="text"
+               placeholder="e.g. Why is Ben's deploy stuck? Why doesn't SFS work?"
+               onkeydown="if(event.key==='Enter')runInvestigation()"
+               style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:10px 14px; border-radius:8px; font-size:13px; font-family:inherit;">
+        <button onclick="runInvestigation()"
+                style="background:var(--teal); color:#fff; border:none; padding:10px 22px; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; font-family:inherit;">
+          Investigate
+        </button>
+      </div>
+      <div id="investigate-result" style="margin-top:14px; display:none;"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Triage Feed</h2>
       <span class="meta" id="triage-meta"></span>
     </div>
@@ -1254,6 +1274,47 @@ function removeLastMsg() {
   const c = document.getElementById('chat-messages');
   if (c.lastChild) c.removeChild(c.lastChild);
 }
+async function runInvestigation() {
+  const input = document.getElementById('investigate-input');
+  const out = document.getElementById('investigate-result');
+  const q = input.value.trim();
+  if (!q) return;
+  out.style.display = 'block';
+  out.innerHTML = '<div style="color:var(--text-dim); font-size:13px;">Gathering evidence from 6 sources… this takes 20–40s.</div>';
+  try {
+    const resp = await fetch(`${API}/investigate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    const raw = await resp.text();
+    const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+    if (!resp.ok || !ctype.includes('application/json')) {
+      out.innerHTML = `<div class="err">HTTP ${resp.status}: ${raw.replace(/<[^>]+>/g,' ').slice(0,200)}</div>`;
+      return;
+    }
+    const data = JSON.parse(raw);
+    const d = data.diagnosis || {};
+    const sevColor = ({critical:'#EF4444', high:'#F59E0B', medium:'#3B82F6', low:'#10B981'}[d.severity]||'#6B7280');
+    const actions = (d.recommended_actions || []).map(a =>
+      `<li><strong>${a.priority || '?'}</strong> · ${a.type || ''}: ${a.action || ''}</li>`
+    ).join('');
+    out.innerHTML = `
+      <div style="font-size:14px; font-weight:700; color:${sevColor}; margin-bottom:6px;">
+        ${(d.severity||'?').toUpperCase()} · ${d.confidence ?? '?'}% confidence · ${data.duration_seconds}s
+      </div>
+      <div style="font-size:14px; font-weight:600; margin-bottom:8px;">${d.root_cause || '(no root cause)'}</div>
+      <div style="font-size:13px; color:var(--text); white-space:pre-wrap; margin-bottom:10px;">${d.explanation || ''}</div>
+      ${actions ? `<div style="font-size:12px; color:var(--text-dim); margin-bottom:4px; font-weight:700; letter-spacing:0.06em;">RECOMMENDED ACTIONS</div><ul style="font-size:13px; margin:0 0 10px 18px;">${actions}</ul>` : ''}
+      <details style="font-size:12px; color:var(--text-dim);">
+        <summary style="cursor:pointer;">Evidence (${(data.sources_returned||[]).join(', ')})</summary>
+        <pre style="white-space:pre-wrap; word-break:break-word; background:var(--bg); padding:10px; border-radius:8px; margin-top:6px; font-size:11px; max-height:400px; overflow:auto;">${JSON.stringify(data.evidence, null, 2).replace(/</g,'&lt;')}</pre>
+      </details>`;
+  } catch (e) {
+    out.innerHTML = `<div class="err">Error: ${e.message}</div>`;
+  }
+}
+
 async function sendOpsMessage() {
   const input = document.getElementById('ops-input');
   const msg = input.value.trim();

@@ -1270,6 +1270,19 @@ async def _build_full_report() -> str:
         )
 
 
+@router.post("/investigate")
+async def investigate_endpoint(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Tier 1 investigation: question → parallel evidence → Bedrock synthesis."""
+    from nexus.capabilities.investigation import investigate
+
+    body = payload or {}
+    question = (body.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+    timeframe = int(body.get("timeframe_minutes") or 30)
+    return await investigate(question, timeframe)
+
+
 @router.get("/deploy-drift")
 async def deploy_drift() -> dict[str, Any]:
     """Drift detection across Forgewing ECS services. Read-only."""
