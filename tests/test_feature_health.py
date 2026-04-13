@@ -176,11 +176,11 @@ def test_start_diagnosis_rejects_unknown_feature():
     assert "error" in r
 
 
-def test_second_start_while_running_returns_busy():
-    """Only one diagnosis runs at a time — second call attaches to the
-    active job instead of spawning a parallel Bedrock run."""
-    # Seed a running record directly (avoid racing the background task)
+def test_second_start_while_running_queues():
+    """Only one diagnosis runs at a time — second call gets its own
+    job_id with status='queued' and waits its turn."""
     fd._active_diagnoses.clear()
+    fd._diagnosis_queue.clear()
     import time as _time
     fd._active_diagnoses["diag-running"] = {
         "job_id": "diag-running", "target_id": "projects", "level": "feature",
@@ -191,9 +191,11 @@ def test_second_start_while_running_returns_busy():
         r = _run(fd.start_diagnosis("aria_chat", level="feature"))
     finally:
         fd._active_diagnoses.pop("diag-running", None)
-    assert r["status"] == "busy"
-    assert r["active_job"] == "diag-running"
-    assert r["active_target"] == "projects"
+        fd._diagnosis_queue.clear()
+    assert r["status"] == "queued"
+    assert r["job_id"] != "diag-running"
+    assert r["target_id"] == "aria_chat"
+    assert "queued" in r["phase_label"].lower() or "waiting" in r["phase_label"].lower()
 
 
 def test_start_diagnosis_returns_job_record_immediately():

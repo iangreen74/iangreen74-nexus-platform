@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 
 _active_diagnoses: dict[str, dict[str, Any]] = {}
+# FIFO queue of job records waiting for the currently running diagnosis
+# to finish. Each entry is the same record already stored in
+# _active_diagnoses (shared identity, not a copy) so the operator can
+# poll its job_id and watch "queued" transition into "starting" →
+# "running" → "complete" without a second lookup path.
+_diagnosis_queue: list[dict[str, Any]] = []
 VALID_LEVELS = {"feature", "tenant", "goal"}
 
 # Safety valve: if a diagnosis coroutine crashes before updating its
@@ -67,6 +73,7 @@ async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, A
     # Jobs older than DIAGNOSIS_MAX_RUN_SEC are treated as dead so a silent
     # crash can't permanently block the endpoint.
     now_ts = time.time()
+    running: dict[str, Any] | None = None
     for existing in list(_active_diagnoses.values()):
         if existing.get("status") not in ("starting", "running"):
             continue
@@ -79,14 +86,8 @@ async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, A
             logger.warning("reclaiming stuck diagnosis %s (level=%s, target=%s)",
                            existing["job_id"], existing["level"], existing["target_id"])
             continue
-        return {
-            "error": "A diagnosis is already running",
-            "status": "busy",
-            "active_job": existing["job_id"],
-            "active_target": existing["target_id"],
-            "active_level": existing["level"],
-            "active_phase": existing.get("phase_label", ""),
-        }
+        running = existing
+        break
 
     job_id = f"diag-{uuid.uuid4().hex[:10]}"
     record = {
@@ -103,8 +104,38 @@ async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, A
         "report": None,
     }
     _active_diagnoses[job_id] = record
+
+    if running is not None:
+        # Queue behind the running job. Each queued job keeps its own
+        # job_id and will produce its own report once it gets to run.
+        record["status"] = "queued"
+        record["phase"] = "waiting"
+        record["phase_label"] = (
+            f"Queued — waiting for {running['level']}/{running['target_id']} to finish "
+            f"({len(_diagnosis_queue) + 1} ahead)"
+        )
+        record["queue_position"] = len(_diagnosis_queue) + 1
+        _diagnosis_queue.append(record)
+        return record
+
     asyncio.create_task(_run_diagnosis(job_id))
     return record
+
+
+def _start_next_queued() -> None:
+    """Promote the next queued diagnosis to running. Drops already-
+    completed records that snuck in (e.g., cancelled)."""
+    while _diagnosis_queue:
+        nxt = _diagnosis_queue.pop(0)
+        if nxt.get("status") != "queued":
+            continue
+        nxt["status"] = "starting"
+        nxt["phase"] = "quick_check"
+        nxt["phase_label"] = "Phase 1: Quick check — synthetics + health signals"
+        nxt["_start_ts"] = time.time()
+        nxt.pop("queue_position", None)
+        asyncio.create_task(_run_diagnosis(nxt["job_id"]))
+        return
 
 
 async def get_diagnosis(job_id: str) -> dict[str, Any]:
@@ -120,6 +151,7 @@ async def _run_diagnosis(job_id: str) -> None:
 
     try:
         rec["status"] = "running"
+        rec["_start_ts"] = time.time()  # reset TTL clock when actually running
 
         p1 = await _phase1_quick_check(target_id, level)
         sections.append(p1)
@@ -161,6 +193,13 @@ async def _run_diagnosis(job_id: str) -> None:
         rec["phase_label"] = f"Failed: {type(exc).__name__}: {str(exc)[:120]}"
         rec["report"] = _build_failure_report(target_id, level, sections, str(exc))
         rec["completed_at"] = _now_iso()
+    finally:
+        # Drain the queue regardless of success/failure so a broken job
+        # can't deadlock subsequent diagnoses.
+        try:
+            _start_next_queued()
+        except Exception:
+            logger.exception("failed to start next queued diagnosis")
 
 
 def _synthetic_full_results() -> dict[str, dict[str, Any]]:

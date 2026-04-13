@@ -1308,15 +1308,17 @@ async function _runAsyncDiagnosis(startUrl, opts) {
     show(`<div style="font-size:12px; color:var(--red-text);">Could not start diagnosis: ${e.message}</div>`);
     return null;
   }
-  // Backend returns {status:'busy', active_job} when another diagnosis
-  // is already running. Attach to that job instead of failing.
-  let jobId = startData.job_id;
-  if (startData.status === 'busy' && startData.active_job) {
-    jobId = startData.active_job;
-    show(`<div style="font-size:12px; color:var(--amber-text);">Another diagnosis is running (${startData.active_target || ''}) — attaching to it.</div>`);
-  } else if (startData.error || !jobId) {
+  // Each diagnosis gets its own job_id. If another diagnosis is already
+  // running, the backend returns status='queued' — our poll loop below
+  // will watch this job go queued → starting → running → complete and
+  // download the report when it's ready.
+  const jobId = startData.job_id;
+  if (!jobId) {
     show(`<div style="font-size:12px; color:var(--red-text);">${startData.error || 'no job_id'}</div>`);
     return null;
+  }
+  if (startData.status === 'queued') {
+    show(`<div style="font-size:12px; color:var(--amber-text);">${startData.phase_label || 'Queued — waiting to run'}</div>`);
   }
   for (let i = 0; i < 180; i++) {  // 180 * 2s = 6 min ceiling
     await new Promise(r => setTimeout(r, 2000));
