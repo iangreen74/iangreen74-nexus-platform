@@ -1267,15 +1267,43 @@ async function sendOpsMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg, history: _chatHistory.slice(-10) }),
     });
-    const data = await resp.json();
+    // Read body once as text, then try JSON — so we never crash on HTML
+    // error pages from an upstream proxy / ALB timeout.
+    const raw = await resp.text();
+    const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+    let data = null;
+    if (ctype.includes('application/json')) {
+      try { data = JSON.parse(raw); } catch (_) { data = null; }
+    }
     removeLastMsg();
+    if (!resp.ok || !data) {
+      // Non-JSON or error. Surface the real status so the user can see
+      // whether it was a backend crash vs. a proxy/ALB timeout.
+      let friendly;
+      if (resp.status === 504 || resp.status === 502) {
+        friendly = `The chat service timed out (HTTP ${resp.status}). Bedrock can take 20–30s; try again or ask a shorter question.`;
+      } else if (resp.status === 0) {
+        friendly = 'The request never reached the server (network or ALB issue).';
+      } else if (data && data.detail) {
+        friendly = `Error (HTTP ${resp.status}): ${data.detail}`;
+      } else if (data && data.error) {
+        friendly = `Error: ${data.error}`;
+      } else {
+        // Last resort — include a short snippet of the non-JSON body so
+        // we can actually diagnose rather than showing a parse error.
+        const snippet = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+        friendly = `Error (HTTP ${resp.status}): ${snippet || 'non-JSON response'}`;
+      }
+      appendChatMsg('assistant', friendly);
+      return;
+    }
     appendChatMsg('assistant', data.response || data.error || 'No response');
     _chatHistory.push({ role: 'user', content: msg });
     _chatHistory.push({ role: 'assistant', content: data.response || '' });
     if (data.actions && data.actions.length > 0) setTimeout(loadAll, 2000);
   } catch (e) {
     removeLastMsg();
-    appendChatMsg('assistant', 'Error: ' + e.message);
+    appendChatMsg('assistant', 'Network error: ' + (e && e.message ? e.message : e));
   }
 }
 </script>
