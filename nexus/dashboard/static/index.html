@@ -247,6 +247,23 @@
     </div>
   </header>
 
+  <section id="feature-health-section">
+    <div class="section-head">
+      <h2>Feature Health</h2>
+      <span class="meta" id="feature-health-meta">Loading…</span>
+    </div>
+    <div id="platform-health-tile" style="background:var(--bg-elev); border:2px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div id="platform-health-dot" style="width:12px; height:12px; border-radius:50%; background:#9CA3AF;"></div>
+        <div>
+          <div style="font-size:14px; font-weight:700; color:var(--text); letter-spacing:0.04em;">PLATFORM HEALTH</div>
+          <div id="platform-health-status" style="font-size:13px; color:var(--text-dim);">—</div>
+        </div>
+      </div>
+    </div>
+    <div id="feature-tiles" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px;"></div>
+  </section>
+
   <section>
     <div class="section-head">
       <h2>System Overview</h2>
@@ -1090,8 +1107,77 @@ async function loadSupport() {
   }).join('');
 }
 
+const FEATURE_STATUS_COLORS = {
+  healthy: '#10B981', warning: '#F59E0B', degraded: '#EF4444',
+  critical: '#DC2626', unknown: '#9CA3AF'
+};
+
+async function loadFeatureHealth() {
+  try {
+    const r = await fetch(`${API}/feature-health`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const errTotal = Object.values(data.features || {}).reduce((s, f) => s + (f.errors || 0), 0);
+    const warnTotal = Object.values(data.features || {}).reduce((s, f) => s + (f.warnings || 0), 0);
+    document.getElementById('platform-health-dot').style.background =
+      FEATURE_STATUS_COLORS[data.overall] || FEATURE_STATUS_COLORS.unknown;
+    document.getElementById('platform-health-status').textContent =
+      data.overall === 'healthy' ? 'All features healthy'
+        : `${errTotal} error${errTotal !== 1 ? 's' : ''}, ${warnTotal} warning${warnTotal !== 1 ? 's' : ''}`;
+    document.getElementById('feature-health-meta').textContent =
+      `${Object.keys(data.features || {}).length} features · ${data.overall}`;
+    const grid = document.getElementById('feature-tiles');
+    grid.innerHTML = '';
+    for (const [fid, f] of Object.entries(data.features || {})) {
+      const color = FEATURE_STATUS_COLORS[f.status] || FEATURE_STATUS_COLORS.unknown;
+      const el = document.createElement('div');
+      el.style.cssText = 'background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04); border-left:4px solid ' + color + ';';
+      const badges = [];
+      if (f.errors > 0) badges.push(`<span style="font-size:11px; background:var(--red-dim); color:var(--red-text); padding:2px 8px; border-radius:999px; font-weight:700;">${f.errors} error${f.errors>1?'s':''}</span>`);
+      if (f.warnings > 0) badges.push(`<span style="font-size:11px; background:var(--amber-dim); color:var(--amber-text); padding:2px 8px; border-radius:999px; font-weight:700;">${f.warnings} warning${f.warnings>1?'s':''}</span>`);
+      el.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="font-size:14px; font-weight:700; color:var(--text);">${f.icon || ''} ${f.name}</span>
+        </div>
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">${f.description || ''}</div>
+        <div style="font-size:12px; color:var(--text); margin-bottom:10px;">${f.status_line || ''}</div>
+        <div style="display:flex; gap:6px; margin-bottom:10px;">${badges.join(' ')}</div>
+        <button onclick="diagnoseFeature('${fid}', this)" style="width:100%; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+          Diagnose
+        </button>`;
+      grid.appendChild(el);
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+async function diagnoseFeature(fid, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Investigating…';
+  try {
+    // Prefetch the report so the browser treats it as a clean download
+    // when we click the anchor. Diagnosis can take 30-60s; we surface that.
+    const resp = await fetch(`${API}/diagnose/${fid}/report`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fid}-diagnosis.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    btn.textContent = '✓ Downloaded';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2500);
+  } catch (e) {
+    btn.textContent = 'Failed — retry';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3000);
+  }
+}
+
 async function loadAll() {
   await Promise.all([
+    loadFeatureHealth(),
     loadOverview(),
     loadHealChains(),
     loadSRE(),

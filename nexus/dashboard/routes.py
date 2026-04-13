@@ -1279,6 +1279,43 @@ async def _build_full_report() -> str:
         )
 
 
+@router.get("/feature-health")
+async def feature_health() -> dict[str, Any]:
+    """Tile data for the Feature Health dashboard. Read-only."""
+    from nexus.capabilities.feature_health import get_all_feature_health
+
+    return await get_all_feature_health()
+
+
+@router.post("/diagnose/{feature_id}")
+async def diagnose(feature_id: str) -> dict[str, Any]:
+    """Run a scoped Tier 1 investigation for a feature. Returns full detail."""
+    from nexus.capabilities.feature_diagnosis import diagnose_feature
+
+    return await diagnose_feature(feature_id)
+
+
+@router.get("/diagnose/{feature_id}/report")
+async def diagnose_report(feature_id: str) -> Response:
+    """Download the feature diagnosis as a .md file."""
+    from nexus.capabilities.feature_diagnosis import diagnose_feature
+
+    result = await diagnose_feature(feature_id)
+    if result.get("error"):
+        return Response(
+            content=f"# Diagnosis failed\n\n{result['error']}\n",
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{feature_id}-error.md"'},
+        )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"{feature_id}-diagnosis-{stamp}.md"
+    return Response(
+        content=result.get("report_markdown", "# No report"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/investigate")
 async def investigate_endpoint(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
     """Tier 1 investigation: question → parallel evidence → Bedrock synthesis."""
