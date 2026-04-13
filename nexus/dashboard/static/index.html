@@ -282,6 +282,19 @@
     <div id="feature-tiles" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px;"></div>
   </section>
 
+  <section id="tenant-health-section">
+    <div class="section-head">
+      <h2>Tenant Health</h2>
+      <span class="meta" id="tenant-health-meta">Loading…</span>
+    </div>
+    <div class="section-sub">Your customers' pipeline health — names, stages, and what's happening right now.</div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div id="tenant-health-summary" style="font-size:13px; color:var(--text);">Loading…</div>
+    </div>
+    <div id="tenant-tiles" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;"></div>
+    <div id="tenant-detail-panel" style="margin-top:12px;"></div>
+  </section>
+
   <section>
     <div class="section-head">
       <h2>System Overview</h2>
@@ -321,22 +334,6 @@
         <div id="budget-fill" style="height:100%; border-radius:4px; transition:width 0.5s ease;"></div>
       </div>
     </div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Tenant Health</h2>
-    </div>
-    <div class="section-sub">Your customers' pipeline health — names, stages, and what's happening right now.</div>
-    <div class="section-head" style="display:none">
-      <span class="meta" id="tenants-meta"></span>
-    </div>
-    <table id="tenants-table">
-      <thead>
-        <tr><th></th><th>Tenant</th><th>Stage</th><th>Pipeline</th><th>Last Activity</th><th>Status</th><th></th></tr>
-      </thead>
-      <tbody id="tenants-body"><tr><td colspan="6" class="empty">Loading tenants…</td></tr></tbody>
-    </table>
   </section>
 
   <section id="research-panel">
@@ -720,63 +717,106 @@ async function loadOverview() {
   document.getElementById('overview-meta').textContent = `updated ${fmtTime(new Date().toISOString())}`;
 }
 
+const TENANT_STATUS_COLORS = {
+  healthy: '#10B981', warning: '#F59E0B', degraded: '#F59E0B',
+  critical: '#EF4444', pending: '#9CA3AF', unknown: '#9CA3AF'
+};
+
 async function loadTenants() {
+  const grid = document.getElementById('tenant-tiles');
+  const summary = document.getElementById('tenant-health-summary');
+  const meta = document.getElementById('tenant-health-meta');
   const data = await fetchJSON(`${API}/tenants`);
-  const body = document.getElementById('tenants-body');
   if (!data || !data.tenants) {
-    body.innerHTML = '<tr><td colspan="6" class="err">Failed to load tenants</td></tr>';
+    grid.innerHTML = '<div class="err">Failed to load tenants</div>';
+    summary.textContent = '—';
+    meta.textContent = '';
     return;
   }
-  document.getElementById('tenants-meta').textContent = `${data.count} tenant${data.count === 1 ? '' : 's'}`;
-  if (data.tenants.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">No tenants found</td></tr>';
+  const tenants = data.tenants;
+  const total = tenants.length;
+  const healthy = tenants.filter(t => t.overall_status === 'healthy').length;
+  const degraded = tenants.filter(t => ['degraded', 'critical'].includes(t.overall_status)).length;
+  meta.textContent = `${total} tenant${total !== 1 ? 's' : ''} · ${healthy} healthy`;
+  summary.innerHTML = degraded > 0
+    ? `<strong>${degraded}/${total}</strong> tenants need attention`
+    : `<strong>${total}/${total}</strong> tenants healthy`;
+
+  if (total === 0) {
+    grid.innerHTML = '<div class="empty">No tenants found</div>';
     return;
   }
-  body.innerHTML = data.tenants.map((t, idx) => {
+
+  grid.innerHTML = '';
+  for (const t of tenants) {
     const ctx = t.context || {};
     const conv = t.conversation || {};
-    const stage = t.pipeline_stage || ctx.plan || '—';
-    const summary = t.pipeline_summary || '—';
-    const displayName = t.display_name || ctx.name || t.tenant_id;
-    const shortId = t.tenant_id.length > 14 ? t.tenant_id.slice(0,14) + '...' : t.tenant_id;
-    const statusText = t.overall_status || 'unknown';
-    const statusNote = statusText === 'pending'
-      ? '<br><span style="font-size:10px;color:var(--text-dim)">No deploy infra yet — normal during Build phase</span>'
-      : '';
-    return `
-      <tr class="clickable" data-tid="${t.tenant_id}" data-row="${idx}">
-        <td>${dotFor(t.overall_status)}</td>
-        <td><strong>${displayName}</strong><br><span style="font-size:10px;color:var(--text-dim)">${shortId}</span></td>
-        <td>${stage.toUpperCase()}</td>
-        <td>${summary}</td>
-        <td>${fmtAge(conv.last_message_at)}</td>
-        <td>${statusText.toUpperCase()}${statusNote}</td>
-        <td>
-          <button class="btn" style="padding:3px 8px;font-size:9px" onclick="event.stopPropagation();copyTenantReport('${t.tenant_id}')">Copy</button>
-          <button class="btn" style="padding:3px 8px;font-size:9px;margin-left:4px" onclick="event.stopPropagation();diagnoseTenant('${t.tenant_id}', this)">Diagnose</button>
-        </td>
-      </tr>
-    `;
-  }).join('');
+    const token = t.token || {};
+    const dep = t.deployment || {};
+    const status = t.overall_status || 'unknown';
+    const color = TENANT_STATUS_COLORS[status] || TENANT_STATUS_COLORS.unknown;
+    const displayName = t.display_name || ctx.name || ctx.company_name || t.tenant_id;
+    const shortId = t.tenant_id.length > 14 ? t.tenant_id.slice(0, 14) + '…' : t.tenant_id;
+    const stage = (t.pipeline_stage || ctx.plan || '—').toUpperCase();
+    const pipelineSummary = t.pipeline_summary || 'no activity';
+    const lastActivity = fmtAge(conv.last_message_at);
 
-  body.querySelectorAll('tr.clickable').forEach(row => {
-    row.addEventListener('click', () => toggleTenantDetail(row));
-  });
+    const indicators = [];
+    indicators.push(token.present
+      ? '<span style="color:var(--teal-text);">✓ token</span>'
+      : '<span style="color:var(--red-text);">✗ token</span>');
+    if (t.deploy_stuck) {
+      indicators.push('<span style="color:var(--red-text);">deploy stuck</span>');
+    } else if (dep.provisioned) {
+      indicators.push(dep.healthy
+        ? '<span style="color:var(--teal-text);">✓ deploy</span>'
+        : '<span style="color:var(--amber-text);">deploy unhealthy</span>');
+    } else {
+      indicators.push('<span style="color:var(--text-dim);">no deploy</span>');
+    }
+    indicators.push(`<span style="color:var(--text-dim);">${lastActivity}</span>`);
+
+    const el = document.createElement('div');
+    el.className = 'tenant-tile clickable';
+    el.dataset.tid = t.tenant_id;
+    el.style.cssText = 'background:var(--bg-elev); border:1px solid var(--border); border-left:4px solid ' + color +
+      '; border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04); cursor:pointer;';
+    el.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+        <div style="min-width:0;">
+          <div style="font-size:14px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${displayName}</div>
+          <div style="font-size:10px; color:var(--text-dim); font-family:monospace;">${shortId}</div>
+        </div>
+        <span style="font-size:10px; background:var(--bg); color:var(--text-dim); padding:3px 8px; border-radius:999px; border:1px solid var(--border); font-weight:700; letter-spacing:0.05em; white-space:nowrap;">${stage}</span>
+      </div>
+      <div style="font-size:12px; color:var(--text); margin-bottom:8px;">${pipelineSummary}</div>
+      <div style="font-size:11px; display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${indicators.join(' · ')}</div>
+      <div style="display:flex; gap:6px;">
+        <button class="btn" style="flex:1; padding:6px; font-size:11px;" onclick="event.stopPropagation();copyTenantReport('${t.tenant_id}')">Copy</button>
+        <button class="btn" style="flex:1; padding:6px; font-size:11px;" onclick="event.stopPropagation();diagnoseTenant('${t.tenant_id}', this)">Diagnose</button>
+      </div>
+    `;
+    el.addEventListener('click', () => toggleTenantDetail(el));
+    grid.appendChild(el);
+  }
 }
 
-async function toggleTenantDetail(row) {
-  const next = row.nextElementSibling;
-  if (next && next.classList.contains('detail-row')) {
-    next.remove();
+async function toggleTenantDetail(tile) {
+  const panel = document.getElementById('tenant-detail-panel');
+  const tid = tile.dataset.tid;
+  if (panel.dataset.tid === tid && panel.innerHTML.trim()) {
+    panel.innerHTML = '';
+    panel.dataset.tid = '';
     return;
   }
-  const tid = row.dataset.tid;
+  panel.dataset.tid = tid;
+  panel.innerHTML = '<div style="padding:12px; color:var(--text-dim); font-size:12px;">Loading detail…</div>';
   const data = await fetchJSON(`${API}/tenants/${encodeURIComponent(tid)}/detail`);
-  if (!data) return;
-  const detail = document.createElement('tr');
-  detail.className = 'detail-row';
+  if (!data) {
+    panel.innerHTML = '<div class="err">Failed to load tenant detail</div>';
+    return;
+  }
 
-  // Build a structured detail view
   const ctx = data.context || {};
   const token = data.token || {};
   const triage = data.triage || {};
@@ -784,31 +824,33 @@ async function toggleTenantDetail(row) {
   const prs = data.prs || [];
   const conv = data.conversation || [];
   const val = data.validation || {};
+  const displayName = ctx.name || ctx.company_name || tid;
 
-  let html = `<td colspan="6"><div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">`;
-
-  // Left column: pipeline + tasks
-  html += `<div>`;
-  html += `<div class="label">PIPELINE</div>`;
-  html += `<div>Stage: <strong>${(data.pipeline_stage || '—').toUpperCase()}</strong> · ${data.pipeline_summary || '—'}</div>`;
-  html += `<div>Repo files: ${data.repo_file_count ?? 0} · Ingestion: ${data.ingestion ? data.ingestion.status : 'none'}</div>`;
-  html += `<div>Token: ${token.present ? '✓ present' : '✗ empty'} · Installation: ${token.installation_id || '—'}</div>`;
+  let html = `
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+        <div style="font-size:14px; font-weight:700; color:var(--text);">${displayName} <span style="font-weight:400; color:var(--text-dim); font-family:monospace; font-size:11px;">${tid}</span></div>
+        <button class="btn" style="padding:4px 10px; font-size:11px;" onclick="document.getElementById('tenant-detail-panel').innerHTML='';document.getElementById('tenant-detail-panel').dataset.tid='';">Close</button>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <div class="label">PIPELINE</div>
+          <div>Stage: <strong>${(data.pipeline_stage || '—').toUpperCase()}</strong> · ${data.pipeline_summary || '—'}</div>
+          <div>Repo files: ${data.repo_file_count ?? 0} · Ingestion: ${data.ingestion ? data.ingestion.status : 'none'}</div>
+          <div>Token: ${token.present ? '✓ present' : '✗ empty'} · Installation: ${token.installation_id || '—'}</div>`;
   if (val.alert_count > 0) {
-    html += `<div style="color:var(--amber); margin-top:6px">${val.alert_count} validation alert(s):</div>`;
+    html += `<div style="color:var(--amber-text); margin-top:6px">${val.alert_count} validation alert(s):</div>`;
     for (const a of val.alerts || []) html += `<div>  ⚠ ${a.check}: ${a.message}</div>`;
   }
   html += `<div class="label" style="margin-top:12px">TASKS (${tasks.length})</div>`;
   for (const t of tasks.slice(0, 10)) {
     const st = t.status || '?';
-    const cls = st === 'complete' ? 'teal' : st === 'in_progress' ? 'amber' : '';
-    html += `<div><span class="badge ${cls || 'safe'}">${st}</span> ${(t.description || t.id || '').slice(0, 60)}</div>`;
+    const cls = st === 'complete' ? 'success' : st === 'in_progress' ? 'moderate' : 'safe';
+    html += `<div><span class="badge ${cls}">${st}</span> ${(t.description || t.id || '').slice(0, 60)}</div>`;
   }
   if (tasks.length > 10) html += `<div style="color:var(--text-dim)">…and ${tasks.length - 10} more</div>`;
-  html += `</div>`;
-
-  // Right column: PRs + conversation + triage
-  html += `<div>`;
-  html += `<div class="label">PRS (${prs.length})</div>`;
+  html += `</div><div>
+          <div class="label">PRS (${prs.length})</div>`;
   if (prs.length === 0) html += `<div style="color:var(--text-dim)">No PRs yet</div>`;
   for (const p of prs.slice(0, 5)) {
     const st = p.state || p.status || '?';
@@ -821,14 +863,13 @@ async function toggleTenantDetail(row) {
     const txt = (m.content || '').slice(0, 80);
     html += `<div><strong>${role}:</strong> ${txt}</div>`;
   }
-  html += `<div class="label" style="margin-top:12px">TRIAGE</div>`;
-  html += `<div>${triage.action || '—'} · confidence ${((triage.confidence || 0) * 100).toFixed(0)}% · blast ${triage.blast_radius || '—'}</div>`;
-  html += `<div style="color:var(--text-dim)">${triage.reasoning || ''}</div>`;
-  html += `</div>`;
-
-  html += `</div></td>`;
-  detail.innerHTML = html;
-  row.parentNode.insertBefore(detail, row.nextSibling);
+  html += `<div class="label" style="margin-top:12px">TRIAGE</div>
+          <div>${triage.action || '—'} · confidence ${((triage.confidence || 0) * 100).toFixed(0)}% · blast ${triage.blast_radius || '—'}</div>
+          <div style="color:var(--text-dim)">${triage.reasoning || ''}</div>
+        </div>
+      </div>
+    </div>`;
+  panel.innerHTML = html;
 }
 
 async function loadTriageFeed() {
