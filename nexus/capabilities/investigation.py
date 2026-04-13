@@ -28,7 +28,7 @@ from nexus.config import AWS_REGION, MODE, OPS_CHAT_MODEL_ID
 
 logger = logging.getLogger(__name__)
 
-CLASSIFIER_MODEL_ID = "us.anthropic.claude-haiku-4-5"
+CLASSIFIER_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 SYNTHESIZER_MODEL_ID = OPS_CHAT_MODEL_ID  # claude-sonnet-4-6
 GATHER_TIMEOUT_SEC = 35  # leaves headroom under typical 60s ALB idle
 

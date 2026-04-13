@@ -14,7 +14,7 @@ from nexus.config import AWS_REGION, MODE
 
 logger = logging.getLogger(__name__)
 
-HAIKU = "us.anthropic.claude-haiku-4-5"
+HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 _BLOCKED = ("DELETE", "DROP", "REMOVE", "DETACH", "CREATE", "MERGE", "SET ",
             "CALL db.", "PERIODIC")
 
