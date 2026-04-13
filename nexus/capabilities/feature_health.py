@@ -28,7 +28,10 @@ logger = logging.getLogger(__name__)
 # the 30s dashboard refresh isn't paying for the same lookup twice.
 _synthetic_cache: dict[str, Any] = {"results": {}, "timestamp": 0.0}
 _SYNTHETIC_TTL_SEC = 60.0
-_CHECK_TIMEOUT_SEC = 3.0
+# 10s gives cross-service calls (Neptune, Forgewing API) headroom on a cold
+# cache; the parallel-fanout means total Phase 1 still finishes well under
+# the dashboard's 30s poll interval.
+_CHECK_TIMEOUT_SEC = 10.0
 
 
 FEATURES: dict[str, dict[str, Any]] = {
