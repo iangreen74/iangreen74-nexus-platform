@@ -279,6 +279,9 @@ def _format_evidence(evidence: dict[str, Any]) -> str:
     lines: list[str] = []
     for source, data in evidence.items():
         if source.startswith("_"):
+            # Surface sentinel keys (e.g. _timeout) so slow gathers are visible.
+            if isinstance(data, dict) and data.get("error"):
+                lines.append(f"- **{source}**: {str(data['error'])[:200]}")
             continue
         if not isinstance(data, dict):
             lines.append(f"- **{source}**: {str(data)[:200]}")

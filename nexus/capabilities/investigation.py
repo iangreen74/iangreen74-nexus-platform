@@ -31,7 +31,11 @@ logger = logging.getLogger(__name__)
 
 CLASSIFIER_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 SYNTHESIZER_MODEL_ID = OPS_CHAT_MODEL_ID  # claude-sonnet-4-6
-GATHER_TIMEOUT_SEC = 35  # leaves headroom under typical 60s ALB idle
+# Per-gatherer budget. A top-level wait_for on the whole gather cancels
+# completed-but-unreported siblings when any one runs long, which erases
+# evidence for the report. Per-gatherer timeout preserves partial results.
+PER_GATHERER_TIMEOUT_SEC = 30
+GATHER_TIMEOUT_SEC = 45  # hard ceiling (ALB idle is 60s); fail-safe only
 
 
 def _now_iso() -> str:
@@ -263,27 +267,41 @@ async def investigate(question: str, timeframe_minutes: int = 30) -> dict[str, A
         return {"error": "question is required", "tier": 1}
 
     sources = await _classify(question)
+
+    async def _bounded(name: str, coro: Any) -> tuple[str, Any]:
+        """Wrap each gatherer so its timeout only kills itself, not siblings."""
+        try:
+            result = await asyncio.wait_for(coro, timeout=PER_GATHERER_TIMEOUT_SEC)
+            return name, result
+        except asyncio.TimeoutError:
+            return name, {"type": name,
+                          "error": f"gatherer timed out after {PER_GATHERER_TIMEOUT_SEC}s"}
+        except Exception as exc:
+            return name, {"type": name,
+                          "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+
     coros = []
     for s in sources:
         fn = _GATHERERS.get(s)
         if not fn:
             continue
-        coros.append((s, fn(timeframe_minutes) if s == "cloudwatch" else fn()))
+        inner = fn(timeframe_minutes) if s == "cloudwatch" else fn()
+        coros.append(_bounded(s, inner))
 
     evidence: dict[str, Any] = {}
     if coros:
         try:
             results = await asyncio.wait_for(
-                asyncio.gather(*[c for _, c in coros], return_exceptions=True),
+                asyncio.gather(*coros, return_exceptions=False),
                 timeout=GATHER_TIMEOUT_SEC,
             )
-            for (name, _), result in zip(coros, results):
-                if isinstance(result, Exception):
-                    evidence[name] = {"type": name, "error": f"{type(result).__name__}: {str(result)[:200]}"}
-                else:
-                    evidence[name] = result
+            for name, result in results:
+                evidence[name] = result
         except asyncio.TimeoutError:
-            evidence["_timeout"] = {"error": f"gather exceeded {GATHER_TIMEOUT_SEC}s"}
+            evidence["_timeout"] = {
+                "error": f"overall gather exceeded {GATHER_TIMEOUT_SEC}s "
+                         f"(per-gatherer budget {PER_GATHERER_TIMEOUT_SEC}s)"
+            }
 
     diagnosis = await _synthesize(question, evidence)
     return {
