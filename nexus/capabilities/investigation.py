@@ -29,6 +29,26 @@ from nexus.config import AWS_REGION, MODE, OPS_CHAT_MODEL_ID
 
 logger = logging.getLogger(__name__)
 
+# Architecture preamble for the synthesizer. Without this, Bedrock keeps
+# recommending fixes for decisions we've already made (separate clusters,
+# IAM permissions already added) and flagging intentional design as drift.
+# Short-term workaround; long-term this should be learned from diagnosis
+# history via the pattern-learning tier.
+_KNOWN_CONTEXT = (
+    "Known architecture (do NOT flag any of these as issues):\n"
+    "- aria-console runs in the overwatch-platform ECS cluster — intentionally "
+    "separate from customer services in aria-platform.\n"
+    "- aria-console uses the nexus-platform ECR image — intentionally a "
+    "different repo from forgescaler/aria-daemon.\n"
+    "- ECS image 'drift' between forgescaler, aria-daemon, and aria-console is "
+    "expected: each ships independently from its own Dockerfile.\n"
+    "- logs:FilterLogEvents permission was added to aria-ecs-task-role on "
+    "2026-04-13; older CloudWatch evidence may still show AccessDeniedException "
+    "that is already resolved.\n"
+    "- aria-platform cluster and overwatch-platform cluster are both expected "
+    "to exist and be ACTIVE.\n"
+)
+
 CLASSIFIER_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 SYNTHESIZER_MODEL_ID = OPS_CHAT_MODEL_ID  # claude-sonnet-4-6
 # Per-gatherer budget. A top-level wait_for on the whole gather cancels
@@ -219,6 +239,7 @@ async def _synthesize(question: str, evidence: dict[str, Any]) -> dict[str, Any]
     evidence_text = json.dumps(evidence, indent=2, default=str)[:14000]
     prompt = (
         "You are Overwatch, the autonomous platform engineer for Forgewing.\n\n"
+        f"{_KNOWN_CONTEXT}\n"
         f'Operator question: "{question}"\n\n'
         f"Evidence gathered:\n{evidence_text}\n\n"
         "Return ONLY valid JSON matching this shape:\n"

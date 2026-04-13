@@ -33,6 +33,13 @@ _SYNTHETIC_TTL_SEC = 60.0
 # the dashboard's 30s poll interval.
 _CHECK_TIMEOUT_SEC = 10.0
 
+# Top-level result cache for the whole /api/feature-health payload.
+# The dashboard polls every 60s and keeps this warm; Goal Phase 1 reads
+# from it (via get_cached_feature_health) instead of re-evaluating all
+# six features against Neptune/Forgewing, which routinely exceeds 10s.
+_health_cache: dict[str, Any] = {"data": None, "timestamp": 0.0}
+_HEALTH_TTL_SEC = 90.0
+
 
 FEATURES: dict[str, dict[str, Any]] = {
     "projects": {
@@ -252,8 +259,24 @@ async def get_all_feature_health() -> dict[str, Any]:
     else:
         overall = "healthy"
 
-    return {
+    payload = {
         "overall": overall,
         "features": features,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    _health_cache["data"] = payload
+    _health_cache["timestamp"] = time.time()
+    return payload
+
+
+def get_cached_feature_health() -> dict[str, Any] | None:
+    """Return the last full-feature-health payload if still fresh, else None.
+
+    Read-only — never triggers a fresh evaluation. Goal Phase 1 uses this
+    so the rollup is instant when the dashboard cache is warm.
+    """
+    if not _health_cache.get("data"):
+        return None
+    if time.time() - _health_cache.get("timestamp", 0) > _HEALTH_TTL_SEC:
+        return None
+    return _health_cache["data"]

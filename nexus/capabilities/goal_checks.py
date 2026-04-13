@@ -41,14 +41,22 @@ def _with_timeout(fn, label: str, timeout: float = _SENSOR_TIMEOUT_SEC) -> list[
 
 
 def _feature_health_findings() -> list[str]:
-    """Any non-healthy feature tiles get listed by status_line."""
-    import asyncio
+    """Any non-healthy feature tiles get listed by status_line.
+
+    Reads from the dashboard's warm cache when available; only pays for
+    a fresh evaluation if the cache is cold (>90s since last dashboard
+    poll), and even then runs it in a fresh event loop since this
+    function lives inside asyncio.to_thread.
+    """
     out: list[str] = []
     try:
-        from nexus.capabilities.feature_health import get_all_feature_health
-        # get_all_feature_health is async; run it in a fresh loop since
-        # goal_quick_checks itself runs in a worker thread.
-        data = asyncio.run(get_all_feature_health()) or {}
+        from nexus.capabilities.feature_health import (
+            get_all_feature_health, get_cached_feature_health,
+        )
+        data = get_cached_feature_health()
+        if data is None:
+            import asyncio
+            data = asyncio.run(get_all_feature_health()) or {}
     except Exception as exc:
         return [f"feature_health unavailable: {type(exc).__name__}: {str(exc)[:100]}"]
     overall = data.get("overall", "unknown")
@@ -125,12 +133,18 @@ def _infra_lock_findings() -> list[str]:
 
 
 def _runner_findings() -> list[str]:
+    """Peek runner_health._cache — SSM probes take ~8-10s so we never
+    trigger a fresh one here; skip silently if the cache is cold."""
+    import time as _time
     from nexus import runner_health
-    data = _safe(runner_health.get_summary) or {}
-    total = data.get("total", 0)
-    healthy = data.get("healthy", 0)
+    results, ts = runner_health._cache
+    if not results or ts == 0 or (_time.time() - ts) > 180:
+        return []
+    total = len(results)
+    healthy = sum(1 for r in results if r.get("healthy"))
+    errored = sum(1 for r in results if r.get("error"))
     if total and healthy < total:
-        return [f"Runners: {healthy}/{total} healthy, {data.get('errors', 0)} errored"]
+        return [f"Runners: {healthy}/{total} healthy, {errored} errored"]
     return []
 
 
