@@ -202,12 +202,18 @@ async def _phase1_quick_check(target_id: str, level: str) -> dict[str, Any]:
             confidence = 90 if not findings else 50
 
         elif level == "tenant":
-            findings.extend(await asyncio.to_thread(_tenant_quick_checks, target_id))
-            confidence = 80 if not findings else 40
+            from nexus.capabilities.tenant_checks import tenant_quick_checks
+            findings.extend(await asyncio.to_thread(tenant_quick_checks, target_id))
+            # Tenant always runs Phase 2 — per-tenant reports are where the
+            # operator wants the deepest evidence.
+            confidence = 50
 
         elif level == "goal":
-            findings.extend(await asyncio.to_thread(_goal_quick_checks))
-            confidence = 85 if not findings else 50
+            from nexus.capabilities.goal_checks import goal_quick_checks
+            findings.extend(await asyncio.to_thread(goal_quick_checks))
+            # Goal always runs Phase 2 — the "God panel" is the comprehensive
+            # platform report.
+            confidence = 50
     except Exception as exc:
         findings.append(f"Phase 1 error: {type(exc).__name__}: {str(exc)[:120]}")
         confidence = 40
@@ -219,51 +225,6 @@ async def _phase1_quick_check(target_id: str, level: str) -> dict[str, Any]:
         "duration": round(time.time() - start, 1),
         "summary": f"Phase 1: {len(findings)} finding(s), {confidence}% confidence",
     }
-
-
-def _tenant_quick_checks(tid: str) -> list[str]:
-    from nexus import neptune_client
-
-    out: list[str] = []
-    rows = neptune_client.query(
-        "MATCH (t:Tenant {tenant_id: $tid}) "
-        "RETURN t.mission_stage AS stage, t.repo_url AS repo_url",
-        {"tid": tid},
-    )
-    if not rows:
-        return [f"Tenant {tid[:12]} not found"]
-    r = rows[0]
-    stage = r.get("stage")
-    if not stage or stage in ("None", "unknown"):
-        out.append(f"Tenant has no mission_stage (current: {stage!r})")
-    if not r.get("repo_url"):
-        out.append("Tenant.repo_url is empty")
-    pending = neptune_client.query(
-        "MATCH (m:MissionTask {tenant_id: $tid, status: 'pending'}) RETURN count(m) AS c",
-        {"tid": tid},
-    )
-    cnt = (pending[0].get("c", 0) if pending else 0) or 0
-    if cnt > 5:
-        out.append(f"{cnt} pending tasks — may be stuck")
-    return out
-
-
-def _goal_quick_checks() -> list[str]:
-    from nexus import neptune_client
-
-    out: list[str] = []
-    total = neptune_client.query("MATCH (t:Tenant) RETURN count(t) AS c")
-    exe = neptune_client.query(
-        "MATCH (t:Tenant {mission_stage: 'executing'}) RETURN count(t) AS c"
-    )
-    total_c = (total[0].get("c", 0) if total else 0) or 0
-    exe_c = (exe[0].get("c", 0) if exe else 0) or 0
-    if total_c and exe_c == 0:
-        out.append(f"No tenants actively executing ({total_c} total)")
-    prs = neptune_client.query("MATCH (p:PullRequest) RETURN count(p) AS c")
-    if prs and (prs[0].get("c", 0) or 0) == 0:
-        out.append("No PullRequest nodes in graph")
-    return out
 
 
 def _format_evidence(evidence: dict[str, Any]) -> str:
@@ -366,7 +327,21 @@ async def _phase2_deep_analysis(target_id: str, level: str,
             f"({fdef.get('description', '')}). Phase 1 found: {findings_txt}."
         )
     elif level == "tenant":
-        question = f"Deep analysis of tenant {target_id}. Phase 1 found: {findings_txt}."
+        try:
+            from nexus.sensors.tenant_health import check_tenant
+            snap = await asyncio.to_thread(check_tenant, target_id)
+            ctx = (snap.get("context") or {}) if isinstance(snap, dict) else {}
+            stage = ctx.get("mission_stage", "unknown")
+            status = snap.get("overall_status", "unknown") if isinstance(snap, dict) else "unknown"
+            pr_count = ((snap.get("pipeline") or {}).get("pr_count", 0)
+                        if isinstance(snap, dict) else 0)
+            question = (
+                f"Deep analysis of tenant {target_id} "
+                f"(stage={stage}, status={status}, {pr_count} PRs). "
+                f"Phase 1 found: {findings_txt}."
+            )
+        except Exception:
+            question = f"Deep analysis of tenant {target_id}. Phase 1 found: {findings_txt}."
     else:
         question = f"Deep analysis of platform goals. Phase 1 found: {findings_txt}."
 
