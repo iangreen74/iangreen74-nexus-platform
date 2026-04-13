@@ -880,14 +880,23 @@ def _format_report(
     except Exception:
         logger.debug("deploy readiness section failed", exc_info=True)
 
-    # --- Pending Overwatch PR proposals ---
+    # --- Suggested fixes (Fix Advisor) ---
     try:
         from nexus.capabilities.pr_proposer import format_for_report as _pr_fmt
 
         lines.append(_pr_fmt())
         lines.append("")
     except Exception:
-        logger.debug("pending PR section failed", exc_info=True)
+        logger.debug("suggested fixes section failed", exc_info=True)
+
+    # --- Research projects (Tier 2) ---
+    try:
+        from nexus.capabilities.research import format_for_report as _rp_fmt
+
+        lines.append(_rp_fmt())
+        lines.append("")
+    except Exception:
+        logger.debug("research section failed", exc_info=True)
 
     # --- Regression guard (Class 3) ---
     try:
@@ -1281,6 +1290,118 @@ async def investigate_endpoint(payload: dict[str, Any] = Body(default=None)) -> 
         raise HTTPException(status_code=400, detail="question is required")
     timeframe = int(body.get("timeframe_minutes") or 30)
     return await investigate(question, timeframe)
+
+
+# --- Tier 2: Research Projects ---------------------------------------------
+
+
+@router.post("/research")
+async def research_create(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Create a persistent research project."""
+    from nexus.capabilities.research import create_project
+
+    body = payload or {}
+    title = (body.get("title") or "").strip()
+    description = (body.get("description") or "").strip()
+    if not title or not description:
+        raise HTTPException(status_code=400, detail="title and description required")
+    return create_project(title, description)
+
+
+@router.get("/research")
+async def research_list() -> dict[str, Any]:
+    from nexus.capabilities.research import list_projects
+
+    return {"projects": list_projects()}
+
+
+@router.get("/research/{project_id}")
+async def research_get(project_id: str) -> dict[str, Any]:
+    from nexus.capabilities.research import get_project
+
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    return project
+
+
+@router.post("/research/{project_id}/run")
+async def research_run(project_id: str) -> dict[str, Any]:
+    """Trigger evidence gathering + synthesis. Can take 1-2 minutes."""
+    from nexus.capabilities.research import run_research
+
+    return await run_research(project_id)
+
+
+@router.delete("/research/{project_id}")
+async def research_archive(project_id: str) -> dict[str, Any]:
+    from nexus.capabilities.research import archive_project
+
+    return archive_project(project_id)
+
+
+# --- Tier 3: Deep Investigation via Step Functions --------------------------
+
+
+@router.post("/investigate/deep")
+async def deep_investigate(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Spawn a Step Functions deep investigation when Tier 1 confidence is low."""
+    from nexus.capabilities.investigation import investigate
+
+    body = payload or {}
+    question = (body.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    tier1 = await investigate(question)
+    confidence = ((tier1.get("diagnosis") or {}).get("confidence") or 0)
+    force = bool(body.get("force_deep", False))
+
+    if confidence >= 60 and not force:
+        return {
+            "tier": 1,
+            "message": f"Tier 1 confidence {confidence}%. Set force_deep=true to spawn Step Functions.",
+            "diagnosis": tier1.get("diagnosis"),
+            "evidence_sources": tier1.get("sources_returned", []),
+        }
+
+    if MODE != "production":
+        return {
+            "tier": 3, "mode": "local",
+            "message": "Deep investigation would spawn in production.",
+            "tier1_diagnosis": tier1.get("diagnosis"),
+        }
+
+    try:
+        import boto3
+
+        sfn = boto3.client("stepfunctions", region_name=AWS_REGION)
+        execution = sfn.start_execution(
+            stateMachineArn=(
+                "arn:aws:states:us-east-1:418295677815:stateMachine:"
+                "forgescaler-investigation-v2"
+            ),
+            input=json.dumps({
+                "trigger_type": "operator_question",
+                "question": question,
+                "tier1_evidence": tier1.get("evidence", {}),
+                "tier1_confidence": confidence,
+                "requested_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+        return {
+            "tier": 3,
+            "message": "Deep investigation spawned. Check back in 2-5 minutes.",
+            "execution_arn": execution["executionArn"],
+            "tier1_diagnosis": tier1.get("diagnosis"),
+        }
+    except Exception as exc:
+        logger.exception("deep_investigate spawn failed")
+        return {
+            "tier": 1,
+            "message": f"Could not spawn deep investigation: {exc}",
+            "diagnosis": tier1.get("diagnosis"),
+        }
 
 
 @router.get("/deploy-drift")
