@@ -171,6 +171,24 @@ def test_research_archive_endpoint():
     assert resp.json()["status"] == "archived"
 
 
+def test_research_run_returns_immediately():
+    """POST /run is fire-and-forget — must respond fast with researching status."""
+    _reset()
+    created = client.post("/api/research", json={"title": "T", "description": "D"}).json()
+    pid = created["project_id"]
+    resp = client.post(f"/api/research/{pid}/run")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project_id"] == pid
+    assert body["status"] == "researching"
+    assert "Poll" in body["message"]
+
+
+def test_research_run_404_for_missing():
+    resp = client.post("/api/research/does-not-exist/run")
+    assert resp.status_code == 404
+
+
 # --- Deep investigation ------------------------------------------------------
 
 

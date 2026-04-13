@@ -1327,10 +1327,27 @@ async def research_get(project_id: str) -> dict[str, Any]:
 
 @router.post("/research/{project_id}/run")
 async def research_run(project_id: str) -> dict[str, Any]:
-    """Trigger evidence gathering + synthesis. Can take 1-2 minutes."""
-    from nexus.capabilities.research import run_research
+    """Fire-and-forget: return immediately, run research in background.
 
-    return await run_research(project_id)
+    Research takes 60-90s and the ALB idle timeout is 60s — a synchronous
+    response would 504 even though the work succeeded. Operator polls
+    GET /api/research/{id} for completion.
+    """
+    from nexus.capabilities.research import get_project, run_research
+
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Research project not found")
+    if project.get("status") == "researching":
+        return {"project_id": project_id, "status": "already_running",
+                "message": "Research is already in progress for this project."}
+
+    asyncio.create_task(run_research(project_id))
+    return {
+        "project_id": project_id,
+        "status": "researching",
+        "message": "Research started. Poll GET /api/research/{id} for results.",
+    }
 
 
 @router.delete("/research/{project_id}")
