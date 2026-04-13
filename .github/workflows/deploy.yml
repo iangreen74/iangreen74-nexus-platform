@@ -8,7 +8,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPO: 418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform
-  ECS_CLUSTER: aria-platform
+  ECS_CLUSTER: overwatch-platform
   ECS_SERVICE: aria-console
   HEALTH_URL: https://platform.vaultscaler.com/health
 
@@ -64,7 +64,7 @@ jobs:
         run: |
           echo "Waiting for service to stabilize..."
           timeout 300 bash -c 'while true; do
-            STATUS=$(aws ecs describe-services --cluster aria-platform --services aria-console --region us-east-1 \
+            STATUS=$(aws ecs describe-services --cluster overwatch-platform --services aria-console --region us-east-1 \
               --query "services[0].deployments[?status==\`PRIMARY\`].rolloutState" --output text 2>/dev/null)
             echo "  Status: $STATUS"
             if [ "$STATUS" = "COMPLETED" ]; then
