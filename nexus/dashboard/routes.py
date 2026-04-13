@@ -1723,3 +1723,51 @@ async def latest_code_audit_text() -> dict[str, Any]:
     from nexus.nexus_code_auditor import format_report_text, get_latest_report
 
     return {"report": format_report_text(get_latest_report())}
+
+
+@router.post("/signatures/bootstrap")
+async def bootstrap_incident_signatures() -> dict[str, Any]:
+    """Seed the 5 canonical incident signatures. Idempotent."""
+    from nexus.capabilities.incident_learner import (
+        all_signatures,
+        bootstrap_signatures,
+    )
+
+    created = bootstrap_signatures()
+    return {
+        "created_or_merged": len(created),
+        "total_signatures": len(all_signatures()),
+        "names": [s.name for s in created],
+    }
+
+
+@router.post("/incidents/close-stale")
+async def close_stale_incidents(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Resolve open incidents — optionally filtered by max age hours."""
+    from datetime import datetime, timedelta, timezone
+
+    body = payload or {}
+    max_age_hours = body.get("max_age_hours")
+    open_incidents = overwatch_graph.get_open_incidents()
+    cutoff = None
+    if max_age_hours is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=float(max_age_hours))
+
+    closed: list[dict[str, Any]] = []
+    for inc in open_incidents:
+        if cutoff is not None:
+            detected = inc.get("detected_at")
+            try:
+                dt = datetime.fromisoformat(str(detected).replace("Z", "+00:00"))
+                if dt > cutoff:
+                    continue  # too recent, leave it open
+            except (ValueError, TypeError):
+                pass
+        source = inc.get("source")
+        if not source:
+            continue
+        resolved = overwatch_graph.resolve_incident(source, auto_healed=False)
+        if resolved:
+            closed.append({"source": source, "type": inc.get("type", "?")})
+    return {"closed": len(closed), "remaining_open": len(open_incidents) - len(closed),
+            "details": closed}
