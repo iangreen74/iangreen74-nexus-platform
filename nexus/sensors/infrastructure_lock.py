@@ -50,6 +50,8 @@ INFRASTRUCTURE_LOCKS: dict[str, Any] = {
     "cognito_pool": COGNITO_USER_POOL_ID,
     "github_app_id": GITHUB_APP_ID,
     "ecs_services": list(FORGEWING_SERVICES),
+    "overwatch_cluster": "overwatch-platform",
+    "overwatch_services": ["aria-console"],
 }
 
 
@@ -67,43 +69,72 @@ def _check_dns(hostname: str) -> tuple[bool, str]:
 
 def _check_ecs_services_batch() -> dict[str, Any]:
     """
-    Verify the four critical services in one describe_services call.
+    Verify every monitored service across both clusters — one
+    describe_services call per cluster.
 
     The aria-ecs-task-role has ecs:DescribeServices but NOT ListServices or
     DescribeClusters, so we can't use the convenience helpers — we go
-    straight to describe_services with the known service list. Cluster
-    reachability is implied: if describe_services returns at least one
-    service from this cluster, the cluster exists and is reachable.
+    straight to describe_services with the known service list. A cluster
+    is "reachable" if describe_services returned at least one of its
+    services. aria-console lives in overwatch-platform; the customer
+    services live in aria-platform.
     """
+    from nexus.config import (
+        FORGEWING_SERVICES as _FW_SVCS,
+        OVERWATCH_CLUSTER as _OW_CLUSTER,
+        OVERWATCH_SERVICES as _OW_SVCS,
+    )
+
+    cluster_plan = [
+        (FORGEWING_CLUSTER, list(_FW_SVCS)),
+        (_OW_CLUSTER, list(_OW_SVCS)),
+    ]
+
     if MODE != "production":
         return {
             "cluster_reachable": True,
             "services": [
-                {"service": s, "status": "ACTIVE", "running_count": 1, "desired_count": 1}
-                for s in FORGEWING_SERVICES
+                {"service": s, "cluster": c, "status": "ACTIVE",
+                 "running_count": 1, "desired_count": 1}
+                for c, svcs in cluster_plan for s in svcs
             ],
         }
-    try:
-        resp = aws_client._client("ecs").describe_services(
-            cluster=FORGEWING_CLUSTER, services=list(FORGEWING_SERVICES)
-        )
-        services = [
-            {
-                "service": s.get("serviceName"),
-                "status": s.get("status"),
-                "running_count": s.get("runningCount", 0),
-                "desired_count": s.get("desiredCount", 0),
-            }
-            for s in resp.get("services", [])
-        ]
-        failures = [f.get("reason") for f in resp.get("failures", []) or []]
-        return {
-            "cluster_reachable": len(services) > 0,
-            "services": services,
-            "failures": failures,
-        }
-    except Exception as exc:
-        return {"cluster_reachable": False, "services": [], "error": str(exc)}
+
+    all_services: list[dict[str, Any]] = []
+    all_failures: list[str] = []
+    any_reachable = False
+    errors: list[str] = []
+    for cluster, names in cluster_plan:
+        if not names:
+            continue
+        try:
+            resp = aws_client._client("ecs").describe_services(
+                cluster=cluster, services=names
+            )
+            got = resp.get("services", []) or []
+            if got:
+                any_reachable = True
+            for s in got:
+                all_services.append({
+                    "service": s.get("serviceName"),
+                    "cluster": cluster,
+                    "status": s.get("status"),
+                    "running_count": s.get("runningCount", 0),
+                    "desired_count": s.get("desiredCount", 0),
+                })
+            all_failures.extend(
+                f"{cluster}/{f.get('arn', '?')}: {f.get('reason')}"
+                for f in resp.get("failures", []) or []
+            )
+        except Exception as exc:
+            errors.append(f"{cluster}: {exc}")
+
+    return {
+        "cluster_reachable": any_reachable,
+        "services": all_services,
+        "failures": all_failures,
+        **({"error": "; ".join(errors)} if errors else {}),
+    }
 
 
 def _check_neptune_graph() -> dict[str, Any]:
@@ -179,8 +210,9 @@ def check_locks() -> dict[str, Any]:
             "lock": "ecs_cluster",
             "reason": ecs_state.get("error", "describe_services returned no services"),
         })
+    from nexus.config import ALL_MONITORED_SERVICES
     services_by_name = {s["service"]: s for s in ecs_state.get("services", [])}
-    for expected in FORGEWING_SERVICES:
+    for expected in ALL_MONITORED_SERVICES:
         svc = services_by_name.get(expected)
         if svc is None:
             violations.append({"lock": f"service:{expected}", "reason": "missing from describe_services response"})

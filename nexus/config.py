@@ -24,14 +24,25 @@ NEPTUNE_GRAPH_ID = "g-1xwjj34141"
 # This avoids the ~$300/mo baseline cost of a second Neptune Analytics graph.
 OVERWATCH_GRAPH_ID = NEPTUNE_GRAPH_ID
 
-# ECS clusters and services NEXUS monitors
+# ECS clusters and services NEXUS monitors.
+# Two-cluster split: aria-platform holds customer-facing services;
+# overwatch-platform holds the control plane (aria-console / Overwatch).
 FORGEWING_CLUSTER = "aria-platform"
 FORGEWING_SERVICES = [
     "forgescaler",
     "forgescaler-staging",
     "aria-daemon",
-    "aria-console",
 ]
+OVERWATCH_CLUSTER = "overwatch-platform"
+OVERWATCH_SERVICES = ["aria-console"]
+
+# Canonical service → cluster map. Iterate this when checking every
+# monitored service so new services don't have to be added in two places.
+SERVICE_CLUSTERS: dict[str, str] = {
+    **{s: FORGEWING_CLUSTER for s in FORGEWING_SERVICES},
+    **{s: OVERWATCH_CLUSTER for s in OVERWATCH_SERVICES},
+}
+ALL_MONITORED_SERVICES = list(SERVICE_CLUSTERS.keys())
 
 # Forgewing API endpoints (for health checks)
 FORGEWING_API = "https://api.forgescaler.com"

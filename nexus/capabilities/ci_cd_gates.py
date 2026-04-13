@@ -34,31 +34,35 @@ def _now_iso() -> str:
 
 
 def check_deploy_drift() -> dict[str, Any]:
-    """Inspect each Forgewing ECS service's running image. Drift = different
-    image digests across services that should share a release."""
+    """Inspect each monitored ECS service's running image across both the
+    customer cluster (aria-platform) and the control-plane cluster
+    (overwatch-platform). Drift = different image digests among services
+    that should share a release (aria-console is tracked but excluded
+    from drift math since it follows its own release cycle)."""
     from nexus import aws_client
-    from nexus.config import FORGEWING_CLUSTER, FORGEWING_SERVICES, MODE
+    from nexus.config import MODE, SERVICE_CLUSTERS
 
     if MODE != "production":
         return {
             "drift": False,
-            "services": {s: {"image": "mock", "digest": "mock"} for s in FORGEWING_SERVICES},
+            "services": {s: {"image": "mock", "digest": "mock", "cluster": c}
+                         for s, c in SERVICE_CLUSTERS.items()},
             "unique_digests": [],
             "recommendation": "ALIGNED",
             "mock": True,
         }
 
     services: dict[str, dict[str, Any]] = {}
-    for name in FORGEWING_SERVICES:
+    for name, cluster in SERVICE_CLUSTERS.items():
         try:
             ecs = aws_client._client("ecs")
-            tasks = ecs.list_tasks(cluster=FORGEWING_CLUSTER, serviceName=name).get("taskArns", [])
+            tasks = ecs.list_tasks(cluster=cluster, serviceName=name).get("taskArns", [])
             if not tasks:
-                services[name] = {"status": "no_tasks"}
+                services[name] = {"status": "no_tasks", "cluster": cluster}
                 continue
-            desc = ecs.describe_tasks(cluster=FORGEWING_CLUSTER, tasks=tasks[:1]).get("tasks", [])
+            desc = ecs.describe_tasks(cluster=cluster, tasks=tasks[:1]).get("tasks", [])
             if not desc:
-                services[name] = {"status": "describe_empty"}
+                services[name] = {"status": "describe_empty", "cluster": cluster}
                 continue
             container = (desc[0].get("containers") or [{}])[0]
             image = container.get("image", "")
@@ -66,18 +70,25 @@ def check_deploy_drift() -> dict[str, Any]:
             services[name] = {
                 "image": image,
                 "digest": digest,
+                "cluster": cluster,
                 "status": container.get("lastStatus") or desc[0].get("lastStatus") or "?",
             }
         except Exception as exc:
-            logger.debug("drift check for %s failed", name, exc_info=True)
-            services[name] = {"status": "error", "error": str(exc)[:200]}
+            logger.debug("drift check for %s (cluster=%s) failed", name, cluster, exc_info=True)
+            services[name] = {"status": "error", "cluster": cluster, "error": str(exc)[:200]}
 
-    digests = {v.get("digest") for v in services.values() if v.get("digest")}
-    drift = len(digests) > 1
+    # Drift is only meaningful within the customer cluster — aria-console
+    # ships independently so its digest shouldn't count.
+    from nexus.config import FORGEWING_CLUSTER
+    customer_digests = {
+        v.get("digest") for v in services.values()
+        if v.get("cluster") == FORGEWING_CLUSTER and v.get("digest")
+    }
+    drift = len(customer_digests) > 1
     return {
         "drift": drift,
         "services": services,
-        "unique_digests": sorted(digests),
+        "unique_digests": sorted(customer_digests),
         "recommendation": "DRIFT_DETECTED" if drift else "ALIGNED",
         "checked_at": _now_iso(),
     }
