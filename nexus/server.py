@@ -51,11 +51,13 @@ if STATIC_DIR.exists():
 @app.get("/health")
 async def health():
     """Liveness probe — lightweight, no external calls."""
+    import os
     return {
         "status": "online",
         "mode": MODE,
         "version": "0.2.0",
         "system": "overwatch",
+        "commit": os.environ.get("GIT_SHA", "unknown"),
     }
 
 

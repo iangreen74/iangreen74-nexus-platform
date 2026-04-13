@@ -1,4 +1,6 @@
 FROM python:3.11-slim
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 WORKDIR /app
 # curl: ECS container health check (curl -f /health)
 # git: code auditor clones aria-platform to run audit rules

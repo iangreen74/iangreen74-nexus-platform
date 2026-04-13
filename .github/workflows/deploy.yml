@@ -5,6 +5,13 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: 418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform
+  ECS_CLUSTER: aria-platform
+  ECS_SERVICE: aria-console
+  HEALTH_URL: https://platform.vaultscaler.com/health
+
 jobs:
   test:
     runs-on: [self-hosted, nexus-runner]
@@ -22,5 +29,57 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, nexus-runner]
     steps:
-      - name: Placeholder deploy
-        run: echo "ECS deploy will be wired in a later change"
+      - uses: actions/checkout@v4
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin \
+            418295677815.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Build with commit SHA
+        run: |
+          GIT_SHA=${GITHUB_SHA::7}
+          docker build --build-arg GIT_SHA=$GIT_SHA -t nexus-platform:latest .
+          docker tag nexus-platform:latest $ECR_REPO:latest
+          docker tag nexus-platform:latest $ECR_REPO:$GIT_SHA
+          echo "GIT_SHA=$GIT_SHA" >> $GITHUB_ENV
+
+      - name: Push to ECR
+        run: |
+          docker push $ECR_REPO:latest
+          docker push $ECR_REPO:$GIT_SHA
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION > /dev/null
+          echo "Deployed $GIT_SHA to $ECS_SERVICE"
+
+      - name: Wait for stable
+        run: |
+          echo "Waiting for service to stabilize..."
+          timeout 180 bash -c 'while true; do
+            STATUS=$(aws ecs describe-services --cluster aria-platform --services aria-console --region us-east-1 \
+              --query "services[0].deployments[?status==\`PRIMARY\`].rolloutState" --output text 2>/dev/null)
+            echo "  Status: $STATUS"
+            if [ "$STATUS" = "COMPLETED" ]; then
+              echo "Deployment complete"
+              break
+            fi
+            sleep 10
+          done'
+
+      - name: Verify health
+        run: |
+          sleep 10
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+          BODY=$(curl -s "$HEALTH_URL" 2>/dev/null || echo "")
+          echo "Health check: HTTP $HTTP_CODE"
+          echo "Body: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARNING: Health check returned $HTTP_CODE"
+          fi
