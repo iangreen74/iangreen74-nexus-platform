@@ -144,6 +144,44 @@ async def _run_diagnosis(job_id: str) -> None:
         rec["completed_at"] = _now_iso()
 
 
+def _synthetic_full_results() -> dict[str, dict[str, Any]]:
+    """Return name → full result dict (status, duration_ms, error)."""
+    try:
+        from nexus.synthetic_tests import get_summary
+        summary = get_summary() or {}
+        out: dict[str, dict[str, Any]] = {}
+        for r in summary.get("results", []) or []:
+            if isinstance(r, dict) and r.get("name"):
+                out[r["name"]] = r
+        return out
+    except Exception:
+        logger.debug("synthetic full results unavailable", exc_info=True)
+        return {}
+
+
+def _enrich_synthetic_findings(findings: list[str],
+                                 details: dict[str, dict[str, Any]]) -> list[str]:
+    """Append failure detail (error / duration) to bare 'Synthetic X fail' lines."""
+    out: list[str] = []
+    for f in findings:
+        if not isinstance(f, str) or "Synthetic '" not in f:
+            out.append(f)
+            continue
+        try:
+            name = f.split("'", 2)[1]
+        except (IndexError, ValueError):
+            out.append(f)
+            continue
+        d = details.get(name) or {}
+        extra = ""
+        if d.get("error"):
+            extra = f" — {str(d['error'])[:200]}"
+        elif d.get("duration_ms"):
+            extra = f" — {d['duration_ms']}ms"
+        out.append(f + extra if extra else f)
+    return out
+
+
 async def _phase1_quick_check(target_id: str, level: str) -> dict[str, Any]:
     start = time.time()
     findings: list[str] = []
@@ -155,10 +193,12 @@ async def _phase1_quick_check(target_id: str, level: str) -> dict[str, Any]:
                 FEATURES, _evaluate_feature, _synthetic_results_by_name,
             )
             synthetics = await asyncio.to_thread(_synthetic_results_by_name)
+            details = await asyncio.to_thread(_synthetic_full_results)
             fdef = FEATURES.get(target_id, {})
             health = _evaluate_feature(target_id, fdef, synthetics)
             findings.extend(health.get("error_details", []) or [])
             findings.extend(health.get("warning_details", []) or [])
+            findings = _enrich_synthetic_findings(findings, details)
             confidence = 90 if not findings else 50
 
         elif level == "tenant":
@@ -226,6 +266,91 @@ def _goal_quick_checks() -> list[str]:
     return out
 
 
+def _format_evidence(evidence: dict[str, Any]) -> str:
+    """Render gathered evidence as human-readable markdown.
+
+    This must always succeed — it's the safety net when Bedrock synthesis
+    returns nothing useful. Each known source gets a tailored formatter;
+    unknown sources fall through to a JSON dump.
+    """
+    if not evidence:
+        return "No evidence gathered"
+
+    lines: list[str] = []
+    for source, data in evidence.items():
+        if source.startswith("_"):
+            continue
+        if not isinstance(data, dict):
+            lines.append(f"- **{source}**: {str(data)[:200]}")
+            continue
+        if data.get("error"):
+            lines.append(f"- **{source}**: ERROR — {str(data['error'])[:200]}")
+            continue
+
+        if source == "ecs":
+            services = data.get("services", {}) or {}
+            lines.append(f"- **ecs**: {len(services)} services, drift={data.get('drift')}, "
+                         f"recommendation={data.get('recommendation', '?')}")
+            for svc, info in services.items():
+                if isinstance(info, dict):
+                    lines.append(f"  - {svc}: image={str(info.get('image', '?'))[:60]}")
+        elif source == "neptune":
+            lines.append(f"- **neptune**: {data.get('tenant_count', 0)} tenants, "
+                         f"{data.get('open_incidents', 0)} open incidents")
+            for inc in (data.get("incident_summary") or [])[:3]:
+                if isinstance(inc, dict):
+                    lines.append(f"  - incident {inc.get('source', '?')}/"
+                                 f"{inc.get('type', '?')}: "
+                                 f"{str(inc.get('root_cause', ''))[:150]}")
+            for t in (data.get("tenants") or [])[:3]:
+                if isinstance(t, dict) and (t.get("deploy_stuck") or
+                                              t.get("overall_status") not in ("healthy", None)):
+                    lines.append(f"  - tenant {str(t.get('id', ''))[:12]}: "
+                                 f"stage={t.get('stage')}, status={t.get('overall_status')}, "
+                                 f"deploy_stuck={t.get('deploy_stuck')}")
+        elif source == "synthetic":
+            lines.append(f"- **synthetic**: verdict={data.get('verdict', '?')}, "
+                         f"{data.get('passed', '?')}/{data.get('effective_total', '?')} "
+                         f"passing ({data.get('skipped', 0)} skipped)")
+            failed = data.get("failed_tests") or []
+            if failed:
+                lines.append(f"  - FAILING: {', '.join(str(f) for f in failed)}")
+        elif source == "github_ci":
+            lines.append(f"- **github_ci**: green_rate={data.get('green_rate_24h', '?')}, "
+                         f"runs={data.get('run_count', '?')}, "
+                         f"last={data.get('last_run_status', '?')}")
+            for wf in (data.get("failing_workflows") or [])[:3]:
+                lines.append(f"  - failing: {str(wf)[:150]}")
+        elif source == "cloudwatch":
+            count = data.get("count", 0)
+            lines.append(f"- **cloudwatch**: {count} log entries")
+            for entry in (data.get("entries") or [])[:3]:
+                if isinstance(entry, dict):
+                    if entry.get("error"):
+                        lines.append(f"  - {entry.get('source', '?')}: ERROR {str(entry['error'])[:120]}")
+                    else:
+                        lines.append(f"  - {entry.get('source', '?')}: "
+                                     f"{str(entry.get('message', ''))[:150]}")
+        elif source == "platform_events":
+            events = data.get("recent_events") or []
+            chains = data.get("active_heal_chains") or []
+            lines.append(f"- **platform_events**: {len(events)} recent events, "
+                         f"{len(chains)} active heal chains")
+            for ev in events[:3]:
+                if isinstance(ev, dict):
+                    lines.append(f"  - {ev.get('event_type', '?')} "
+                                 f"({ev.get('severity', '?')}) {ev.get('service', '')}")
+            for ch in chains[:3]:
+                if isinstance(ch, dict):
+                    lines.append(f"  - heal {ch.get('chain', '?')} step={ch.get('step', '?')} "
+                                 f"source={ch.get('source', '?')}")
+        else:
+            payload = {k: v for k, v in data.items() if k != "type"}
+            lines.append(f"- **{source}**: {json.dumps(payload, default=str)[:200]}")
+
+    return "\n".join(lines) if lines else "No evidence gathered"
+
+
 async def _phase2_deep_analysis(target_id: str, level: str,
                                   p1: dict[str, Any]) -> dict[str, Any]:
     start = time.time()
@@ -251,19 +376,7 @@ async def _phase2_deep_analysis(target_id: str, level: str,
 
     diag = result.get("diagnosis", {}) or {}
     evidence = result.get("evidence", {}) or {}
-
-    # Always render an evidence summary so the report stays useful even when
-    # Bedrock synthesis returns nothing actionable.
-    evidence_lines: list[str] = []
-    for source, data in evidence.items():
-        if not isinstance(data, dict):
-            evidence_lines.append(f"- {source}: {str(data)[:200]}")
-            continue
-        if data.get("error"):
-            evidence_lines.append(f"- {source}: ERROR — {str(data['error'])[:200]}")
-        else:
-            payload = {k: v for k, v in data.items() if k != "type"}
-            evidence_lines.append(f"- {source}: {json.dumps(payload, default=str)[:200]}")
+    evidence_summary = _format_evidence(evidence)
 
     return {
         "phase": "deep_analysis",
@@ -271,7 +384,7 @@ async def _phase2_deep_analysis(target_id: str, level: str,
         "confidence": diag.get("confidence", 60) or 60,
         "diagnosis": diag,
         "evidence": evidence,
-        "evidence_summary": "\n".join(evidence_lines),
+        "evidence_summary": evidence_summary,
         "sources": result.get("sources_returned", []),
         "duration": round(time.time() - start, 1),
         "summary": f"Phase 2: {diag.get('confidence', 0)}% confidence",
