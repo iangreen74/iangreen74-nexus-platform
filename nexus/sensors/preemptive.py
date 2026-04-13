@@ -90,14 +90,25 @@ def check_ecs_task_age() -> list[dict[str, Any]]:
 
 
 def check_certificate_expiry() -> list[dict[str, Any]]:
-    """Alert when any ACM certificate is within PREEMPTIVE_CERT_EXPIRY_DAYS of expiry."""
+    """Alert when any ACM certificate is within PREEMPTIVE_CERT_EXPIRY_DAYS of expiry.
+
+    The aria-ecs-task-role does NOT have acm:ListCertificates today — rather
+    than spewing a traceback every 30s, we catch AccessDenied quietly and
+    skip. Remove this short-circuit once the IAM policy is updated.
+    """
     if MODE != "production":
         return []
     alerts: list[dict[str, Any]] = []
     threshold = timedelta(days=PREEMPTIVE_CERT_EXPIRY_DAYS)
     try:
         acm = aws_client._client("acm")
-        page = acm.list_certificates(CertificateStatuses=["ISSUED"], MaxItems=200)
+        try:
+            page = acm.list_certificates(CertificateStatuses=["ISSUED"], MaxItems=200)
+        except Exception as exc:
+            if "AccessDenied" in str(exc) or "not authorized" in str(exc):
+                logger.debug("check_certificate_expiry skipped — acm:ListCertificates denied")
+                return []
+            raise
         for summary in page.get("CertificateSummaryList", []):
             arn = summary.get("CertificateArn")
             domain = summary.get("DomainName")

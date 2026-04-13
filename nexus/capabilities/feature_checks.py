@@ -157,16 +157,26 @@ def check_onboarding_pipeline() -> dict[str, Any]:
 
 
 def check_tenant_stages() -> dict[str, Any]:
-    """Tenant nodes with no mission_stage suggest onboarding incomplete."""
+    """Customer Tenant nodes with no mission_stage suggest onboarding incomplete.
+
+    Platform-infrastructure names (aria-platform, aria-daemon, etc.) legitimately
+    exist as :Tenant nodes without a mission_stage — neptune_client.get_tenant_ids
+    filters them out everywhere else, so we apply the same filter here to avoid
+    a misleading "N tenants with no mission_stage" warning.
+    """
     if MODE != "production":
         return _ok()
     try:
         from nexus import neptune_client
+        from nexus.neptune_client import _NON_TENANT_NAMES
 
         rows = neptune_client.query(
             "MATCH (t:Tenant) "
-            "WHERE t.mission_stage IS NULL OR t.mission_stage = '' "
-            "RETURN count(t) AS cnt"
+            "WHERE (t.mission_stage IS NULL OR t.mission_stage = '') "
+            "AND NOT t.tenant_id IN $infra "
+            "AND NOT t.name IN $infra "
+            "RETURN count(t) AS cnt",
+            {"infra": list(_NON_TENANT_NAMES)},
         )
         cnt = (rows[0].get("cnt", 0) if rows else 0) or 0
         if cnt > 0:

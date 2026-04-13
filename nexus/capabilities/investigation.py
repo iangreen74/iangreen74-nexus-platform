@@ -75,7 +75,11 @@ async def _gather_cloudwatch(timeframe_minutes: int = 30) -> dict[str, Any]:
         end = int(datetime.now(timezone.utc).timestamp() * 1000)
         start = end - (timeframe_minutes * 60 * 1000)
         out: list[dict[str, Any]] = []
-        for log_group in ("/ecs/forgescaler", "/ecs/aria-daemon", "/aria/console"):
+        # Actual log group names in this account (aria daemon writes to
+        # /aria/daemon, NOT /ecs/aria-daemon). /ecs/aria-daemon does not
+        # exist and used to surface as AccessDenied here.
+        for log_group in ("/ecs/forgescaler", "/ecs/forgescaler-staging",
+                           "/aria/daemon", "/aria/console", "/aria/agents"):
             try:
                 resp = client.filter_log_events(
                     logGroupName=log_group, startTime=start, endTime=end,

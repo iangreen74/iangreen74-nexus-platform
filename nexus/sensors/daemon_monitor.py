@@ -21,7 +21,7 @@ from nexus.config import (
 logger = logging.getLogger("nexus.sensors.daemon")
 
 DAEMON_SERVICE = "aria-daemon"
-DAEMON_LOG_GROUP = "/ecs/aria-daemon"
+DAEMON_LOG_GROUP = "/aria/daemon"
 
 
 def _now() -> datetime:
