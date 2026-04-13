@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 _active_diagnoses: dict[str, dict[str, Any]] = {}
 VALID_LEVELS = {"feature", "tenant", "goal"}
 
+# Safety valve: if a diagnosis coroutine crashes before updating its
+# status, the job sits in "running" forever and blocks new requests.
+# Anything older than this is treated as dead.
+DIAGNOSIS_MAX_RUN_SEC = 300.0
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -59,16 +64,29 @@ async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, A
 
     # One at a time. Source of truth is the job store itself — no separate
     # lock flag means no risk of a stale lock from a crashed coroutine.
-    for existing in _active_diagnoses.values():
-        if existing.get("status") in ("starting", "running"):
-            return {
-                "error": "A diagnosis is already running",
-                "status": "busy",
-                "active_job": existing["job_id"],
-                "active_target": existing["target_id"],
-                "active_level": existing["level"],
-                "active_phase": existing.get("phase_label", ""),
-            }
+    # Jobs older than DIAGNOSIS_MAX_RUN_SEC are treated as dead so a silent
+    # crash can't permanently block the endpoint.
+    now_ts = time.time()
+    for existing in list(_active_diagnoses.values()):
+        if existing.get("status") not in ("starting", "running"):
+            continue
+        if now_ts - existing.get("_start_ts", 0) > DIAGNOSIS_MAX_RUN_SEC:
+            existing["status"] = "timeout"
+            existing["phase_label"] = (
+                f"Timed out after {int(DIAGNOSIS_MAX_RUN_SEC)}s — job abandoned"
+            )
+            existing["completed_at"] = _now_iso()
+            logger.warning("reclaiming stuck diagnosis %s (level=%s, target=%s)",
+                           existing["job_id"], existing["level"], existing["target_id"])
+            continue
+        return {
+            "error": "A diagnosis is already running",
+            "status": "busy",
+            "active_job": existing["job_id"],
+            "active_target": existing["target_id"],
+            "active_level": existing["level"],
+            "active_phase": existing.get("phase_label", ""),
+        }
 
     job_id = f"diag-{uuid.uuid4().hex[:10]}"
     record = {
@@ -79,6 +97,7 @@ async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, A
         "phase": "quick_check",
         "phase_label": "Phase 1: Quick check — synthetics + health signals",
         "started_at": _now_iso(),
+        "_start_ts": now_ts,
         "phases_completed": [],
         "confidence": 0,
         "report": None,
@@ -145,7 +164,11 @@ async def _run_diagnosis(job_id: str) -> None:
 
 
 def _synthetic_full_results() -> dict[str, dict[str, Any]]:
-    """Return name → full result dict (status, duration_ms, error)."""
+    """Return name → full result dict (status, duration_ms, error).
+
+    Relies on synthetic_tests's 60s internal cache — cheap if Phase 1 also
+    called _synthetic_results_by_name immediately before.
+    """
     try:
         from nexus.synthetic_tests import get_summary
         summary = get_summary() or {}
@@ -190,12 +213,14 @@ async def _phase1_quick_check(target_id: str, level: str) -> dict[str, Any]:
     try:
         if level == "feature":
             from nexus.capabilities.feature_health import (
-                FEATURES, _evaluate_feature, _synthetic_results_by_name,
+                FEATURES, _evaluate_feature_async, _synthetic_results_by_name,
             )
             synthetics = await asyncio.to_thread(_synthetic_results_by_name)
             details = await asyncio.to_thread(_synthetic_full_results)
             fdef = FEATURES.get(target_id, {})
-            health = _evaluate_feature(target_id, fdef, synthetics)
+            # Async variant applies per-check timeout so a slow Neptune call
+            # can't stall Phase 1 indefinitely.
+            health = await _evaluate_feature_async(target_id, fdef, synthetics)
             findings.extend(health.get("error_details", []) or [])
             findings.extend(health.get("warning_details", []) or [])
             findings = _enrich_synthetic_findings(findings, details)

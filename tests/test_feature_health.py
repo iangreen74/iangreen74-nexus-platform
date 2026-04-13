@@ -181,9 +181,11 @@ def test_second_start_while_running_returns_busy():
     active job instead of spawning a parallel Bedrock run."""
     # Seed a running record directly (avoid racing the background task)
     fd._active_diagnoses.clear()
+    import time as _time
     fd._active_diagnoses["diag-running"] = {
         "job_id": "diag-running", "target_id": "projects", "level": "feature",
         "status": "running", "phase_label": "Phase 1: Quick check",
+        "_start_ts": _time.time(),
     }
     try:
         r = _run(fd.start_diagnosis("aria_chat", level="feature"))
