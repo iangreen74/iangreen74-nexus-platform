@@ -1240,6 +1240,11 @@ async function loadFeatureHealth() {
   } catch (e) { /* non-fatal */ }
 }
 
+// Global — true while any diagnosis poll loop is active. loadAll()
+// checks this and skips the dashboard refresh to avoid competing for
+// CPU on the single-task ECS service during a Bedrock-heavy job.
+let _diagnosisActive = false;
+
 // Async diagnosis: start job, poll status, download report when complete.
 // Surfaces progress (phase label + elapsed) so the user can see work
 // happening even when Tier 2 or 3 kicks in and takes a minute or two.
@@ -1247,24 +1252,48 @@ async function _runAsyncDiagnosis(startUrl, opts) {
   const { progressEl, downloadName, body } = opts;
   const show = (html) => { if (progressEl) progressEl.innerHTML = html; };
   show('<div style="font-size:12px; color:var(--text-dim);">Starting…</div>');
-  const startResp = await fetch(startUrl, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body || {}),
-  });
-  const startData = await startResp.json();
-  if (startData.error || !startData.job_id) {
+  let startData;
+  try {
+    const startResp = await fetch(startUrl, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body || {}),
+    });
+    startData = await startResp.json();
+  } catch (e) {
+    show(`<div style="font-size:12px; color:var(--red-text);">Could not start diagnosis: ${e.message}</div>`);
+    return null;
+  }
+  // Backend returns {status:'busy', active_job} when another diagnosis
+  // is already running. Attach to that job instead of failing.
+  let jobId = startData.job_id;
+  if (startData.status === 'busy' && startData.active_job) {
+    jobId = startData.active_job;
+    show(`<div style="font-size:12px; color:var(--amber-text);">Another diagnosis is running (${startData.active_target || ''}) — attaching to it.</div>`);
+  } else if (startData.error || !jobId) {
     show(`<div style="font-size:12px; color:var(--red-text);">${startData.error || 'no job_id'}</div>`);
     return null;
   }
-  const jobId = startData.job_id;
   for (let i = 0; i < 180; i++) {  // 180 * 2s = 6 min ceiling
     await new Promise(r => setTimeout(r, 2000));
     let status;
     try {
       const poll = await fetch(`${API}/diagnose/status/${jobId}`);
+      if (!poll.ok) {
+        // Server overloaded (503) or some other transient. Keep polling;
+        // surface as "busy" so the user knows the UI isn't frozen.
+        show(
+          `<div style="font-size:12px; color:var(--amber-text);">Server busy (HTTP ${poll.status}) — diagnosis continuing (${(i+1)*2}s)</div>`
+        );
+        continue;
+      }
       status = await poll.json();
-    } catch (_) { continue; }
+    } catch (_) {
+      show(
+        `<div style="font-size:12px; color:var(--amber-text);">Network blip — diagnosis continuing (${(i+1)*2}s)</div>`
+      );
+      continue;
+    }
     const phase = status.phase_label || status.phase || 'Working…';
     const completed = (status.phases_completed || []).length;
     show(
@@ -1307,6 +1336,7 @@ async function diagnoseFeature(fid, btn) {
     progressEl.style.cssText = 'margin-bottom:8px; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px;';
     btn.parentElement.insertBefore(progressEl, btn);
   }
+  _diagnosisActive = true;
   try {
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
     await _runAsyncDiagnosis(`${API}/diagnose/${fid}`, {
@@ -1315,6 +1345,7 @@ async function diagnoseFeature(fid, btn) {
       body: {level: 'feature'},
     });
   } finally {
+    _diagnosisActive = false;
     btn.disabled = false;
     btn.textContent = orig;
   }
@@ -1332,6 +1363,7 @@ async function diagnoseTenant(tid, btn) {
     progressEl.style.cssText = 'margin-top:6px;';
     btn.parentElement.appendChild(progressEl);
   }
+  _diagnosisActive = true;
   try {
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
     await _runAsyncDiagnosis(`${API}/diagnose/tenant/${encodeURIComponent(tid)}`, {
@@ -1340,6 +1372,7 @@ async function diagnoseTenant(tid, btn) {
       body: {},
     });
   } finally {
+    _diagnosisActive = false;
     btn.disabled = false;
     btn.textContent = orig;
   }
@@ -1351,6 +1384,7 @@ async function diagnoseGoal() {
   const orig = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Investigating…';
+  _diagnosisActive = true;
   try {
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
     await _runAsyncDiagnosis(`${API}/diagnose/goal`, {
@@ -1359,12 +1393,18 @@ async function diagnoseGoal() {
       body: {},
     });
   } finally {
+    _diagnosisActive = false;
     btn.disabled = false;
     btn.textContent = orig;
   }
 }
 
 async function loadAll() {
+  // Skip the full-dashboard refresh while a diagnosis is running — it
+  // competes with Bedrock + parallel gatherers for CPU on a single-task
+  // ECS service. The diagnosis's own progress UI keeps the operator
+  // informed; other panels catch up on the next tick.
+  if (_diagnosisActive) return;
   await Promise.all([
     loadGoalHealth(),
     loadFeatureHealth(),

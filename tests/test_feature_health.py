@@ -148,6 +148,11 @@ def test_overall_is_worst_feature_status():
 # --- feature_diagnosis -------------------------------------------------------
 
 
+def _clear_jobs():
+    """Clear the module-level job store so tests don't interfere."""
+    fd._active_diagnoses.clear()
+
+
 def _wait_done(job_id: str, timeout: float = 15.0) -> dict:
     """Poll the in-process job store until status != 'running'/'starting'."""
     import time as _time
@@ -171,7 +176,26 @@ def test_start_diagnosis_rejects_unknown_feature():
     assert "error" in r
 
 
+def test_second_start_while_running_returns_busy():
+    """Only one diagnosis runs at a time — second call attaches to the
+    active job instead of spawning a parallel Bedrock run."""
+    # Seed a running record directly (avoid racing the background task)
+    fd._active_diagnoses.clear()
+    fd._active_diagnoses["diag-running"] = {
+        "job_id": "diag-running", "target_id": "projects", "level": "feature",
+        "status": "running", "phase_label": "Phase 1: Quick check",
+    }
+    try:
+        r = _run(fd.start_diagnosis("aria_chat", level="feature"))
+    finally:
+        fd._active_diagnoses.pop("diag-running", None)
+    assert r["status"] == "busy"
+    assert r["active_job"] == "diag-running"
+    assert r["active_target"] == "projects"
+
+
 def test_start_diagnosis_returns_job_record_immediately():
+    _clear_jobs()
     r = _run(fd.start_diagnosis("projects", level="feature"))
     assert "error" not in r
     assert "job_id" in r
@@ -180,6 +204,7 @@ def test_start_diagnosis_returns_job_record_immediately():
 
 
 def test_feature_diagnosis_completes_and_produces_report():
+    _clear_jobs()
     r = _run(fd.start_diagnosis("projects", level="feature"))
     rec = _wait_done(r["job_id"])
     assert rec["status"] in ("complete", "failed")
@@ -188,6 +213,7 @@ def test_feature_diagnosis_completes_and_produces_report():
 
 
 def test_goal_diagnosis_completes():
+    _clear_jobs()
     r = _run(fd.start_diagnosis("platform", level="goal"))
     rec = _wait_done(r["job_id"])
     assert rec["status"] in ("complete", "failed")
@@ -196,6 +222,7 @@ def test_goal_diagnosis_completes():
 
 
 def test_tenant_diagnosis_completes():
+    _clear_jobs()
     r = _run(fd.start_diagnosis("tenant-x", level="tenant"))
     rec = _wait_done(r["job_id"])
     assert rec["status"] in ("complete", "failed")
@@ -208,6 +235,7 @@ def test_get_diagnosis_unknown_job_returns_error():
 
 
 def test_report_records_all_phases():
+    _clear_jobs()
     r = _run(fd.start_diagnosis("projects", level="feature"))
     rec = _wait_done(r["job_id"])
     # At minimum, phase 1 runs; Phase 2 may also run depending on confidence.

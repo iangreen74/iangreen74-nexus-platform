@@ -41,7 +41,14 @@ def _now_iso() -> str:
 
 
 async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, Any]:
-    """Kick off an async diagnosis. Returns the initial job record."""
+    """Kick off an async diagnosis. Returns the initial job record.
+
+    Concurrency-gated: only one diagnosis runs at a time across the whole
+    task. A second request while one is active returns the active job's
+    record with status='busy' rather than spawning another investigation
+    pipeline — running two Bedrock+parallel-gatherer jobs on one ECS task
+    causes /api/* to 503 for ~60s.
+    """
     if level not in VALID_LEVELS:
         return {"error": f"Invalid level '{level}'; expected one of {VALID_LEVELS}"}
     if level == "feature":
@@ -49,6 +56,19 @@ async def start_diagnosis(target_id: str, level: str = "feature") -> dict[str, A
 
         if target_id not in FEATURES:
             return {"error": f"Unknown feature: {target_id}"}
+
+    # One at a time. Source of truth is the job store itself — no separate
+    # lock flag means no risk of a stale lock from a crashed coroutine.
+    for existing in _active_diagnoses.values():
+        if existing.get("status") in ("starting", "running"):
+            return {
+                "error": "A diagnosis is already running",
+                "status": "busy",
+                "active_job": existing["job_id"],
+                "active_target": existing["target_id"],
+                "active_level": existing["level"],
+                "active_phase": existing.get("phase_label", ""),
+            }
 
     job_id = f"diag-{uuid.uuid4().hex[:10]}"
     record = {
