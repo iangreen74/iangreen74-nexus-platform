@@ -70,6 +70,7 @@
   .dot.amber { background: var(--amber); box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
   .dot.gray { background: var(--text-dim); box-shadow: none; animation: none; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .status-badge {
     padding: 6px 14px; border-radius: 999px; font-size: 11px; font-weight: 600;
     letter-spacing: 0.06em; text-transform: uppercase;
@@ -319,6 +320,58 @@
       </thead>
       <tbody id="tenants-body"><tr><td colspan="6" class="empty">Loading tenants…</td></tr></tbody>
     </table>
+  </section>
+
+  <section id="research-panel">
+    <div class="section-head">
+      <h2>Research</h2>
+      <span class="meta">Ask a question → Overwatch investigates (Tier 1, escalates to Tier 2 if confidence &lt; 75%) → download the brief.</span>
+    </div>
+
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; gap:8px;">
+        <input id="research-input" type="text"
+          placeholder="e.g. What would happen if we added rate limiting? Why is project isolation failing?"
+          onkeydown="if(event.key==='Enter')startResearch()"
+          style="flex:1; padding:10px 14px; background:var(--bg); border:1px solid var(--border); border-radius:8px; font-size:13px; color:var(--text); font-family:inherit; outline:none;">
+        <button onclick="startResearch()" id="research-btn"
+          style="padding:10px 22px; background:var(--teal); color:#fff; border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">
+          Research
+        </button>
+      </div>
+
+      <div id="research-progress" style="display:none; margin-top:14px; background:var(--teal-dim); border:1px solid var(--border); border-radius:10px; padding:12px 16px;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+          <div id="research-spinner" style="width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--teal); border-radius:50%; animation:spin 0.8s linear infinite;"></div>
+          <span id="research-status" style="font-size:13px; font-weight:600; color:var(--text);">Starting investigation…</span>
+        </div>
+        <div id="research-detail" style="font-size:12px; color:var(--text-dim); margin-left:24px;"></div>
+      </div>
+
+      <div id="research-result" style="display:none; margin-top:14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span id="result-confidence" style="font-size:11px; font-weight:700; padding:3px 10px; border-radius:999px; letter-spacing:0.04em;"></span>
+            <span id="result-severity" style="font-size:12px; color:var(--text-dim);"></span>
+          </div>
+          <button onclick="downloadResearchBrief()"
+            style="padding:6px 14px; background:var(--text); color:var(--bg-elev); border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+            Download Brief
+          </button>
+        </div>
+        <div id="result-root-cause" style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:8px;"></div>
+        <div id="result-explanation" style="font-size:13px; color:var(--text); line-height:1.6; margin-bottom:12px; max-height:220px; overflow-y:auto; white-space:pre-wrap;"></div>
+        <div id="result-actions" style="font-size:13px;"></div>
+      </div>
+
+      <div style="margin-top:18px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span style="font-size:11px; font-weight:700; letter-spacing:0.06em; color:var(--text-dim);">LIBRARY</span>
+          <span id="library-count" style="font-size:11px; color:var(--text-dim);"></span>
+        </div>
+        <div id="research-library" style="display:flex; flex-direction:column; gap:6px;"></div>
+      </div>
+    </div>
   </section>
 
   <section>
@@ -1178,6 +1231,7 @@ async function diagnoseFeature(fid, btn) {
 async function loadAll() {
   await Promise.all([
     loadFeatureHealth(),
+    loadResearchLibrary(),
     loadOverview(),
     loadHealChains(),
     loadSRE(),
@@ -1360,6 +1414,181 @@ function removeLastMsg() {
   const c = document.getElementById('chat-messages');
   if (c.lastChild) c.removeChild(c.lastChild);
 }
+// --- Research panel ---
+let _researchBrief = '';
+let _researchId = null;
+
+async function startResearch() {
+  const input = document.getElementById('research-input');
+  const q = input.value.trim();
+  if (!q) return;
+  const btn = document.getElementById('research-btn');
+  const progress = document.getElementById('research-progress');
+  const result = document.getElementById('research-result');
+  btn.disabled = true;
+  btn.textContent = 'Researching…';
+  progress.style.display = 'block';
+  result.style.display = 'none';
+  try {
+    // Tier 1 first
+    document.getElementById('research-status').textContent = 'Tier 1 — 6 evidence sources in parallel';
+    document.getElementById('research-detail').textContent = 'CloudWatch · ECS · Neptune · GitHub CI · Synthetic · Platform Events';
+    const t1 = await fetch(`${API}/investigate`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q})
+    });
+    const t1raw = await t1.text();
+    const t1ok = t1.ok && (t1.headers.get('content-type') || '').includes('application/json');
+    const t1Data = t1ok ? JSON.parse(t1raw) : {};
+    const conf = (t1Data.diagnosis || {}).confidence || 0;
+    if (conf >= 75) {
+      showTier1Result(t1Data);
+    } else {
+      // Escalate to Tier 2
+      document.getElementById('research-status').textContent = 'Tier 2 — 9-source deep research (1–2 min)';
+      document.getElementById('research-detail').textContent = 'Adding: source files, web research, deep graph queries';
+      const create = await fetch(`${API}/research`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title: q, description: q})
+      });
+      const proj = await create.json();
+      _researchId = proj.project_id || proj.id;
+      if (!_researchId) { showTier1Result(t1Data); return; }
+      await fetch(`${API}/research/${_researchId}/run`, {method: 'POST'});
+      const polled = await pollResearch(_researchId);
+      if (polled && polled.brief) { showTier2Result(polled); }
+      else { showTier1Result(t1Data); }
+    }
+  } catch (e) {
+    document.getElementById('research-status').textContent = 'Research failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Research';
+    loadResearchLibrary();
+  }
+}
+
+async function pollResearch(projectId) {
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    try {
+      const r = await fetch(`${API}/research/${projectId}`);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const detail = document.getElementById('research-detail');
+      if (detail) detail.textContent = `Polling… ${(i + 1) * 5}s elapsed, status=${data.status || '?'}`;
+      if (data.status === 'complete') return data;
+    } catch (_) { /* keep polling */ }
+  }
+  return null;
+}
+
+function _setBadge(conf, labelSuffix) {
+  const el = document.getElementById('result-confidence');
+  el.textContent = `${conf}% confidence${labelSuffix ? ' · ' + labelSuffix : ''}`;
+  if (conf >= 70) {
+    el.style.background = 'var(--teal-dim)';
+    el.style.color = 'var(--teal-text)';
+  } else {
+    el.style.background = 'var(--amber-dim)';
+    el.style.color = 'var(--amber-text)';
+  }
+}
+
+function showTier1Result(data) {
+  document.getElementById('research-progress').style.display = 'none';
+  document.getElementById('research-result').style.display = 'block';
+  const diag = data.diagnosis || {};
+  _setBadge(diag.confidence || 0, 'Tier 1');
+  document.getElementById('result-severity').textContent = 'Severity: ' + (diag.severity || 'unknown');
+  document.getElementById('result-root-cause').textContent = diag.root_cause || 'No root cause identified';
+  document.getElementById('result-explanation').textContent = diag.explanation || '';
+  const ad = document.getElementById('result-actions');
+  ad.innerHTML = '';
+  const actions = diag.recommended_actions || [];
+  if (actions.length) {
+    ad.innerHTML = '<div style="font-size:11px; font-weight:700; color:var(--text-dim); margin-bottom:4px; letter-spacing:0.06em;">RECOMMENDED ACTIONS</div>';
+    actions.forEach(a => {
+      const action = typeof a === 'string' ? a : (a.action || '');
+      const pri = typeof a === 'object' ? (a.priority || '') : '';
+      ad.innerHTML += `<div style="font-size:13px; color:var(--text); padding:3px 0;">• ${pri ? `<span style="font-size:11px; background:var(--bg); padding:1px 7px; border-radius:4px; margin-right:6px; color:var(--text-dim);">${pri}</span>` : ''}${action}</div>`;
+    });
+  }
+  _researchBrief = JSON.stringify(data, null, 2);
+}
+
+function showTier2Result(data) {
+  document.getElementById('research-progress').style.display = 'none';
+  document.getElementById('research-result').style.display = 'block';
+  const conf = data.confidence || 0;
+  _setBadge(conf, 'Tier 2');
+  document.getElementById('result-severity').textContent = 'Deep research complete';
+  document.getElementById('result-root-cause').textContent = data.title || '(no title)';
+  const brief = typeof data.brief === 'string' ? data.brief : JSON.stringify(data.brief || {}, null, 2);
+  document.getElementById('result-explanation').textContent = brief.slice(0, 4000);
+  document.getElementById('result-actions').innerHTML = '';
+  _researchBrief = brief;
+}
+
+function downloadResearchBrief() {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
+  const blob = new Blob([_researchBrief || '(no brief)'], {type: 'text/markdown'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `research-brief-${stamp}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function loadResearchLibrary() {
+  try {
+    const r = await fetch(`${API}/research`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const projects = (data.projects || data || []).slice(0, 10);
+    const lib = document.getElementById('research-library');
+    const countEl = document.getElementById('library-count');
+    if (!lib) return;
+    const total = (data.projects || data || []).length;
+    if (countEl) countEl.textContent = `${total} project${total !== 1 ? 's' : ''}`;
+    lib.innerHTML = '';
+    if (!projects.length) {
+      lib.innerHTML = '<div style="font-size:12px; color:var(--text-dim); padding:8px 2px;">No research yet — ask a question above.</div>';
+      return;
+    }
+    projects.forEach(p => {
+      const status = p.status || 'unknown';
+      const color = status === 'complete' ? 'var(--teal)' :
+                    status === 'researching' ? 'var(--amber)' : 'var(--text-dim)';
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:border-color 0.12s;';
+      div.onmouseover = () => { div.style.borderColor = 'var(--text-dim)'; };
+      div.onmouseout = () => { div.style.borderColor = 'var(--border)'; };
+      div.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <div style="width:6px; height:6px; border-radius:50%; background:${color}; flex-shrink:0;"></div>
+          <span style="font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${(p.title || '(untitled)').slice(0, 80)}</span>
+        </div>
+        <span style="font-size:11px; color:var(--text-dim); flex-shrink:0; margin-left:8px;">${status}</span>`;
+      div.onclick = () => viewResearch(p.project_id || p.id);
+      lib.appendChild(div);
+    });
+  } catch (_) { /* non-fatal */ }
+}
+
+async function viewResearch(projectId) {
+  if (!projectId) return;
+  try {
+    const r = await fetch(`${API}/research/${projectId}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.brief) showTier2Result(data);
+  } catch (_) { /* non-fatal */ }
+}
+
 async function runInvestigation() {
   const input = document.getElementById('investigate-input');
   const out = document.getElementById('investigate-result');
