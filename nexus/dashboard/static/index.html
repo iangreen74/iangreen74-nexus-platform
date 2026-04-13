@@ -265,6 +265,17 @@
     </div>
   </section>
 
+  <section id="health-timeline-section">
+    <div class="section-head">
+      <h2>Health Timeline</h2>
+      <span class="meta" id="timeline-meta">Loading…</span>
+    </div>
+    <div class="section-sub">Autonomous Goal diagnoses run every 4 hours. Last 72 hours shown below.</div>
+    <div id="health-timeline" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="color:var(--text-dim); font-size:12px;">Loading…</div>
+    </div>
+  </section>
+
   <section id="feature-health-section">
     <div class="section-head">
       <h2>Feature Health</h2>
@@ -1246,6 +1257,50 @@ async function loadGoalHealth() {
   } catch (_) { /* non-fatal */ }
 }
 
+const TIMELINE_STATUS_COLORS = {
+  healthy: '#10B981', degraded: '#F59E0B', critical: '#EF4444', unknown: '#9CA3AF'
+};
+const TREND_LABEL = {
+  improving: '↑ improving', degrading: '↓ degrading',
+  stable: '→ stable', insufficient_data: 'collecting…'
+};
+
+async function loadTimeline() {
+  const box = document.getElementById('health-timeline');
+  const meta = document.getElementById('timeline-meta');
+  if (!box) return;
+  try {
+    const r = await fetch(`${API}/diagnosis-history?hours=72`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const entries = data.history || [];
+    const trend = data.trend || {};
+    meta.textContent = `${entries.length} diagnoses · ${TREND_LABEL[trend.trend] || trend.trend || '—'}`;
+    if (entries.length === 0) {
+      box.innerHTML = '<div style="color:var(--text-dim); font-size:12px;">No diagnoses yet — first autonomous run starts within 30s of service launch.</div>';
+      return;
+    }
+    box.innerHTML = entries.slice(0, 20).map(e => {
+      const color = TIMELINE_STATUS_COLORS[e.status] || TIMELINE_STATUS_COLORS.unknown;
+      const ago = fmtAge(e.created_at);
+      const summary = (e.report_summary || 'All systems nominal').slice(0, 180);
+      return `
+        <div style="display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-bottom:1px solid var(--border);">
+          <div style="width:10px; height:10px; border-radius:50%; background:${color}; margin-top:6px; flex:none;"></div>
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; gap:10px; align-items:baseline; font-size:12px;">
+              <span style="color:var(--text-dim); font-family:monospace;">${ago}</span>
+              <span style="font-weight:700; color:var(--text); text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">${e.status || '?'}</span>
+              <span style="color:var(--text-dim);">conf ${e.confidence || 0}%</span>
+              <span style="color:var(--text-dim);">${e.findings_count || 0} finding${(e.findings_count||0)!==1?'s':''}</span>
+            </div>
+            <div style="font-size:12px; color:var(--text); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${summary}</div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) { /* non-fatal */ }
+}
+
 async function loadFeatureHealth() {
   try {
     const r = await fetch(`${API}/feature-health`);
@@ -1458,8 +1513,8 @@ async function loadAll() {
   // mid-cycle the later waves get skipped by the _diagnosisActive guard.
   const skip = () => _diagnosisActive;
 
-  // Wave 1 (immediate) — hero panels
-  await Promise.all([loadGoalHealth(), loadFeatureHealth(), loadTenants()]);
+  // Wave 1 (immediate) — hero panels + timeline
+  await Promise.all([loadGoalHealth(), loadFeatureHealth(), loadTenants(), loadTimeline()]);
 
   // Wave 2 (1.5s) — main body
   setTimeout(() => {

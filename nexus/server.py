@@ -86,6 +86,11 @@ async def startup():
         logger.info("Connecting to Neptune, ECS, CloudWatch...")
     else:
         logger.info("Local mode — all external calls mocked")
+    try:
+        from nexus.capabilities.scheduled_diagnosis import start_scheduler
+        start_scheduler()
+    except Exception:
+        logger.exception("scheduled diagnosis scheduler failed to start")
 
 
 @app.on_event("shutdown")

@@ -47,6 +47,14 @@ _KNOWN_CONTEXT = (
     "that is already resolved.\n"
     "- aria-platform cluster and overwatch-platform cluster are both expected "
     "to exist and be ACTIVE.\n"
+    "- A tenant status='pending' with deployment.provisioned=False is NORMAL "
+    "during the Build phase — it means the tenant hasn't deployed to AWS yet. "
+    "Not a deployment failure.\n"
+    "- A MissionTask in status='pending' that is waiting behind another task "
+    "in status='in_review' (PR awaiting merge) is NORMAL pipeline behavior, "
+    "not a stuck task.\n"
+    "- forge-1dba4143ca24ed1f (Ian's test project) at stage=complete with no "
+    "deployments is expected — it's a test/demo tenant.\n"
 )
 
 CLASSIFIER_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"

@@ -1311,6 +1311,20 @@ async def diagnose_status(job_id: str) -> dict[str, Any]:
     return await get_diagnosis(job_id)
 
 
+@router.get("/diagnosis-history")
+async def diagnosis_history(hours: int = 72) -> dict[str, Any]:
+    """Scheduled Goal diagnoses within the last `hours` hours + trend."""
+    from nexus.capabilities.scheduled_diagnosis import (
+        get_diagnosis_history, get_health_trend,
+    )
+    history = get_diagnosis_history(hours=hours)
+    return {
+        "history": history,
+        "trend": get_health_trend(hours=min(hours, 24)),
+        "count": len(history),
+    }
+
+
 @router.post("/diagnose/{feature_id}")
 async def diagnose_feature_start(feature_id: str,
                                    payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
