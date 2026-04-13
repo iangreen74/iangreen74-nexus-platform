@@ -18,7 +18,11 @@ from nexus.config import AWS_REGION, OPS_CHAT_MODEL_ID
 logger = logging.getLogger(__name__)
 
 _LABEL = "OverwatchResearchProject"
-SONNET = OPS_CHAT_MODEL_ID  # claude-sonnet-4-6
+SONNET = OPS_CHAT_MODEL_ID
+_FIELDS = ["project_id", "title", "description", "status", "evidence",
+           "brief", "sources_checked", "confidence", "created_at",
+           "updated_at", "completed_at"]
+_RETURN_FIELDS = ", ".join(f"p.{f} AS {f}" for f in _FIELDS)
 
 
 def _now_iso() -> str:
@@ -51,11 +55,7 @@ def list_projects() -> list[dict[str, Any]]:
         rows = list(overwatch_graph._local_store.get(_LABEL, []))
     else:
         rows = overwatch_graph.query(
-            f"MATCH (p:{_LABEL}) RETURN p.project_id AS project_id, "
-            "p.title AS title, p.description AS description, p.status AS status, "
-            "p.confidence AS confidence, p.created_at AS created_at, "
-            "p.updated_at AS updated_at, p.completed_at AS completed_at "
-            "ORDER BY p.created_at DESC")
+            f"MATCH (p:{_LABEL}) RETURN {_RETURN_FIELDS} ORDER BY p.created_at DESC")
     return sorted(rows, key=lambda r: r.get("created_at", ""), reverse=True)
 
 
@@ -66,8 +66,9 @@ def get_project(project_id: str) -> dict[str, Any] | None:
                 return dict(r)
         return None
     rows = overwatch_graph.query(
-        f"MATCH (p:{_LABEL} {{project_id: $pid}}) RETURN p", {"pid": project_id})
-    return rows[0].get("p") if rows else None
+        f"MATCH (p:{_LABEL} {{project_id: $pid}}) RETURN {_RETURN_FIELDS}",
+        {"pid": project_id})
+    return rows[0] if rows else None
 
 
 def archive_project(project_id: str) -> dict[str, Any]:
@@ -120,24 +121,19 @@ async def run_research(project_id: str) -> dict[str, Any]:
 
 async def _gather_all_evidence(description: str) -> dict[str, Any]:
     """Fire all 9 gatherers in parallel and collect results."""
-    from nexus.capabilities.investigation import (
-        _gather_cloudwatch, _gather_ecs, _gather_github_ci,
-        _gather_neptune, _gather_platform_events, _gather_synthetic,
-    )
-    from nexus.capabilities.research_evidence import (
-        gather_neptune_deep, gather_source_files, gather_web_research,
-    )
+    from nexus.capabilities import investigation as t1
+    from nexus.capabilities import research_evidence as t2
 
     named = {
-        "cloudwatch": _gather_cloudwatch(60),
-        "ecs": _gather_ecs(),
-        "neptune": _gather_neptune(),
-        "github_ci": _gather_github_ci(),
-        "synthetic": _gather_synthetic(),
-        "platform_events": _gather_platform_events(),
-        "source_files": gather_source_files(description),
-        "web_research": gather_web_research(description),
-        "neptune_deep": gather_neptune_deep(description),
+        "cloudwatch": t1._gather_cloudwatch(60),
+        "ecs": t1._gather_ecs(),
+        "neptune": t1._gather_neptune(),
+        "github_ci": t1._gather_github_ci(),
+        "synthetic": t1._gather_synthetic(),
+        "platform_events": t1._gather_platform_events(),
+        "source_files": t2.gather_source_files(description),
+        "web_research": t2.gather_web_research(description),
+        "neptune_deep": t2.gather_neptune_deep(description),
     }
     results = await asyncio.gather(*named.values(), return_exceptions=True)
     out: dict[str, Any] = {}
