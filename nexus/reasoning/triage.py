@@ -567,6 +567,17 @@ def triage_tenant_health(report: dict[str, Any]) -> TriageDecision:
             blast_radius=BLAST_SAFE,
             auto_approved=True,
         )
+    elif status == "pending":
+        # Tenants in Build phase before any AWS deploy have
+        # provisioned=False → overall_status='pending'. That's a valid,
+        # non-alarming state, NOT an unknown escalation.
+        decision = TriageDecision(
+            action="noop",
+            confidence=1.0,
+            reasoning=f"Tenant {tenant_id} is pre-deploy (Build phase) — no action.",
+            blast_radius=BLAST_SAFE,
+            auto_approved=True,
+        )
     elif status == "degraded":
         stuck = report.get("pipeline", {}).get("stuck_task_count", 0)
         if stuck > 0:

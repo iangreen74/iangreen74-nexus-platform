@@ -148,10 +148,14 @@ async def platform_status() -> dict[str, Any]:
             logger.debug("consistency audit failed for %s", tid, exc_info=True)
             t["consistency_findings"] = []
 
-        # Capability validation — triage blocked/degraded tenants
+        # Capability validation — triage blocked/degraded tenants.
+        # Non-deployed tenants (provisioned=False) will always have
+        # deployment_available + accretion_sources warnings; those are
+        # expected Build-phase state, not an incident.
+        provisioned = (t.get("deployment") or {}).get("provisioned")
         try:
             cap_report = capability_validator.validate_tenant_capabilities(tid)
-            if cap_report.overall in ("blocked", "degraded"):
+            if cap_report.overall in ("blocked", "degraded") and provisioned is not False:
                 cap_decision = triage.triage_capability_report(cap_report.to_dict())
                 maybe_alert(
                     f"capability:{tid}", cap_decision,
