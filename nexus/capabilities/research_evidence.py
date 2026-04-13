@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Any
 
+from nexus.capabilities.bedrock_utils import parse_bedrock_json_array
 from nexus.config import AWS_REGION, MODE
 
 logger = logging.getLogger(__name__)
@@ -70,15 +71,10 @@ async def gather_source_files(description: str) -> dict[str, Any]:
             'Example: ["aria/remote_engineer/cycle.py"]'
         )
         text = await _invoke_bedrock(HAIKU, prompt, max_tokens=300)
-        text = text.strip()
-        if not text.startswith("["):
+        paths = parse_bedrock_json_array(text, fallback=[])[:5]
+        if not paths:
             return {"type": "source_files", "error": "No file list generated",
-                    "raw": text[:200]}
-        try:
-            paths = json.loads(text)[:5]
-        except (ValueError, TypeError):
-            return {"type": "source_files", "error": "Malformed file list",
-                    "raw": text[:200]}
+                    "raw": (text or "")[:200]}
         return await _fetch_github_files(paths)
     except Exception as exc:
         return {"type": "source_files", "error": f"{type(exc).__name__}: {exc}"}
@@ -172,14 +168,11 @@ async def gather_neptune_deep(description: str) -> dict[str, Any]:
             "Return ONLY a JSON array of Cypher strings. Start each with MATCH. "
             "Use aggregations (count, avg), sort, LIMIT 20."
         )
-        text = (await _invoke_bedrock(HAIKU, prompt, max_tokens=600)).strip()
-        if not text.startswith("["):
+        text = await _invoke_bedrock(HAIKU, prompt, max_tokens=600)
+        queries = parse_bedrock_json_array(text, fallback=[])[:3]
+        if not queries:
             return {"type": "neptune_deep", "error": "no queries generated",
-                    "raw": text[:200]}
-        try:
-            queries = json.loads(text)[:3]
-        except (ValueError, TypeError):
-            return {"type": "neptune_deep", "error": "malformed query list"}
+                    "raw": (text or "")[:200]}
 
         from nexus import neptune_client
 

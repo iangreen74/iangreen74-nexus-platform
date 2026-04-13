@@ -16,12 +16,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from nexus.capabilities.feature_checks import HEALTH_CHECKS
 
 logger = logging.getLogger(__name__)
+
+# Synthetic suite results don't change every poll — cache for a minute so
+# the 30s dashboard refresh isn't paying for the same lookup twice.
+_synthetic_cache: dict[str, Any] = {"results": {}, "timestamp": 0.0}
+_SYNTHETIC_TTL_SEC = 60.0
+_CHECK_TIMEOUT_SEC = 3.0
 
 
 FEATURES: dict[str, dict[str, Any]] = {
@@ -88,8 +95,24 @@ def _synthetic_results_by_name() -> dict[str, str]:
         return {}
 
 
+async def _run_check_with_timeout(check_name: str, fn: Any,
+                                    timeout: float = _CHECK_TIMEOUT_SEC) -> dict[str, Any]:
+    """Invoke a sync health check in a thread with a hard timeout."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout) or {}
+    except asyncio.TimeoutError:
+        return {"status": "warning", "message": f"{check_name} timed out ({timeout}s)"}
+    except Exception as exc:
+        return {"status": "warning", "message": f"{type(exc).__name__}: {str(exc)[:100]}"}
+
+
 def _evaluate_feature(fid: str, fdef: dict[str, Any],
                        synthetics: dict[str, str]) -> dict[str, Any]:
+    """Synchronous evaluator — kept for callers that already have results.
+
+    For the dashboard path use _evaluate_feature_async which adds per-check
+    timeouts so a slow Neptune query can't stall the whole tile.
+    """
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -116,6 +139,44 @@ def _evaluate_feature(fid: str, fdef: dict[str, Any],
         except Exception as exc:
             warnings.append(f"{check_name}: {type(exc).__name__}: {str(exc)[:100]}")
 
+    return _build_status(fid, fdef, errors, warnings)
+
+
+async def _evaluate_feature_async(fid: str, fdef: dict[str, Any],
+                                    synthetics: dict[str, str]) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for test_name in fdef.get("synthetic_tests", []) or []:
+        status = synthetics.get(test_name, "not_run")
+        if status in ("fail", "error"):
+            errors.append(f"Synthetic '{test_name}' {status}")
+        elif status == "not_run":
+            warnings.append(f"Synthetic '{test_name}' not running")
+
+    check_names = fdef.get("health_checks", []) or []
+    tasks = []
+    for check_name in check_names:
+        fn = HEALTH_CHECKS.get(check_name)
+        if not fn:
+            warnings.append(f"Unknown health check {check_name}")
+            continue
+        tasks.append((check_name, _run_check_with_timeout(check_name, fn)))
+
+    if tasks:
+        results = await asyncio.gather(*[t for _, t in tasks], return_exceptions=False)
+        for (check_name, _), result in zip(tasks, results):
+            status = (result or {}).get("status", "ok")
+            if status == "error":
+                errors.append(result.get("message", check_name))
+            elif status == "warning":
+                warnings.append(result.get("message", check_name))
+
+    return _build_status(fid, fdef, errors, warnings)
+
+
+def _build_status(fid: str, fdef: dict[str, Any],
+                    errors: list[str], warnings: list[str]) -> dict[str, Any]:
     if len(errors) > 1:
         status = "critical"
     elif errors:
@@ -143,17 +204,40 @@ def _evaluate_feature(fid: str, fdef: dict[str, Any],
     }
 
 
+async def _get_synthetic_results_cached() -> dict[str, str]:
+    """Synthetic suite results, cached for _SYNTHETIC_TTL_SEC."""
+    now = time.time()
+    if now - _synthetic_cache["timestamp"] < _SYNTHETIC_TTL_SEC and _synthetic_cache["results"]:
+        return _synthetic_cache["results"]
+    results = await asyncio.to_thread(_synthetic_results_by_name)
+    _synthetic_cache["results"] = results
+    _synthetic_cache["timestamp"] = now
+    return results
+
+
 async def get_all_feature_health() -> dict[str, Any]:
     """Evaluate every feature. Returns tile data for the dashboard."""
-    # Synthetic results once, reused across features.
-    synthetics = await asyncio.to_thread(_synthetic_results_by_name)
+    synthetics = await _get_synthetic_results_cached()
 
-    # Per-feature evaluation is cheap (in-process checks), run sequentially
-    # to keep the call graph predictable.
-    features = {
-        fid: _evaluate_feature(fid, fdef, synthetics)
-        for fid, fdef in FEATURES.items()
-    }
+    # Run all feature evaluations in parallel — each one fans out to its own
+    # health checks under a per-check timeout, so a slow Neptune query in one
+    # tile can't stall the whole dashboard.
+    fids = list(FEATURES.keys())
+    coros = [_evaluate_feature_async(fid, FEATURES[fid], synthetics) for fid in fids]
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    features: dict[str, Any] = {}
+    for fid, result in zip(fids, results):
+        if isinstance(result, Exception):
+            fdef = FEATURES[fid]
+            features[fid] = {
+                "id": fid, "name": fdef["name"], "description": fdef["description"],
+                "icon": fdef["icon"], "status": "warning",
+                "status_line": f"{type(result).__name__}: {str(result)[:120]}",
+                "errors": 0, "warnings": 1,
+                "error_details": [], "warning_details": [str(result)[:200]],
+            }
+        else:
+            features[fid] = result
 
     statuses = {f["status"] for f in features.values()}
     if "critical" in statuses:

@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from nexus.capabilities.bedrock_utils import parse_bedrock_json, parse_bedrock_json_array
 from nexus.config import AWS_REGION, MODE, OPS_CHAT_MODEL_ID
 
 logger = logging.getLogger(__name__)
@@ -192,8 +193,8 @@ async def _classify(question: str) -> list[str]:
     )
     try:
         text = await asyncio.to_thread(_invoke_bedrock, CLASSIFIER_MODEL_ID, prompt, 200)
-        parsed = json.loads(_strip_fences(text))
-        if isinstance(parsed, list):
+        parsed = parse_bedrock_json_array(text, fallback=[])
+        if isinstance(parsed, list) and parsed:
             picked = [s for s in parsed if s in _GATHERERS]
             return picked or all_sources
     except Exception as exc:
@@ -225,20 +226,30 @@ async def _synthesize(question: str, evidence: dict[str, Any]) -> dict[str, Any]
         '"type": "code_fix|config_change|data_fix|restart|investigate_further"}], '
         '"evidence_used": ["source names"], "evidence_gaps": ["what we could not determine"]}'
     )
+    fallback = {
+        "root_cause": "Bedrock synthesis produced unparseable output — see raw evidence",
+        "explanation": "Synthesizer returned text that could not be parsed as JSON; "
+                       "raw evidence is included below.",
+        "confidence": 0, "severity": "unknown",
+        "recommended_actions": [
+            {"action": "Review raw evidence below", "priority": "immediate",
+             "type": "investigate_further"}],
+        "evidence_used": list(evidence.keys()),
+        "evidence_gaps": ["synthesis (JSON parse failed)"],
+    }
     try:
         text = await asyncio.to_thread(_invoke_bedrock, SYNTHESIZER_MODEL_ID, prompt, 2000)
-        return json.loads(_strip_fences(text))
+        parsed = parse_bedrock_json(text, fallback=fallback)
+        # parse_bedrock_json returns the fallback (with extra error/raw keys)
+        # if it couldn't parse — that's fine, surface it as-is.
+        return parsed
     except Exception as exc:
         logger.warning("synthesizer failed: %s", exc)
-        return {
-            "root_cause": f"Synthesis failed: {type(exc).__name__}",
-            "explanation": f"Evidence gathered but Bedrock synthesis raised: {str(exc)[:200]}",
-            "confidence": 0, "severity": "unknown",
-            "recommended_actions": [
-                {"action": "Review raw evidence below", "priority": "immediate",
-                 "type": "investigate_further"}],
-            "evidence_used": list(evidence.keys()), "evidence_gaps": ["all (synthesis failed)"],
-        }
+        out = dict(fallback)
+        out["root_cause"] = f"Synthesis failed: {type(exc).__name__}"
+        out["explanation"] = f"Evidence gathered but Bedrock synthesis raised: {str(exc)[:200]}"
+        out["evidence_gaps"] = ["all (synthesis failed)"]
+        return out
 
 
 # --- Orchestrator ------------------------------------------------------------

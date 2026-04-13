@@ -250,12 +250,28 @@ async def _phase2_deep_analysis(target_id: str, level: str,
         result = {"diagnosis": {}, "evidence": {}, "error": str(exc)[:200]}
 
     diag = result.get("diagnosis", {}) or {}
+    evidence = result.get("evidence", {}) or {}
+
+    # Always render an evidence summary so the report stays useful even when
+    # Bedrock synthesis returns nothing actionable.
+    evidence_lines: list[str] = []
+    for source, data in evidence.items():
+        if not isinstance(data, dict):
+            evidence_lines.append(f"- {source}: {str(data)[:200]}")
+            continue
+        if data.get("error"):
+            evidence_lines.append(f"- {source}: ERROR — {str(data['error'])[:200]}")
+        else:
+            payload = {k: v for k, v in data.items() if k != "type"}
+            evidence_lines.append(f"- {source}: {json.dumps(payload, default=str)[:200]}")
+
     return {
         "phase": "deep_analysis",
         "findings": diag.get("recommended_actions", []) or [],
         "confidence": diag.get("confidence", 60) or 60,
         "diagnosis": diag,
-        "evidence": result.get("evidence", {}),
+        "evidence": evidence,
+        "evidence_summary": "\n".join(evidence_lines),
         "sources": result.get("sources_returned", []),
         "duration": round(time.time() - start, 1),
         "summary": f"Phase 2: {diag.get('confidence', 0)}% confidence",
@@ -339,6 +355,8 @@ def _build_report(target_id: str, level: str, sections: list[dict[str, Any]],
             lines += ["", f"**Root cause:** {diag['root_cause']}"]
         if diag.get("explanation"):
             lines += ["", diag["explanation"]]
+        if section.get("evidence_summary"):
+            lines += ["", "### Evidence Gathered", section["evidence_summary"]]
         if section.get("execution_arn"):
             lines += ["", f"Step Function execution: `{section['execution_arn']}`"]
         if section.get("error"):
