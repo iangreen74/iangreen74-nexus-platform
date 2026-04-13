@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import Response
 
 from nexus import neptune_client, overwatch_graph
-from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, project_lifecycle, tenant_ops  # noqa: F401
+from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, pr_proposer, project_lifecycle, tenant_ops  # noqa: F401
 from nexus.capabilities.registry import registry
 from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
 from nexus.forge import aria_repo, deploy_manager, fix_generator
@@ -879,6 +879,15 @@ def _format_report(
         lines.append("")
     except Exception:
         logger.debug("deploy readiness section failed", exc_info=True)
+
+    # --- Pending Overwatch PR proposals ---
+    try:
+        from nexus.capabilities.pr_proposer import format_for_report as _pr_fmt
+
+        lines.append(_pr_fmt())
+        lines.append("")
+    except Exception:
+        logger.debug("pending PR section failed", exc_info=True)
 
     # --- Regression guard (Class 3) ---
     try:

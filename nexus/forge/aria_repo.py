@@ -173,11 +173,19 @@ def create_fix_pr(
     file_changes: list[FileChange],
     title: str,
     body: str,
+    *,
+    draft: bool = True,
 ) -> dict[str, Any]:
     """
     Create a branch off main, commit the file changes, and open a PR
-    labeled `overwatch-fix`. Returns {url, number} on success or
+    labeled `overwatch-fix`. Returns {url, number, draft} on success or
     {error: ...} on failure.
+
+    All Overwatch-initiated PRs open as drafts by default — merging
+    requires a human to mark the PR ready for review. Callers that
+    genuinely need a ready-for-review PR may pass draft=False, but
+    opening non-draft PRs bypasses the Tier 3 approval gate in
+    CLAUDE.md and should be rare.
 
     In local mode, returns a mock result so callers can be tested without
     making real GitHub API calls.
@@ -188,6 +196,7 @@ def create_fix_pr(
             "number": 0,
             "branch": branch_name,
             "files": [c.path for c in file_changes],
+            "draft": draft,
             "mock": True,
         }
 
@@ -227,11 +236,17 @@ def create_fix_pr(
         if put is None or put.status_code not in (200, 201):
             return {"error": "could_not_commit_file", "path": change.path}
 
-    # 4) Open PR
+    # 4) Open PR (draft by default — merging requires human activation)
     pr = _request(
         "POST",
         f"/repos/{ARIA_PLATFORM_REPO}/pulls",
-        json={"title": title, "head": branch_name, "base": ARIA_PLATFORM_DEFAULT_BRANCH, "body": body},
+        json={
+            "title": title,
+            "head": branch_name,
+            "base": ARIA_PLATFORM_DEFAULT_BRANCH,
+            "body": body,
+            "draft": draft,
+        },
     )
     if pr is None or pr.status_code not in (200, 201):
         return {"error": "could_not_open_pr"}
@@ -244,4 +259,9 @@ def create_fix_pr(
         json={"labels": [FORGE_PR_LABEL]},
     )
 
-    return {"url": pr_data.get("html_url"), "number": pr_data.get("number"), "branch": branch_name}
+    return {
+        "url": pr_data.get("html_url"),
+        "number": pr_data.get("number"),
+        "branch": branch_name,
+        "draft": pr_data.get("draft", draft),
+    }
