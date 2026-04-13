@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: pip install pytest
+      - run: pip install pytest pytest-asyncio
       - run: NEXUS_MODE=local python -m pytest tests/ -x -q --tb=short
 
   deploy:
