@@ -1287,33 +1287,39 @@ async def feature_health() -> dict[str, Any]:
     return await get_all_feature_health()
 
 
+@router.post("/diagnose/goal")
+async def diagnose_goal_start() -> dict[str, Any]:
+    """Kick off a platform-goal diagnosis. Returns job_id immediately."""
+    from nexus.capabilities.feature_diagnosis import start_diagnosis
+
+    return await start_diagnosis("platform", level="goal")
+
+
+@router.post("/diagnose/tenant/{tenant_id}")
+async def diagnose_tenant_start(tenant_id: str) -> dict[str, Any]:
+    """Kick off a tenant diagnosis. Returns job_id immediately."""
+    from nexus.capabilities.feature_diagnosis import start_diagnosis
+
+    return await start_diagnosis(tenant_id, level="tenant")
+
+
+@router.get("/diagnose/status/{job_id}")
+async def diagnose_status(job_id: str) -> dict[str, Any]:
+    """Poll an in-flight diagnosis. Returns the current record + report when done."""
+    from nexus.capabilities.feature_diagnosis import get_diagnosis
+
+    return await get_diagnosis(job_id)
+
+
 @router.post("/diagnose/{feature_id}")
-async def diagnose(feature_id: str) -> dict[str, Any]:
-    """Run a scoped Tier 1 investigation for a feature. Returns full detail."""
-    from nexus.capabilities.feature_diagnosis import diagnose_feature
+async def diagnose_feature_start(feature_id: str,
+                                   payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Kick off a feature diagnosis. Returns job_id immediately."""
+    from nexus.capabilities.feature_diagnosis import start_diagnosis
 
-    return await diagnose_feature(feature_id)
-
-
-@router.get("/diagnose/{feature_id}/report")
-async def diagnose_report(feature_id: str) -> Response:
-    """Download the feature diagnosis as a .md file."""
-    from nexus.capabilities.feature_diagnosis import diagnose_feature
-
-    result = await diagnose_feature(feature_id)
-    if result.get("error"):
-        return Response(
-            content=f"# Diagnosis failed\n\n{result['error']}\n",
-            media_type="text/markdown",
-            headers={"Content-Disposition": f'attachment; filename="{feature_id}-error.md"'},
-        )
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    filename = f"{feature_id}-diagnosis-{stamp}.md"
-    return Response(
-        content=result.get("report_markdown", "# No report"),
-        media_type="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    body = payload or {}
+    level = body.get("level", "feature")
+    return await start_diagnosis(feature_id, level=level)
 
 
 @router.post("/investigate")

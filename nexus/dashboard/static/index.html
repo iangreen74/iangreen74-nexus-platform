@@ -248,6 +248,23 @@
     </div>
   </header>
 
+  <section id="goal-health-section">
+    <div class="section-head">
+      <h2>Goal Health</h2>
+      <span class="meta">Is Forgewing achieving its purpose?</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:18px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.04); display:flex; align-items:center; justify-content:space-between; gap:16px;">
+      <div style="min-width:0;">
+        <div id="goal-metrics" style="font-size:13px; color:var(--text);">Loading…</div>
+        <div id="goal-progress" style="margin-top:8px;"></div>
+      </div>
+      <button id="goal-diagnose-btn" onclick="diagnoseGoal()"
+        style="padding:10px 22px; background:var(--text); color:var(--bg-elev); border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">
+        Diagnose
+      </button>
+    </div>
+  </section>
+
   <section id="feature-health-section">
     <div class="section-head">
       <h2>Feature Health</h2>
@@ -734,7 +751,10 @@ async function loadTenants() {
         <td>${summary}</td>
         <td>${fmtAge(conv.last_message_at)}</td>
         <td>${statusText.toUpperCase()}${statusNote}</td>
-        <td><button class="btn" style="padding:3px 8px;font-size:9px" onclick="event.stopPropagation();copyTenantReport('${t.tenant_id}')">Copy</button></td>
+        <td>
+          <button class="btn" style="padding:3px 8px;font-size:9px" onclick="event.stopPropagation();copyTenantReport('${t.tenant_id}')">Copy</button>
+          <button class="btn" style="padding:3px 8px;font-size:9px;margin-left:4px" onclick="event.stopPropagation();diagnoseTenant('${t.tenant_id}', this)">Diagnose</button>
+        </td>
       </tr>
     `;
   }).join('');
@@ -1165,6 +1185,23 @@ const FEATURE_STATUS_COLORS = {
   critical: '#DC2626', unknown: '#9CA3AF'
 };
 
+async function loadGoalHealth() {
+  const el = document.getElementById('goal-metrics');
+  if (!el) return;
+  try {
+    const r = await fetch(`${API}/feature-health`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const features = data.features || {};
+    const total = Object.keys(features).length;
+    const healthy = Object.values(features).filter(f => f.status === 'healthy').length;
+    const verdict = data.overall === 'healthy'
+      ? 'All systems nominal'
+      : 'Issues detected — run diagnosis to investigate';
+    el.innerHTML = `<strong>${healthy}/${total}</strong> features healthy · ${verdict}`;
+  } catch (_) { /* non-fatal */ }
+}
+
 async function loadFeatureHealth() {
   try {
     const r = await fetch(`${API}/feature-health`);
@@ -1203,33 +1240,133 @@ async function loadFeatureHealth() {
   } catch (e) { /* non-fatal */ }
 }
 
+// Async diagnosis: start job, poll status, download report when complete.
+// Surfaces progress (phase label + elapsed) so the user can see work
+// happening even when Tier 2 or 3 kicks in and takes a minute or two.
+async function _runAsyncDiagnosis(startUrl, opts) {
+  const { progressEl, downloadName, body } = opts;
+  const show = (html) => { if (progressEl) progressEl.innerHTML = html; };
+  show('<div style="font-size:12px; color:var(--text-dim);">Starting…</div>');
+  const startResp = await fetch(startUrl, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {}),
+  });
+  const startData = await startResp.json();
+  if (startData.error || !startData.job_id) {
+    show(`<div style="font-size:12px; color:var(--red-text);">${startData.error || 'no job_id'}</div>`);
+    return null;
+  }
+  const jobId = startData.job_id;
+  for (let i = 0; i < 180; i++) {  // 180 * 2s = 6 min ceiling
+    await new Promise(r => setTimeout(r, 2000));
+    let status;
+    try {
+      const poll = await fetch(`${API}/diagnose/status/${jobId}`);
+      status = await poll.json();
+    } catch (_) { continue; }
+    const phase = status.phase_label || status.phase || 'Working…';
+    const completed = (status.phases_completed || []).length;
+    show(
+      `<div style="font-size:12px; color:var(--text-dim);">${phase} (${(i+1)*2}s · ${completed} phase${completed!==1?'s':''} done)</div>`
+    );
+    if (status.status === 'complete' || status.status === 'failed') {
+      if (status.report) {
+        const blob = new Blob([status.report], {type: 'text/markdown'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = downloadName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+      const color = status.status === 'complete' ? 'var(--teal-text)' : 'var(--red-text)';
+      const msg = status.status === 'complete'
+        ? `✓ Report downloaded — ${status.confidence || 0}% confidence, ${completed} phase${completed!==1?'s':''}`
+        : `Failed: ${status.phase_label || 'unknown'}`;
+      show(`<div style="font-size:12px; color:${color};">${msg}</div>`);
+      return status;
+    }
+  }
+  show('<div style="font-size:12px; color:var(--red-text);">Timed out after 6 min — check /api/diagnose/status manually</div>');
+  return null;
+}
+
 async function diagnoseFeature(fid, btn) {
   const orig = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Investigating…';
+  // Insert or reuse a progress strip just above the button in the tile
+  const tile = btn.closest('div');
+  let progressEl = tile.querySelector('.diag-progress');
+  if (!progressEl) {
+    progressEl = document.createElement('div');
+    progressEl.className = 'diag-progress';
+    progressEl.style.cssText = 'margin-bottom:8px; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px;';
+    btn.parentElement.insertBefore(progressEl, btn);
+  }
   try {
-    // Prefetch the report so the browser treats it as a clean download
-    // when we click the anchor. Diagnosis can take 30-60s; we surface that.
-    const resp = await fetch(`${API}/diagnose/${fid}/report`);
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${fid}-diagnosis.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    btn.textContent = '✓ Downloaded';
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2500);
-  } catch (e) {
-    btn.textContent = 'Failed — retry';
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3000);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
+    await _runAsyncDiagnosis(`${API}/diagnose/${fid}`, {
+      progressEl,
+      downloadName: `${fid}-diagnosis-${stamp}.md`,
+      body: {level: 'feature'},
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function diagnoseTenant(tid, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Investigating…';
+  const row = btn.closest('tr') || btn.parentElement;
+  let progressEl = row.querySelector('.diag-progress');
+  if (!progressEl) {
+    progressEl = document.createElement('div');
+    progressEl.className = 'diag-progress';
+    progressEl.style.cssText = 'margin-top:6px;';
+    btn.parentElement.appendChild(progressEl);
+  }
+  try {
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
+    await _runAsyncDiagnosis(`${API}/diagnose/tenant/${encodeURIComponent(tid)}`, {
+      progressEl,
+      downloadName: `tenant-${tid.slice(0, 12)}-diagnosis-${stamp}.md`,
+      body: {},
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function diagnoseGoal() {
+  const btn = document.getElementById('goal-diagnose-btn');
+  const progressEl = document.getElementById('goal-progress');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Investigating…';
+  try {
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:-]/g, '');
+    await _runAsyncDiagnosis(`${API}/diagnose/goal`, {
+      progressEl,
+      downloadName: `goal-diagnosis-${stamp}.md`,
+      body: {},
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
   }
 }
 
 async function loadAll() {
   await Promise.all([
+    loadGoalHealth(),
     loadFeatureHealth(),
     loadResearchLibrary(),
     loadOverview(),

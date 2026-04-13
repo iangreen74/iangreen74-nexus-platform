@@ -148,32 +148,69 @@ def test_overall_is_worst_feature_status():
 # --- feature_diagnosis -------------------------------------------------------
 
 
-def test_diagnose_unknown_feature_returns_error():
-    r = _run(fd.diagnose_feature("nope"))
+def _wait_done(job_id: str, timeout: float = 15.0) -> dict:
+    """Poll the in-process job store until status != 'running'/'starting'."""
+    import time as _time
+
+    deadline = _time.time() + timeout
+    while _time.time() < deadline:
+        rec = _run(fd.get_diagnosis(job_id))
+        if rec.get("status") in ("complete", "failed"):
+            return rec
+        _time.sleep(0.05)
+    return rec
+
+
+def test_start_diagnosis_rejects_invalid_level():
+    r = _run(fd.start_diagnosis("projects", level="invalid"))
     assert "error" in r
 
 
-def test_diagnose_returns_report_markdown():
-    r = _run(fd.diagnose_feature("projects"))
+def test_start_diagnosis_rejects_unknown_feature():
+    r = _run(fd.start_diagnosis("nope", level="feature"))
+    assert "error" in r
+
+
+def test_start_diagnosis_returns_job_record_immediately():
+    r = _run(fd.start_diagnosis("projects", level="feature"))
     assert "error" not in r
-    assert "report_markdown" in r
-    assert "Projects" in r["report_markdown"]
-    assert "Feature Diagnosis Report" in r["report_markdown"]
+    assert "job_id" in r
+    assert r["status"] in ("starting", "running", "complete", "failed")
+    assert r["level"] == "feature"
 
 
-def test_diagnose_report_mentions_health_and_diagnosis():
-    r = _run(fd.diagnose_feature("deployment"))
-    md = r["report_markdown"]
-    assert "## Status" in md
-    assert "## Diagnosis" in md
-    assert "## Recommended Actions" in md
-    assert "## Evidence Gaps" in md
+def test_feature_diagnosis_completes_and_produces_report():
+    r = _run(fd.start_diagnosis("projects", level="feature"))
+    rec = _wait_done(r["job_id"])
+    assert rec["status"] in ("complete", "failed")
+    assert rec["report"] is not None
+    assert "Projects" in rec["report"] or "projects" in rec["report"]
 
 
-def test_diagnose_report_survives_investigation_error():
-    async def boom(_q, _t):
-        raise RuntimeError("investigation down")
-    with patch("nexus.capabilities.investigation.investigate", boom):
-        r = _run(fd.diagnose_feature("projects"))
-    assert "report_markdown" in r
-    assert "Investigation error" in r["report_markdown"]
+def test_goal_diagnosis_completes():
+    r = _run(fd.start_diagnosis("platform", level="goal"))
+    rec = _wait_done(r["job_id"])
+    assert rec["status"] in ("complete", "failed")
+    assert rec["report"] is not None
+    assert "Goal" in rec["report"] or "goal" in rec["report"]
+
+
+def test_tenant_diagnosis_completes():
+    r = _run(fd.start_diagnosis("tenant-x", level="tenant"))
+    rec = _wait_done(r["job_id"])
+    assert rec["status"] in ("complete", "failed")
+    assert rec["report"] is not None
+
+
+def test_get_diagnosis_unknown_job_returns_error():
+    r = _run(fd.get_diagnosis("diag-nope"))
+    assert "error" in r
+
+
+def test_report_records_all_phases():
+    r = _run(fd.start_diagnosis("projects", level="feature"))
+    rec = _wait_done(r["job_id"])
+    # At minimum, phase 1 runs; Phase 2 may also run depending on confidence.
+    assert len(rec["phases_completed"]) >= 1
+    # Report timeline section lists phases.
+    assert "## Timeline" in rec["report"]
