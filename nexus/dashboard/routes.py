@@ -1270,6 +1270,44 @@ async def _build_full_report() -> str:
         )
 
 
+@router.get("/deploy-drift")
+async def deploy_drift() -> dict[str, Any]:
+    """Drift detection across Forgewing ECS services. Read-only."""
+    from nexus.capabilities.ci_cd_gates import check_deploy_drift
+
+    return check_deploy_drift()
+
+
+@router.post("/ci-gate")
+async def ci_gate(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Pre-deploy gate. Returns DEPLOY or HOLD. Fail-open on engine errors."""
+    from nexus.capabilities.ci_cd_gates import evaluate_ci_gate
+
+    commit = (payload or {}).get("commit", "")
+    return evaluate_ci_gate(commit_sha=commit)
+
+
+@router.post("/synthetic-tests/run")
+async def synthetic_tests_run(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Force-run all synthetic journeys. Called by CI post-deploy."""
+    from nexus.capabilities.ci_cd_gates import run_synthetic_suite
+
+    body = payload or {}
+    return run_synthetic_suite(
+        trigger=body.get("trigger", "manual"),
+        commit=body.get("commit", ""),
+    )
+
+
+@router.post("/deploy-verify")
+async def deploy_verify(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    """Post-deploy verification: drift check + synthetic suite."""
+    from nexus.capabilities.ci_cd_gates import verify_deploy
+
+    body = payload or {}
+    return verify_deploy(expected_sha=body.get("expected_sha", ""))
+
+
 @router.post("/forge/propose-fix/{pattern_name}")
 async def forge_propose_fix(pattern_name: str) -> dict[str, Any]:
     """
