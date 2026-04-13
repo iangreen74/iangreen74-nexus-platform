@@ -86,10 +86,15 @@ def test_run_all_journeys_returns_all():
     _clear_cache()
     results = run_all_journeys(force=True)
     assert isinstance(results, list)
-    assert len(results) == 12
+    assert len(results) == 17
     names = {r["name"] for r in results}
     assert "health" in names
     assert "brief_exists" in names
+    assert "brief_project_isolation" in names
+    assert "github_banner_consistency" in names
+    assert "action_banner_freshness" in names
+    assert "sfs_project_creation" in names
+    assert "project_delete_cleanup" in names
 
 
 def test_run_all_journeys_cached():
@@ -108,7 +113,7 @@ def test_run_all_journeys_force_bypasses_cache():
     import nexus.synthetic_tests as st
     st._cache = ([{"name": "fake", "status": "pass"}], st._cache[1])
     results = run_all_journeys(force=True)
-    assert len(results) == 12  # re-ran, not the fake cache
+    assert len(results) == 17  # re-ran, not the fake cache
 
 
 # --- get_summary --------------------------------------------------------------
@@ -122,7 +127,7 @@ def test_get_summary():
     assert "failed" in summary
     assert "score_pct" in summary
     assert "results" in summary
-    assert summary["total"] == 12
+    assert summary["total"] == 17
 
 
 # --- Result structure ---------------------------------------------------------

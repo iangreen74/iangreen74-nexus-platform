@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from nexus.capabilities.forgewing_api import call_api
@@ -50,6 +51,12 @@ def run_all_journeys(force: bool = False) -> list[dict[str, Any]]:
         journey_status_project_scoped,
         journey_brief_project_scoped,
         journey_actions_reflect_reality,
+        # Browser-bug regression guards (aria-platform 06b24b1)
+        journey_brief_project_isolation,
+        journey_github_banner_consistency,
+        journey_action_banner_freshness,
+        journey_sfs_project_creation,
+        journey_project_delete_cleanup,
     ]
     results: list[dict[str, Any]] = []
     for fn in journeys:
@@ -304,6 +311,230 @@ def journey_actions_reflect_reality() -> dict[str, Any]:
     return {"name": "actions_reflect_reality", "status": "pass",
             "duration_ms": ms,
             "details": f"{len(action_list)} actions, aws={has_aws}"}
+
+
+def journey_brief_project_isolation() -> dict[str, Any]:
+    """
+    Guards Bug 1: brief content must be scoped to its project — no other
+    project's name should appear inside a project's brief. Requires 2+
+    named projects; skips cleanly otherwise.
+    """
+    resp, _ = _timed_call("GET", f"/projects/{TEST_TENANT}")
+    projects = resp.get("projects", []) if isinstance(resp, dict) else resp
+    if not isinstance(projects, list) or len(projects) < 2:
+        return {"name": "brief_project_isolation", "status": "skip",
+                "error": "Need 2+ projects"}
+    named = [p for p in projects
+             if isinstance(p, dict) and p.get("project_id")
+             and (p.get("name") or "").strip()]
+    if len(named) < 2:
+        return {"name": "brief_project_isolation", "status": "skip",
+                "error": "Projects missing names"}
+
+    total_ms = 0
+    checked = 0
+    for p in named[:3]:
+        pid = p["project_id"]
+        pname = str(p["name"]).strip().lower()
+        other_names = [str(q["name"]).strip().lower()
+                       for q in named if q["project_id"] != pid]
+        br, ms = _timed_call("GET", f"/brief/{TEST_TENANT}?project_id={pid}")
+        total_ms += ms
+        if br.get("error"):
+            continue
+        content = " ".join(str(br.get(k) or "") for k in
+                            ("content", "product", "product_summary", "summary")).lower()
+        if not content.strip():
+            continue
+        checked += 1
+        for other in other_names:
+            # Only flag reasonably distinctive names — avoid common words.
+            if len(other) >= 4 and other != pname and other in content:
+                return {"name": "brief_project_isolation", "status": "fail",
+                        "duration_ms": total_ms,
+                        "error": (f"Brief for '{pname[:20]}' references other "
+                                  f"project '{other[:20]}' — cross-project bleed")}
+    if checked == 0:
+        return {"name": "brief_project_isolation", "status": "skip",
+                "duration_ms": total_ms, "error": "No brief content to compare"}
+    return {"name": "brief_project_isolation", "status": "pass",
+            "duration_ms": total_ms,
+            "details": f"{checked} brief(s) isolated across {len(named)} projects"}
+
+
+def journey_github_banner_consistency() -> dict[str, Any]:
+    """
+    Guards Bug 2: a tenant with a valid GitHub installation_id must not
+    carry a 'Connect GitHub' ActionRequired. Skip if GitHub isn't
+    connected on the test tenant.
+    """
+    status, ms = _timed_call("GET", f"/status/{TEST_TENANT}")
+    if status.get("error") and status.get("status", 0) >= 500:
+        return {"name": "github_banner_consistency", "status": "fail",
+                "duration_ms": ms, "error": status["error"][:200]}
+    connected = bool(
+        status.get("installation_id") or status.get("github_installation_id")
+        or status.get("github_connected") or status.get("github", {}).get("connected")
+        if isinstance(status, dict) else False
+    )
+    if not connected:
+        return {"name": "github_banner_consistency", "status": "skip",
+                "duration_ms": ms, "error": "Tenant not connected to GitHub"}
+
+    try:
+        from nexus import overwatch_graph
+        actions = overwatch_graph.get_tenant_actions(TEST_TENANT) or []
+    except Exception as exc:
+        return {"name": "github_banner_consistency", "status": "error",
+                "duration_ms": ms, "error": str(exc)[:200]}
+
+    for a in actions:
+        if not isinstance(a, dict) or a.get("dismissed"):
+            continue
+        at = (a.get("action_type") or "").lower()
+        if "github" in at and ("connect" in at or at.startswith("no_")
+                                or "missing" in at):
+            return {"name": "github_banner_consistency", "status": "fail",
+                    "duration_ms": ms,
+                    "error": f"GitHub connected but stale ActionRequired present: {at}"}
+    return {"name": "github_banner_consistency", "status": "pass",
+            "duration_ms": ms,
+            "details": f"Connected; {len(actions)} action(s), none stale"}
+
+
+def journey_action_banner_freshness() -> dict[str, Any]:
+    """
+    Guards Bug 3: a project created < 10 minutes ago must not carry a
+    stuck/stale/ingestion ActionRequired — the banner would be lying.
+    Skip when no young projects exist.
+    """
+    resp, ms = _timed_call("GET", f"/projects/{TEST_TENANT}")
+    projects = resp.get("projects", []) if isinstance(resp, dict) else resp
+    if not isinstance(projects, list) or not projects:
+        return {"name": "action_banner_freshness", "status": "skip",
+                "duration_ms": ms, "error": "No projects"}
+
+    now = datetime.now(timezone.utc)
+    young_pids: set[str] = set()
+    for p in projects:
+        if not isinstance(p, dict):
+            continue
+        created = p.get("created_at") or ""
+        if not created:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if (now - dt).total_seconds() < 600:
+            pid = p.get("project_id") or ""
+            if pid:
+                young_pids.add(pid)
+
+    if not young_pids:
+        return {"name": "action_banner_freshness", "status": "pass",
+                "duration_ms": ms, "details": "No young projects to validate"}
+
+    try:
+        from nexus import overwatch_graph
+        actions = overwatch_graph.get_tenant_actions(TEST_TENANT) or []
+    except Exception as exc:
+        return {"name": "action_banner_freshness", "status": "error",
+                "duration_ms": ms, "error": str(exc)[:200]}
+
+    for a in actions:
+        if not isinstance(a, dict) or a.get("dismissed"):
+            continue
+        at = (a.get("action_type") or "").lower()
+        if not any(w in at for w in ("stuck", "stale", "ingestion")):
+            continue
+        target = a.get("project_id") or a.get("target") or ""
+        if target in young_pids:
+            return {"name": "action_banner_freshness", "status": "fail",
+                    "duration_ms": ms,
+                    "error": (f"Project {str(target)[:12]} is <10min old but "
+                              f"has '{at}' banner")}
+    return {"name": "action_banner_freshness", "status": "pass",
+            "duration_ms": ms,
+            "details": f"{len(young_pids)} young project(s), no premature banners"}
+
+
+def journey_sfs_project_creation() -> dict[str, Any]:
+    """
+    Guards Bug 4: Start-from-Scratch projects must carry the scaffold flag
+    AND have a linked repo — otherwise the scaffold ingestion pipeline is
+    broken. Skip when no SFS projects exist on the test tenant.
+    """
+    resp, ms = _timed_call("GET", f"/projects/{TEST_TENANT}")
+    projects = resp.get("projects", []) if isinstance(resp, dict) else resp
+    if not isinstance(projects, list) or not projects:
+        return {"name": "sfs_project_creation", "status": "skip",
+                "duration_ms": ms, "error": "No projects"}
+
+    sfs: list[dict[str, Any]] = []
+    for p in projects:
+        if not isinstance(p, dict):
+            continue
+        flags = p.get("flags") or p.get("metadata") or {}
+        flag_keys = list(flags.keys()) if isinstance(flags, dict) else []
+        is_sfs = (
+            bool(p.get("forge_sfs")) or bool(p.get("sfs")) or bool(p.get("scaffold"))
+            or any(str(k).startswith("forge_sfs") for k in flag_keys)
+            or (p.get("source") or "").lower() in ("sfs", "scaffold", "start_from_scratch")
+        )
+        if is_sfs:
+            sfs.append(p)
+
+    if not sfs:
+        return {"name": "sfs_project_creation", "status": "skip",
+                "duration_ms": ms, "error": "No SFS projects on test tenant"}
+
+    for p in sfs:
+        repo = (p.get("repo_url") or "").strip()
+        if not repo:
+            pid = str(p.get("project_id", "?"))[:12]
+            return {"name": "sfs_project_creation", "status": "fail",
+                    "duration_ms": ms,
+                    "error": f"SFS project {pid} has no linked repo_url"}
+    return {"name": "sfs_project_creation", "status": "pass",
+            "duration_ms": ms,
+            "details": f"{len(sfs)} SFS project(s), all have linked repos"}
+
+
+def journey_project_delete_cleanup() -> dict[str, Any]:
+    """
+    Guards Bug 5: a deleted project must not leave orphan graph nodes
+    (MissionTask / MissionBrief / BriefEntry / ConversationMessage)
+    still referencing its project_id.
+
+    Requires production Neptune access; skips in local mode.
+    """
+    if MODE != "production":
+        return {"name": "project_delete_cleanup", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        from nexus import neptune_client
+        start = time.time()
+        rows = neptune_client.query(
+            "MATCH (n) WHERE (n:MissionTask OR n:MissionBrief "
+            "OR n:BriefEntry OR n:ConversationMessage) "
+            "AND n.project_id IS NOT NULL "
+            "AND NOT EXISTS { MATCH (p:Project {project_id: n.project_id}) } "
+            "RETURN labels(n)[0] AS label, n.project_id AS pid LIMIT 10"
+        )
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "project_delete_cleanup", "status": "error",
+                "error": str(exc)[:200]}
+    if rows:
+        first = rows[0] if isinstance(rows[0], dict) else {}
+        return {"name": "project_delete_cleanup", "status": "fail",
+                "duration_ms": ms,
+                "error": (f"{len(rows)}+ orphan {first.get('label','?')} "
+                          f"nodes reference deleted project "
+                          f"{str(first.get('pid','?'))[:12]}")}
+    return {"name": "project_delete_cleanup", "status": "pass",
+            "duration_ms": ms, "details": "No orphan graph data"}
 
 
 def get_summary() -> dict[str, Any]:

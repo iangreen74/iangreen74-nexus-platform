@@ -46,7 +46,11 @@ FEATURES: dict[str, dict[str, Any]] = {
         "name": "Projects",
         "description": "Multi-project system, isolation, Start from Scratch",
         "icon": "📁",
-        "synthetic_tests": ["project_list", "project_separation", "sfs_detection"],
+        "synthetic_tests": [
+            "project_list", "project_separation", "sfs_detection",
+            "brief_project_isolation", "sfs_project_creation",
+            "project_delete_cleanup",
+        ],
         "health_checks": ["check_project_isolation", "check_sfs_health"],
     },
     "aria_chat": {
@@ -76,7 +80,9 @@ FEATURES: dict[str, dict[str, Any]] = {
         "name": "Onboarding",
         "description": "Signup → Stripe → GitHub → first project",
         "icon": "🎯",
-        "synthetic_tests": ["health"],
+        "synthetic_tests": [
+            "health", "github_banner_consistency", "action_banner_freshness",
+        ],
         "health_checks": ["check_onboarding_pipeline", "check_tenant_stages"],
     },
     "intelligence": {

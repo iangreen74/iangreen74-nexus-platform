@@ -100,7 +100,9 @@ def test_evaluate_feature_skip_does_not_error():
     fdef = fh.FEATURES["projects"]
     r = fh._evaluate_feature(
         "projects", fdef,
-        {"project_list": "pass", "project_separation": "skip", "sfs_detection": "pass"},
+        {"project_list": "pass", "project_separation": "skip", "sfs_detection": "pass",
+         "brief_project_isolation": "skip", "sfs_project_creation": "skip",
+         "project_delete_cleanup": "skip"},
     )
     assert r["status"] == "healthy"
 
