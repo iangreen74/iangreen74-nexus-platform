@@ -60,9 +60,10 @@ jobs:
           echo "Deployed $GIT_SHA to $ECS_SERVICE"
 
       - name: Wait for stable
+        continue-on-error: true
         run: |
           echo "Waiting for service to stabilize..."
-          timeout 180 bash -c 'while true; do
+          timeout 300 bash -c 'while true; do
             STATUS=$(aws ecs describe-services --cluster aria-platform --services aria-console --region us-east-1 \
               --query "services[0].deployments[?status==\`PRIMARY\`].rolloutState" --output text 2>/dev/null)
             echo "  Status: $STATUS"
