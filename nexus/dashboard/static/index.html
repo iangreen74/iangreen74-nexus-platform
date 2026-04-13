@@ -593,7 +593,10 @@
 
 <script>
 const API = '/api';
-const REFRESH_MS = 30000;
+// 60s poll keeps the dashboard current without hammering the single
+// ECS task. Each cycle staggers its fetches (see loadAll) rather than
+// firing them all in parallel.
+const REFRESH_MS = 60000;
 let _lastStatusData = null;  // shared between loadOverview and loadTriageFeed
 
 function fmtTime(iso) {
@@ -1446,25 +1449,39 @@ async function loadAll() {
   // ECS service. The diagnosis's own progress UI keeps the operator
   // informed; other panels catch up on the next tick.
   if (_diagnosisActive) return;
-  await Promise.all([
-    loadGoalHealth(),
-    loadFeatureHealth(),
-    loadResearchLibrary(),
-    loadOverview(),
-    loadHealChains(),
-    loadSRE(),
-    loadTenants(),
-    loadTriageFeed(),
-    loadPredictive(),
-    loadSupport(),
-    loadPatterns(),
-    loadCandidates(),
-    loadForge(),
-    loadCapabilities(),
-    loadActions(),
-    loadDiscovery(),
-    loadGraphStats()
-  ]);
+
+  // Staggered loading: top-of-page panels (what the operator sees first)
+  // go immediately. Lower panels fire in small waves so 15+ simultaneous
+  // API requests don't pile up on the ECS task. If a diagnosis starts
+  // mid-cycle the later waves get skipped by the _diagnosisActive guard.
+  const skip = () => _diagnosisActive;
+
+  // Wave 1 (immediate) — hero panels
+  await Promise.all([loadGoalHealth(), loadFeatureHealth(), loadTenants()]);
+
+  // Wave 2 (1.5s) — main body
+  setTimeout(() => {
+    if (skip()) return;
+    Promise.all([loadOverview(), loadHealChains(), loadSRE(), loadTriageFeed()]);
+  }, 1500);
+
+  // Wave 3 (4s) — context panels
+  setTimeout(() => {
+    if (skip()) return;
+    Promise.all([loadPredictive(), loadSupport(), loadResearchLibrary()]);
+  }, 4000);
+
+  // Wave 4 (7s) — patterns + forge
+  setTimeout(() => {
+    if (skip()) return;
+    Promise.all([loadPatterns(), loadCandidates(), loadForge()]);
+  }, 7000);
+
+  // Wave 5 (10s) — footer / reference panels
+  setTimeout(() => {
+    if (skip()) return;
+    Promise.all([loadCapabilities(), loadActions(), loadDiscovery(), loadGraphStats()]);
+  }, 10000);
 }
 
 // --- Copy tenant report ---

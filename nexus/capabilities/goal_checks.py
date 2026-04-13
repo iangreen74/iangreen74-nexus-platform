@@ -11,10 +11,13 @@ via asyncio.to_thread().
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_SENSOR_TIMEOUT_SEC = 10.0
 
 
 def _safe(fn, *args, **kwargs) -> Any:
@@ -23,6 +26,18 @@ def _safe(fn, *args, **kwargs) -> Any:
     except Exception as exc:
         logger.debug("goal check %s failed: %s", getattr(fn, "__name__", fn), exc)
         return None
+
+
+def _with_timeout(fn, label: str, timeout: float = _SENSOR_TIMEOUT_SEC) -> list[str]:
+    """Run fn() with a hard timeout. Returns findings list (or timeout note)."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(fn)
+        try:
+            return future.result(timeout=timeout) or []
+        except concurrent.futures.TimeoutError:
+            return [f"{label}: timed out after {timeout:.0f}s"]
+        except Exception as exc:
+            return [f"{label}: {type(exc).__name__}: {str(exc)[:120]}"]
 
 
 def _feature_health_findings() -> list[str]:
@@ -171,8 +186,5 @@ def goal_quick_checks() -> list[str]:
     for fn in (_feature_health_findings, _tenant_health_findings, _ci_findings,
                _daemon_findings, _infra_lock_findings, _runner_findings,
                _heal_chain_findings, _validator_findings, _synthetic_findings):
-        try:
-            out.extend(fn())
-        except Exception as exc:
-            logger.debug("goal aggregator %s failed: %s", fn.__name__, exc)
+        out.extend(_with_timeout(fn, fn.__name__))
     return out

@@ -8,10 +8,13 @@ All sync — callers hop into a thread via asyncio.to_thread().
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_SENSOR_TIMEOUT_SEC = 10.0
 
 
 def _safe(fn, *args, **kwargs) -> Any:
@@ -20,6 +23,18 @@ def _safe(fn, *args, **kwargs) -> Any:
     except Exception as exc:
         logger.debug("tenant check %s failed: %s", getattr(fn, "__name__", fn), exc)
         return None
+
+
+def _with_timeout(fn, label: str, timeout: float = _SENSOR_TIMEOUT_SEC) -> tuple[list[str], bool]:
+    """Run fn() with a hard timeout. Returns (findings_or_error_lines, ok)."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(fn)
+        try:
+            return future.result(timeout=timeout), True
+        except concurrent.futures.TimeoutError:
+            return [f"{label}: timed out after {timeout:.0f}s"], False
+        except Exception as exc:
+            return [f"{label}: {type(exc).__name__}: {str(exc)[:120]}"], False
 
 
 def _health_findings(tid: str) -> list[str]:
@@ -121,9 +136,6 @@ def tenant_quick_checks(tenant_id: str) -> list[str]:
 
     out: list[str] = []
     for fn in (_health_findings, _validator_findings, _capability_findings):
-        try:
-            out.extend(fn(tenant_id))
-        except Exception as exc:
-            logger.debug("tenant aggregator %s failed: %s", fn.__name__, exc)
-            out.append(f"{fn.__name__}: {type(exc).__name__}: {str(exc)[:120]}")
+        lines, _ok = _with_timeout(lambda fn=fn: fn(tenant_id), fn.__name__)
+        out.extend(lines)
     return out
