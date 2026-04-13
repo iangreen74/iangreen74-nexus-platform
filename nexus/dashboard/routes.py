@@ -1270,6 +1270,41 @@ async def _build_full_report() -> str:
         )
 
 
+@router.post("/forge/propose-fix/{pattern_name}")
+async def forge_propose_fix(pattern_name: str) -> dict[str, Any]:
+    """
+    Drive a known fix template end-to-end through the PR Proposer.
+
+    Reads aria-platform file(s), applies the template transform, validates,
+    and opens a DRAFT PR labeled overwatch-fix via propose_pr. Tier 3
+    gated — the PR is draft so merging requires human activation.
+    """
+    from nexus.capabilities.pr_proposer import propose_pr
+    from nexus.forge import fix_generator
+
+    template = fix_generator._TEMPLATES.get(pattern_name)
+    if not template:
+        return {"status": "error", "error": f"unknown pattern: {pattern_name}"}
+    changes = fix_generator.generate_fix(pattern_name)
+    ok, reason = fix_generator.validate_fix(changes)
+    if not ok:
+        return {
+            "status": "skip",
+            "pattern": pattern_name,
+            "reason": reason,
+            "message": "No changes produced — preconditions not met on aria-platform main.",
+        }
+    file_changes = [{"path": c.path, "new_content": c.new_content} for c in changes]
+    result = propose_pr(
+        branch_name=template["branch"],
+        title=template["title"],
+        reasoning=template["body"],
+        file_changes=file_changes,
+        finding={"pattern": pattern_name, "source": "forge.fix_generator"},
+    )
+    return {"pattern": pattern_name, **result}
+
+
 @router.get("/ci-decision")
 async def ci_decision() -> dict[str, Any]:
     """Current deploy readiness — 8-factor evaluation. Read-only."""
