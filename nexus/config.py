@@ -94,7 +94,7 @@ KNOWN_SECRET_EXPIRIES: dict[str, str] = {
 # Thresholds
 DAEMON_CYCLE_STALE_MINUTES = 15  # Alert if daemon hasn't cycled in this long
 TENANT_INACTIVE_HOURS = 24  # Alert if tenant has no activity
-HEALTH_CHECK_TIMEOUT_SECONDS = 10
+HEALTH_CHECK_TIMEOUT_SECONDS = 30  # 10s was too tight — Neptune-backed /brief and /projects can take 15-20s under load, causing false-degraded synthetics (brief_exists, project_separation) that cascade into 3 degraded feature tiles.
 MAX_HEALING_ACTIONS_PER_HOUR = 10  # Rate limit on auto-healing
 
 # Capability blast radius classifications
