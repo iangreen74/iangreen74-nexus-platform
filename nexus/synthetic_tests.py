@@ -57,6 +57,10 @@ def run_all_journeys(force: bool = False) -> list[dict[str, Any]]:
         journey_action_banner_freshness,
         journey_sfs_project_creation,
         journey_project_delete_cleanup,
+        # Flow health — catches frozen pipelines within ~30s of cycle
+        journey_ingestion_completion,
+        journey_connect_flow_health,
+        journey_sfs_flow_health,
     ]
     results: list[dict[str, Any]] = []
     for fn in journeys:
@@ -548,6 +552,145 @@ def journey_project_delete_cleanup() -> dict[str, Any]:
                           f"{str(first.get('pid','?'))[:12]}")}
     return {"name": "project_delete_cleanup", "status": "pass",
             "duration_ms": ms, "details": "No orphan graph data"}
+
+
+# --- Flow health ------------------------------------------------------------
+#
+# Catch pipelines that started but never completed. Every synthetic below
+# shares the same core idea: a Tenant whose mission_stage is an "early"
+# stage (ingesting / ingestion_pending) for longer than STUCK_THRESHOLD_SEC
+# is almost certainly frozen — the ingestion pipeline should resolve in
+# 1-5 minutes on a typical repo.
+
+_EARLY_STAGES = ("ingesting", "ingestion_pending")
+_STUCK_THRESHOLD_SEC = 15 * 60
+
+
+def _stuck_ingestions(creation_mode_filter: str | None) -> tuple[list[dict[str, Any]], int]:
+    """
+    Return (stuck_rows, duration_ms) for Tenants sitting in an early stage
+    past the threshold. `creation_mode_filter`:
+      - None    → all creation modes
+      - 'sfs'   → only SFS projects
+      - 'connect' → only connect-mode projects (explicit or unset)
+    """
+    if MODE != "production":
+        return [], 0
+    from nexus import neptune_client
+
+    start = time.time()
+    rows = neptune_client.query(
+        "MATCH (t:Tenant) "
+        "WHERE t.mission_stage IN ['ingesting', 'ingestion_pending'] "
+        "OPTIONAL MATCH (p:Project {tenant_id: t.tenant_id}) "
+        "WHERE p.status = 'active' OR p.status IS NULL "
+        "RETURN t.tenant_id AS tenant_id, t.company_name AS tenant_name, "
+        "t.mission_stage AS stage, t.updated_at AS updated_at, "
+        "t.created_at AS tenant_created_at, "
+        "p.project_id AS project_id, p.name AS project_name, "
+        "p.creation_mode AS creation_mode, p.created_at AS project_created_at "
+        "LIMIT 50"
+    ) or []
+    ms = int((time.time() - start) * 1000)
+
+    now = datetime.now(timezone.utc)
+    stuck: list[dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        mode = (r.get("creation_mode") or "").lower()
+        if creation_mode_filter == "sfs" and mode != "sfs":
+            continue
+        if creation_mode_filter == "connect" and mode not in ("", "connect"):
+            continue
+
+        ts_raw = (r.get("project_created_at") or r.get("updated_at")
+                  or r.get("tenant_created_at") or "")
+        try:
+            dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        age_sec = (now - dt).total_seconds()
+        if age_sec < _STUCK_THRESHOLD_SEC:
+            continue
+        stuck.append({**r, "age_min": int(age_sec // 60)})
+    return stuck, ms
+
+
+def _format_stuck(row: dict[str, Any]) -> str:
+    pname = row.get("project_name") or row.get("tenant_name") or row.get("tenant_id", "?")
+    pid = (row.get("project_id") or row.get("tenant_id") or "")[:12]
+    return (f"Project {str(pname)[:30]} ({pid}) stuck at "
+            f"{row.get('stage', '?')} for {row.get('age_min', '?')}m")
+
+
+def journey_ingestion_completion() -> dict[str, Any]:
+    """
+    Catches ingestions that started but never finished — any project at
+    stage='ingesting' or 'ingestion_pending' for more than 15 minutes is
+    almost certainly frozen and needs a human (or auto-heal restart).
+    """
+    if MODE != "production":
+        return {"name": "ingestion_completion", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        stuck, ms = _stuck_ingestions(None)
+    except Exception as exc:
+        return {"name": "ingestion_completion", "status": "error",
+                "error": str(exc)[:200]}
+    if stuck:
+        return {"name": "ingestion_completion", "status": "fail",
+                "duration_ms": ms,
+                "error": _format_stuck(stuck[0])
+                + (f" (+{len(stuck) - 1} more)" if len(stuck) > 1 else "")}
+    return {"name": "ingestion_completion", "status": "pass",
+            "duration_ms": ms, "details": "No stuck ingestions"}
+
+
+def journey_connect_flow_health() -> dict[str, Any]:
+    """
+    Connect-mode projects should reach brief_pending within ~5 minutes.
+    Anything older than 15 minutes still at an early stage means the
+    connect flow (repo fetch → scan → brief) froze somewhere.
+    """
+    if MODE != "production":
+        return {"name": "connect_flow_health", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        stuck, ms = _stuck_ingestions("connect")
+    except Exception as exc:
+        return {"name": "connect_flow_health", "status": "error",
+                "error": str(exc)[:200]}
+    if stuck:
+        return {"name": "connect_flow_health", "status": "fail",
+                "duration_ms": ms,
+                "error": _format_stuck(stuck[0])
+                + (f" (+{len(stuck) - 1} more)" if len(stuck) > 1 else "")}
+    return {"name": "connect_flow_health", "status": "pass",
+            "duration_ms": ms, "details": "No connect-mode projects stuck"}
+
+
+def journey_sfs_flow_health() -> dict[str, Any]:
+    """
+    SFS (Start-from-Scratch) projects should scaffold + ingest in 1-3
+    minutes. Past 15 minutes still at early stage = frozen scaffold
+    pipeline.
+    """
+    if MODE != "production":
+        return {"name": "sfs_flow_health", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        stuck, ms = _stuck_ingestions("sfs")
+    except Exception as exc:
+        return {"name": "sfs_flow_health", "status": "error",
+                "error": str(exc)[:200]}
+    if stuck:
+        return {"name": "sfs_flow_health", "status": "fail",
+                "duration_ms": ms,
+                "error": _format_stuck(stuck[0])
+                + (f" (+{len(stuck) - 1} more)" if len(stuck) > 1 else "")}
+    return {"name": "sfs_flow_health", "status": "pass",
+            "duration_ms": ms, "details": "No SFS projects stuck"}
 
 
 def get_summary() -> dict[str, Any]:

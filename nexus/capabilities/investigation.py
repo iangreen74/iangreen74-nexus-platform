@@ -55,6 +55,12 @@ _KNOWN_CONTEXT = (
     "not a stuck task.\n"
     "- forge-1dba4143ca24ed1f (Ian's test project) at stage=complete with no "
     "deployments is expected — it's a test/demo tenant.\n"
+    "- Projects at stage=ingesting or ingestion_pending for less than 15 "
+    "minutes are normal (pipeline in progress). Only flag stuck after that.\n"
+    "- Connect-mode projects typically take 2-5 minutes to complete "
+    "ingestion on a typical repo.\n"
+    "- SFS (Start-from-Scratch) projects typically take 1-3 minutes to "
+    "scaffold and ingest.\n"
 )
 
 CLASSIFIER_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"

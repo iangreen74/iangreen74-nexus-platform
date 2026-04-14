@@ -50,6 +50,7 @@ FEATURES: dict[str, dict[str, Any]] = {
             "project_list", "project_separation", "sfs_detection",
             "brief_project_isolation", "sfs_project_creation",
             "project_delete_cleanup",
+            "ingestion_completion", "connect_flow_health", "sfs_flow_health",
         ],
         "health_checks": ["check_project_isolation", "check_sfs_health"],
     },
