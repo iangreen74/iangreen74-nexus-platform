@@ -379,6 +379,18 @@ async def tenant_full_detail(tenant_id: str) -> dict[str, Any]:
     }
 
 
+@router.get("/tenants/{tenant_id}/audit")
+async def tenant_audit(tenant_id: str) -> dict[str, Any]:
+    """
+    Proxy the Forgewing `/admin/audit/{tid}` endpoint so the dashboard can
+    render a full tenant deep-dive (projects, tasks, briefs, intelligence,
+    PRs, repo files) without having to call Forgewing cross-origin.
+    """
+    from nexus.capabilities.forgewing_api import call_api
+
+    return call_api("GET", f"/admin/audit/{tenant_id}")
+
+
 @router.get("/daemon")
 async def daemon() -> dict[str, Any]:
     report = daemon_monitor.check_daemon()

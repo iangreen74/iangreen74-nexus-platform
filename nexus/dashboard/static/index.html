@@ -824,7 +824,17 @@ async function toggleTenantDetail(tile) {
     return;
   }
   panel.dataset.tid = tid;
-  panel.innerHTML = '<div style="padding:12px; color:var(--text-dim); font-size:12px;">Loading detail…</div>';
+  panel.innerHTML = '<div style="padding:12px; color:var(--text-dim); font-size:12px;">Loading deep dive…</div>';
+
+  // Prefer the Forgewing /admin/audit endpoint — richer data (projects,
+  // briefs, intelligence nodes, orphan count). Fall back to the Overwatch
+  // /detail endpoint if the proxy call failed or Forgewing is down.
+  const audit = await fetchJSON(`${API}/tenants/${encodeURIComponent(tid)}/audit`);
+  if (audit && !audit.error && (audit.projects || audit.tasks || audit.briefs || audit.intelligence)) {
+    if (panel.dataset.tid === tid) renderTenantAuditPanel(panel, tid, audit);
+    return;
+  }
+
   const data = await fetchJSON(`${API}/tenants/${encodeURIComponent(tid)}/detail`);
   if (!data) {
     panel.innerHTML = '<div class="err">Failed to load tenant detail</div>';
@@ -884,6 +894,165 @@ async function toggleTenantDetail(tile) {
       </div>
     </div>`;
   panel.innerHTML = html;
+}
+
+function _escapeHTML(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderTenantAuditPanel(panel, tid, audit) {
+  const projects = audit.projects || {};
+  const projectItems = projects.items || projects.list || [];
+  const projectCount = projects.count != null ? projects.count : projectItems.length;
+
+  const tasks = audit.tasks || {};
+  const taskSummary = tasks.summary || tasks.by_status || {};
+  const orphanCount = tasks.orphan_count != null ? tasks.orphan_count : (tasks.orphans || 0);
+  const summaryParts = Object.entries(taskSummary).map(
+    ([k, v]) => `${_escapeHTML(v)} ${_escapeHTML(k)}`);
+
+  const briefs = audit.briefs || {};
+  const briefItems = briefs.items || briefs.list || [];
+
+  const intel = audit.intelligence || {};
+  const intelCounts = intel.counts || intel.by_label || intel;
+
+  const prs = audit.prs || {};
+  const prItems = prs.recent || prs.items || [];
+
+  const repoFiles = audit.repo_files != null
+    ? (typeof audit.repo_files === 'object'
+        ? (audit.repo_files.count ?? audit.repo_files.total ?? 0)
+        : audit.repo_files)
+    : (audit.repo && audit.repo.file_count) || 0;
+
+  const conversations = audit.conversations || {};
+  const convByProject = conversations.by_project || conversations.counts || {};
+  const convTotal = conversations.total != null ? conversations.total : (conversations.count || 0);
+
+  const displayName = audit.display_name || audit.name || (audit.context && audit.context.name) || tid;
+
+  const orphanBadge = orphanCount > 0
+    ? `<span class="badge failed" style="margin-left:6px">${_escapeHTML(orphanCount)} orphan</span>`
+    : `<span class="badge success" style="margin-left:6px">clean</span>`;
+
+  let projectsHTML = '';
+  if (projectItems.length === 0) {
+    projectsHTML = '<div style="color:var(--text-dim)">No projects</div>';
+  } else {
+    for (const p of projectItems.slice(0, 8)) {
+      const pname = _escapeHTML(p.name || p.project_id || '—');
+      const pstatus = _escapeHTML(p.status || '—');
+      const prepo = p.repo_url ? _escapeHTML(p.repo_url).replace(/^https?:\/\/github\.com\//, '') : '';
+      const cls = pstatus === 'active' ? 'success' : 'safe';
+      projectsHTML += `<div style="margin-bottom:4px;">
+        <span class="badge ${cls}">${pstatus}</span> <strong>${pname}</strong>
+        ${prepo ? `<div style="color:var(--text-dim); font-family:monospace; font-size:10px; margin-left:18px;">${prepo}</div>` : ''}
+      </div>`;
+    }
+    if (projectItems.length > 8) {
+      projectsHTML += `<div style="color:var(--text-dim)">…and ${projectItems.length - 8} more</div>`;
+    }
+  }
+
+  let intelHTML = '';
+  const intelEntries = Object.entries(intelCounts).filter(([, v]) => typeof v === 'number');
+  if (intelEntries.length === 0) {
+    intelHTML = '<div style="color:var(--text-dim)">No intelligence nodes</div>';
+  } else {
+    for (const [label, count] of intelEntries) {
+      intelHTML += `<div><span style="color:var(--text-dim)">${_escapeHTML(label)}:</span> <strong>${_escapeHTML(count)}</strong></div>`;
+    }
+  }
+
+  let briefHTML = '';
+  if (briefItems.length === 0) {
+    briefHTML = '<div style="color:var(--text-dim)">No briefs</div>';
+  } else {
+    for (const b of briefItems.slice(0, 3)) {
+      const pid = _escapeHTML((b.project_id || '').slice(0, 16));
+      const syn = _escapeHTML((b.synthesized_at || b.created_at || '').slice(0, 19));
+      const preview = _escapeHTML((b.preview || b.content_preview || b.summary || '').slice(0, 120));
+      briefHTML += `<div style="margin-bottom:6px;">
+        <div style="font-family:monospace; font-size:10px; color:var(--text-dim);">${pid}${syn ? ' · ' + syn : ''}</div>
+        ${preview ? `<div style="font-size:11px;">"${preview}${preview.length >= 120 ? '…' : ''}"</div>` : ''}
+      </div>`;
+    }
+  }
+
+  let convHTML = '';
+  if (convTotal) {
+    convHTML = `<div><strong>${_escapeHTML(convTotal)}</strong> messages total</div>`;
+    for (const [pid, cnt] of Object.entries(convByProject).slice(0, 4)) {
+      convHTML += `<div style="color:var(--text-dim); font-family:monospace; font-size:10px;">
+        ${_escapeHTML(String(pid).slice(0, 16))}: ${_escapeHTML(cnt)}</div>`;
+    }
+  } else {
+    convHTML = '<div style="color:var(--text-dim)">No messages</div>';
+  }
+
+  let prHTML = '';
+  if (prItems.length === 0) {
+    prHTML = '<div style="color:var(--text-dim)">No PRs</div>';
+  } else {
+    for (const p of prItems.slice(0, 10)) {
+      const st = _escapeHTML(p.state || p.status || '?');
+      const num = _escapeHTML(p.number || p.id || '');
+      const cls = (st === 'merged' || st === 'closed') ? 'success' : st === 'open' ? 'moderate' : 'safe';
+      const link = p.pr_url || p.url;
+      const label = link
+        ? `<a href="${_escapeHTML(link)}" target="_blank" rel="noopener">#${num}</a>`
+        : `#${num}`;
+      prHTML += `<div><span class="badge ${cls}">${st}</span> ${label}</div>`;
+    }
+  }
+
+  const fileCount = _escapeHTML(repoFiles);
+  const summaryText = summaryParts.length ? summaryParts.join(' · ') : '—';
+
+  panel.innerHTML = `
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <div style="font-size:14px; font-weight:700; color:var(--text);">
+          ${_escapeHTML(displayName)}
+          <span style="font-weight:400; color:var(--text-dim); font-family:monospace; font-size:11px;">${_escapeHTML(tid)}</span>
+        </div>
+        <button class="btn" style="padding:4px 10px; font-size:11px;"
+          onclick="document.getElementById('tenant-detail-panel').innerHTML='';document.getElementById('tenant-detail-panel').dataset.tid='';">Close</button>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div>
+          <div class="label">PROJECTS (${_escapeHTML(projectCount)})</div>
+          ${projectsHTML}
+        </div>
+        <div>
+          <div class="label">PIPELINE ${orphanBadge}</div>
+          <div>${summaryText}</div>
+          <div style="color:var(--text-dim); margin-top:2px;">Orphan tasks: ${_escapeHTML(orphanCount)}</div>
+        </div>
+        <div>
+          <div class="label">INTELLIGENCE</div>
+          ${intelHTML}
+        </div>
+        <div>
+          <div class="label">BRIEF</div>
+          ${briefHTML}
+          <div class="label" style="margin-top:10px">CONVERSATION</div>
+          ${convHTML}
+        </div>
+        <div>
+          <div class="label">RECENT PRS (${_escapeHTML(prItems.length)})</div>
+          ${prHTML}
+        </div>
+        <div>
+          <div class="label">REPO</div>
+          <div><strong>${fileCount}</strong> files indexed</div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 async function loadTriageFeed() {
