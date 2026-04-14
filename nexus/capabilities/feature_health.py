@@ -74,7 +74,10 @@ FEATURES: dict[str, dict[str, Any]] = {
         "name": "Deployment",
         "description": "Tier 1/2/3 deploy, CloudFormation, CodeBuild",
         "icon": "🚀",
-        "synthetic_tests": ["deploy_readiness", "actions_reflect_reality"],
+        "synthetic_tests": [
+            "deploy_readiness", "actions_reflect_reality",
+            "ci_monitoring_health", "ci_healer_readiness",
+        ],
         "health_checks": ["check_deploy_health", "check_stuck_deploys"],
     },
     "onboarding": {

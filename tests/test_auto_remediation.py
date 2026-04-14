@@ -102,7 +102,7 @@ def test_run_and_remediate_returns_summary():
     assert "failed" in result
     assert "remediated" in result
     assert "remediations" in result
-    assert result["total"] == 20  # 7 original + 5 isolation-QA + 5 browser-bug + 3 flow-health
+    assert result["total"] == 22  # + 2 CI self-healing readiness synthetics
 
 
 def test_run_and_remediate_records_to_graph():

@@ -61,6 +61,9 @@ def run_all_journeys(force: bool = False) -> list[dict[str, Any]]:
         journey_ingestion_completion,
         journey_connect_flow_health,
         journey_sfs_flow_health,
+        # CI self-healing readiness (2026-04-14 outage guards)
+        journey_ci_monitoring_health,
+        journey_ci_healer_readiness,
     ]
     results: list[dict[str, Any]] = []
     for fn in journeys:
@@ -691,6 +694,71 @@ def journey_sfs_flow_health() -> dict[str, Any]:
                 + (f" (+{len(stuck) - 1} more)" if len(stuck) > 1 else "")}
     return {"name": "sfs_flow_health", "status": "pass",
             "duration_ms": ms, "details": "No SFS projects stuck"}
+
+
+def journey_ci_monitoring_health() -> dict[str, Any]:
+    """
+    Verifies the CI heartbeat can reach the GitHub Actions API. A 200
+    from /rate_limit proves token auth + network; a missing token is
+    the only reason the heartbeat would go blind in production.
+    """
+    if MODE != "production":
+        return {"name": "ci_monitoring_health", "status": "skip",
+                "error": "Requires production GitHub token"}
+    try:
+        import httpx
+        from nexus.capabilities import ci_heartbeat as _hb
+        token = _hb._token()
+        if not token:
+            return {"name": "ci_monitoring_health", "status": "fail",
+                    "error": "No GitHub PAT — ci_heartbeat cannot scan runs"}
+        start = time.time()
+        resp = httpx.get(
+            "https://api.github.com/rate_limit",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json"},
+            timeout=5,
+        )
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "ci_monitoring_health", "status": "error",
+                "error": str(exc)[:200]}
+    if resp.status_code != 200:
+        return {"name": "ci_monitoring_health", "status": "fail",
+                "duration_ms": ms,
+                "error": f"GitHub API returned {resp.status_code}"}
+    return {"name": "ci_monitoring_health", "status": "pass",
+            "duration_ms": ms, "details": "GitHub Actions API reachable"}
+
+
+def journey_ci_healer_readiness() -> dict[str, Any]:
+    """
+    Confirms SSM can enumerate self-hosted runners. If no runners are
+    tagged as expected, the healer would be unable to act on a hang.
+    """
+    if MODE != "production":
+        return {"name": "ci_healer_readiness", "status": "skip",
+                "error": "Requires production EC2/SSM access"}
+    try:
+        from nexus.aws_client import _client
+        start = time.time()
+        resp = _client("ec2").describe_instances(
+            Filters=[
+                {"Name": "tag:Name", "Values": ["*runner*"]},
+                {"Name": "instance-state-name", "Values": ["running"]},
+            ]
+        )
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "ci_healer_readiness", "status": "error",
+                "error": str(exc)[:200]}
+    count = sum(len(r.get("Instances", []) or [])
+                for r in resp.get("Reservations", []) or [])
+    if count == 0:
+        return {"name": "ci_healer_readiness", "status": "fail",
+                "duration_ms": ms, "error": "No runner instances found"}
+    return {"name": "ci_healer_readiness", "status": "pass",
+            "duration_ms": ms, "details": f"{count} runner instance(s) visible"}
 
 
 def get_summary() -> dict[str, Any]:

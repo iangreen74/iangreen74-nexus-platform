@@ -91,6 +91,11 @@ async def startup():
         start_scheduler()
     except Exception:
         logger.exception("scheduled diagnosis scheduler failed to start")
+    try:
+        from nexus.capabilities.ci_cycle import start_ci_cycle
+        start_ci_cycle()
+    except Exception:
+        logger.exception("ci_cycle scheduler failed to start")
 
 
 @app.on_event("shutdown")
