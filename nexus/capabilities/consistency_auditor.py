@@ -140,7 +140,8 @@ def _check_orphan_projects() -> list[dict[str, Any]]:
 
         rows = neptune_client.query(
             "MATCH (p:Project) "
-            "WHERE NOT EXISTS { MATCH (t:Tenant {tenant_id: p.tenant_id}) } "
+            "OPTIONAL MATCH (t:Tenant {tenant_id: p.tenant_id}) "
+            "WITH p, t WHERE t IS NULL "
             "RETURN p.tenant_id AS tid, p.project_id AS pid LIMIT 20"
         )
         return [

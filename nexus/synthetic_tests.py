@@ -516,10 +516,12 @@ def journey_project_delete_cleanup() -> dict[str, Any]:
         from nexus import neptune_client
         start = time.time()
         rows = neptune_client.query(
-            "MATCH (n) WHERE (n:MissionTask OR n:MissionBrief "
+            "MATCH (n) "
+            "WHERE (n:MissionTask OR n:MissionBrief "
             "OR n:BriefEntry OR n:ConversationMessage) "
             "AND n.project_id IS NOT NULL "
-            "AND NOT EXISTS { MATCH (p:Project {project_id: n.project_id}) } "
+            "OPTIONAL MATCH (p:Project {project_id: n.project_id}) "
+            "WITH n, p WHERE p IS NULL "
             "RETURN labels(n)[0] AS label, n.project_id AS pid LIMIT 10"
         )
         ms = int((time.time() - start) * 1000)
