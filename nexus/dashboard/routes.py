@@ -1511,6 +1511,55 @@ async def ci_gate(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any
     return evaluate_ci_gate(commit_sha=commit)
 
 
+@router.post("/ci-gate-override")
+async def ci_gate_override_set(
+    payload: dict[str, Any] = Body(default=None),
+) -> dict[str, Any]:
+    """Set a time-boxed manual override for the CI deploy gate.
+
+    Body: {"decision": "DEPLOY"|"HOLD", "reason": str, "duration_minutes": int}
+    """
+    from nexus.capabilities.ci_gate_override import set_override
+
+    data = payload or {}
+    try:
+        stored = set_override(
+            decision=str(data.get("decision", "")),
+            reason=str(data.get("reason", "")),
+            duration_minutes=int(data.get("duration_minutes", 60)),
+        )
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
+    return {
+        "status": "override_set",
+        "decision": stored["decision"],
+        "reason": stored["reason"],
+        "expires_at": stored["expires_at"],
+        "created_at": stored["created_at"],
+        "duration_minutes": stored["duration_minutes"],
+    }
+
+
+@router.get("/ci-gate-override")
+async def ci_gate_override_get() -> dict[str, Any]:
+    """Return the active override if one exists and is unexpired."""
+    from nexus.capabilities.ci_gate_override import get_active_override
+
+    row = get_active_override()
+    if not row:
+        return {"status": "no_override"}
+    return {"status": "active", **row}
+
+
+@router.delete("/ci-gate-override")
+async def ci_gate_override_delete() -> dict[str, Any]:
+    """Cancel the active override before its natural expiry."""
+    from nexus.capabilities.ci_gate_override import clear_override
+
+    removed = clear_override()
+    return {"status": "cleared" if removed else "no_override"}
+
+
 @router.post("/synthetic-tests/run")
 async def synthetic_tests_run(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
     """Force-run all synthetic journeys. Called by CI post-deploy."""

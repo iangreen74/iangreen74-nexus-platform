@@ -1,21 +1,12 @@
 """
-CI/CD gates — endpoints aria-platform's pipeline calls.
+CI/CD gates called by aria-platform's pipeline.
 
-Four thin capabilities:
-  - check_deploy_drift()      — do running ECS services share a commit SHA?
-  - evaluate_ci_gate()        — should CI proceed with a deploy?
-  - run_synthetic_suite()     — fire all synthetic journeys now
-  - verify_deploy()           — post-deploy combined check
+- check_deploy_drift()   — do running ECS services share a commit SHA?
+- evaluate_ci_gate()     — should CI proceed with a deploy?
+- run_synthetic_suite()  — fire all synthetic journeys now
+- verify_deploy()        — post-deploy combined check
 
-All read-only except run_synthetic_suite, which only hits Forgewing
-endpoints (same reads the scheduled suite already does). Each function
-never raises — errors become a structured result so the pipeline can
-branch on verdict without try/except around every call.
-
-Fail-open convention: when an underlying data source is unavailable,
-these gates warn but do NOT block. A gate that fails closed on its
-own telemetry outage blocks legitimate deploys during telemetry
-incidents — worse than the risk of an occasional unguarded deploy.
+Fail-open convention: telemetry outage warns, never blocks.
 """
 from __future__ import annotations
 
@@ -34,11 +25,8 @@ def _now_iso() -> str:
 
 
 def check_deploy_drift() -> dict[str, Any]:
-    """Inspect each monitored ECS service's running image across both the
-    customer cluster (aria-platform) and the control-plane cluster
-    (overwatch-platform). Drift = different image digests among services
-    that should share a release (aria-console is tracked but excluded
-    from drift math since it follows its own release cycle)."""
+    """Drift = different image digests among customer-cluster services
+    that should share a release. aria-console excluded (own cycle)."""
     from nexus import aws_client
     from nexus.config import MODE, SERVICE_CLUSTERS
 
@@ -99,8 +87,25 @@ def check_deploy_drift() -> dict[str, Any]:
 
 def evaluate_ci_gate(commit_sha: str = "") -> dict[str, Any]:
     """Should a production deploy proceed? Thin wrapper over the existing
-    CI Decision Engine. Fail-open on any check that raises."""
+    CI Decision Engine. Honors an active operator override before running
+    the normal evaluation. Fail-open on any check that raises."""
     from nexus.capabilities.ci_decision_engine import evaluate_deploy_readiness
+    from nexus.capabilities.ci_gate_override import get_active_override
+
+    try:
+        override = get_active_override()
+    except Exception:
+        override = None
+    if override:
+        return {
+            "decision": override.get("decision", "DEPLOY"),
+            "source": "manual_override", "commit": commit_sha,
+            "reason": override.get("reason", ""),
+            "override_expires_at": override.get("expires_at"),
+            "override_created_at": override.get("created_at"),
+            "blockers": [], "warnings": [], "checks_run": 0,
+            "timestamp": _now_iso(),
+        }
 
     try:
         readiness = evaluate_deploy_readiness()
@@ -116,8 +121,6 @@ def evaluate_ci_gate(commit_sha: str = "") -> dict[str, Any]:
             "fail_open": True,
         }
 
-    # Readiness engine already aggregates 8 factors. Its decision maps
-    # directly: HOLD → HOLD, CANARY → DEPLOY (with warnings), DEPLOY → DEPLOY.
     engine_decision = readiness.get("decision", "DEPLOY")
     if engine_decision == "HOLD":
         decision = "HOLD"
@@ -126,6 +129,7 @@ def evaluate_ci_gate(commit_sha: str = "") -> dict[str, Any]:
 
     return {
         "decision": decision,
+        "source": "readiness_engine",
         "engine_decision": engine_decision,
         "commit": commit_sha,
         "reason": readiness.get("reason", ""),
@@ -160,11 +164,9 @@ def run_synthetic_suite(trigger: str = "manual", commit: str = "") -> dict[str, 
     skipped = sum(1 for r in results if r.get("status") == "skip")
     failed = [r for r in results if r.get("status") in ("fail", "error")]
     total = len(results)
-    effective_total = total - skipped  # skips don't count against the score
-    # PASS when every non-skipped journey passed; DEGRADED otherwise.
-    verdict = "PASS" if effective_total > 0 and passed == effective_total else "DEGRADED"
-    if effective_total == 0:
-        verdict = "EMPTY"
+    effective_total = total - skipped
+    verdict = ("EMPTY" if effective_total == 0
+               else "PASS" if passed == effective_total else "DEGRADED")
 
     return {
         "verdict": verdict,
