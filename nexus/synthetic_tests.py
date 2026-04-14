@@ -512,18 +512,29 @@ def journey_project_delete_cleanup() -> dict[str, Any]:
     if MODE != "production":
         return {"name": "project_delete_cleanup", "status": "skip",
                 "error": "Requires production Neptune access"}
+    # Neptune Analytics openCypher rejects label-disjunction in a WHERE clause
+    # (`n:MissionTask OR n:MissionBrief ...`). Run one labelled MATCH per
+    # node type and UNION — the anti-join (OPTIONAL MATCH + WHERE IS NULL)
+    # surfaces rows whose project_id no longer has a Project.
     try:
         from nexus import neptune_client
+
+        def _orphan(label: str) -> list[dict[str, Any]]:
+            return neptune_client.query(
+                f"MATCH (n:{label}) WHERE n.project_id IS NOT NULL "
+                "OPTIONAL MATCH (p:Project {project_id: n.project_id}) "
+                "WITH n, p WHERE p IS NULL "
+                f"RETURN '{label}' AS label, n.project_id AS pid LIMIT 10"
+            ) or []
+
         start = time.time()
-        rows = neptune_client.query(
-            "MATCH (n) "
-            "WHERE (n:MissionTask OR n:MissionBrief "
-            "OR n:BriefEntry OR n:ConversationMessage) "
-            "AND n.project_id IS NOT NULL "
-            "OPTIONAL MATCH (p:Project {project_id: n.project_id}) "
-            "WITH n, p WHERE p IS NULL "
-            "RETURN labels(n)[0] AS label, n.project_id AS pid LIMIT 10"
-        )
+        rows: list[dict[str, Any]] = []
+        for lbl in ("MissionTask", "MissionBrief",
+                    "BriefEntry", "ConversationMessage"):
+            rows.extend(_orphan(lbl))
+            if len(rows) >= 10:
+                rows = rows[:10]
+                break
         ms = int((time.time() - start) * 1000)
     except Exception as exc:
         return {"name": "project_delete_cleanup", "status": "error",
