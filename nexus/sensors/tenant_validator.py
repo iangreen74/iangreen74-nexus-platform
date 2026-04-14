@@ -100,10 +100,33 @@ def validate_indexing(tenant_id: str, context: dict[str, Any]) -> list[dict[str,
 
 
 def validate_task_progress(tenant_id: str) -> list[dict[str, Any]]:
-    """Flag tasks that are stuck in non-terminal states."""
+    """Flag tasks that are stuck in non-terminal states.
+
+    A pending task sitting behind another task in ``in_review`` (PR awaiting
+    merge) is NORMAL pipeline behavior — the daemon won't advance to the next
+    task until the user merges the PR ahead of it. Only treat the blocking
+    PR as stale if it's been in review for more than 7 days (abandoned).
+    """
     alerts: list[dict[str, Any]] = []
     tasks = neptune_client.get_recent_tasks(tenant_id, limit=50)
     now = _now()
+
+    # Is any task currently in_review with a fresh PR (<7 days)? If so, it
+    # legitimately blocks newer pending tasks from advancing.
+    review_blocker = None
+    for t in tasks:
+        if t.get("status") != "in_review":
+            continue
+        try:
+            created = datetime.fromisoformat(
+                str(t.get("created_at") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        age_days = (now - created).total_seconds() / 86400.0
+        if age_days < 7:
+            review_blocker = t
+            break
+
     for task in tasks:
         status = task.get("status")
         created_raw = task.get("created_at")
@@ -115,6 +138,8 @@ def validate_task_progress(tenant_id: str) -> list[dict[str, Any]]:
             continue
         age_h = (now - created).total_seconds() / 3600.0
         if status == "pending" and age_h > 4:
+            if review_blocker is not None:
+                continue  # waiting on a fresh in_review PR — not stuck
             alerts.append(_alert(
                 tenant_id, "task_stuck_pending", "warning",
                 f"Task {task.get('id')} stuck in 'pending' for {age_h:.0f}h",
@@ -126,6 +151,14 @@ def validate_task_progress(tenant_id: str) -> list[dict[str, Any]]:
                 f"Task {task.get('id')} stuck in 'in_progress' for {age_h:.0f}h",
                 "May be blocked on Bedrock, GitHub write, or a bug in task_executor.",
             ))
+        elif status == "in_review":
+            age_days = age_h / 24.0
+            if age_days > 7:
+                alerts.append(_alert(
+                    tenant_id, "task_review_abandoned", "warning",
+                    f"Task {task.get('id')} has been in_review for {age_days:.0f} days — PR likely abandoned",
+                    "Ping the tenant to merge or close the PR.",
+                ))
     return alerts
 
 

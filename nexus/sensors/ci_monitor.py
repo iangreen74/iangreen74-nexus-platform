@@ -55,6 +55,8 @@ def _mock_report() -> dict[str, Any]:
     return {
         "last_run_status": "success",
         "green_rate_24h": 0.92,
+        "recent_green_rate": 1.0,
+        "recent_run_count": 10,
         "failing_workflows": [],
         "repos_checked": list(GITHUB_REPOS),
         "run_count": 12,
@@ -106,9 +108,23 @@ def check_ci() -> dict[str, Any]:
     latest = all_runs[0]
     last_status = latest.get("status") or latest.get("conclusion") or "unknown"
 
+    # Recent-10 trend. After a spate of failures the 24h window stays red
+    # until old runs age out, but the *last few* runs tell us whether the
+    # underlying issue is fixed. Sorted newest-first by _fetch_runs.
+    recent = sorted(
+        all_runs,
+        key=lambda r: r.get("created_at") or r.get("run_started_at") or "",
+        reverse=True,
+    )[:10]
+    recent_total = len(recent)
+    recent_green = sum(1 for r in recent if r.get("conclusion") == "success")
+    recent_rate = round(recent_green / recent_total, 3) if recent_total else 0.0
+
     return {
         "last_run_status": last_status,
         "green_rate_24h": round(green / total, 3),
+        "recent_green_rate": recent_rate,
+        "recent_run_count": recent_total,
         "failing_workflows": sorted(failing),
         "repos_checked": list(GITHUB_REPOS),
         "run_count": total,

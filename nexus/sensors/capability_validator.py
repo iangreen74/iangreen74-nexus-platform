@@ -323,8 +323,21 @@ def _check_brief_entries(tenant_id: str) -> CapabilityCheck:
     )
 
 
-def _check_deployment(tenant_id: str) -> CapabilityCheck:
-    """Informational: CF stack exists or tenant is deployed."""
+def _check_deployment(tenant_id: str, ctx: dict[str, Any] | None = None) -> CapabilityCheck:
+    """Informational: CF stack exists or tenant is deployed.
+
+    A tenant at status='pending' hasn't deployed to AWS yet — a missing CF
+    stack is the expected state during Build, not a degradation. Treat it
+    as a pass so it doesn't push the capability report into 'degraded'.
+    """
+    status = ((ctx or {}).get("status") or "").lower()
+    stage = ((ctx or {}).get("mission_stage") or "").lower()
+    if status == "pending" or stage in ("awaiting_repo", "ingestion_pending",
+                                          "ingesting", "brief_pending"):
+        return CapabilityCheck(
+            "deployment", "deployment_available", "pass",
+            f"Deployment not expected at status={status or '?'} stage={stage or '?'}",
+        )
     try:
         infra = aws_client.describe_tenant_infra(tenant_id)
         if infra.get("provisioned"):
@@ -374,7 +387,7 @@ def validate_tenant_capabilities(tenant_id: str) -> CapabilityReport:
         # Informational
         lambda: _check_imports_mapped(tenant_id),
         lambda: _check_brief_entries(tenant_id),
-        lambda: _check_deployment(tenant_id),
+        lambda: _check_deployment(tenant_id, ctx),
     ]
 
     layers_seen: set[str] = set()

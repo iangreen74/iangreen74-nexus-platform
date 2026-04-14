@@ -686,7 +686,22 @@ def triage_daemon_health(report: dict[str, Any]) -> TriageDecision:
 
 
 def triage_ci_health(report: dict[str, Any]) -> TriageDecision:
-    if report.get("healthy"):
+    healthy = report.get("healthy")
+    rate = report.get("green_rate_24h") or 0.0
+    recent_rate = report.get("recent_green_rate") or 0.0
+    # Recovery detection: 24h rate is still red because old failures haven't
+    # rolled out of the window, but the most recent runs are all green.
+    # Downgrade to monitor-warning so we don't auto-heal / escalate on a
+    # CI that's already fixed.
+    recovering = (
+        not healthy
+        and 0.85 <= rate < 0.95
+        and report.get("recent_run_count", 0) >= 10
+        and recent_rate >= 0.9
+        and not report.get("failing_workflows")
+    )
+
+    if healthy:
         decision = TriageDecision(
             action="noop",
             confidence=1.0,
@@ -694,15 +709,29 @@ def triage_ci_health(report: dict[str, Any]) -> TriageDecision:
             blast_radius=BLAST_SAFE,
             auto_approved=True,
         )
+    elif recovering:
+        decision = TriageDecision(
+            action="monitor",
+            confidence=0.8,
+            reasoning=(
+                f"CI recovering — recent {int(recent_rate * 100)}% green over "
+                f"last {report.get('recent_run_count', 0)} runs; 24h window "
+                f"still at {int(rate * 100)}% from older failures."
+            ),
+            blast_radius=BLAST_SAFE,
+        )
+        decision.metadata["green_rate_24h"] = rate
+        decision.metadata["recent_green_rate"] = recent_rate
     else:
         pattern = next(p for p in KNOWN_PATTERNS if p["name"] == "ci_failing")
         decision = _decision_from_pattern(pattern)
         decision.metadata["failing_workflows"] = report.get("failing_workflows", [])
-        decision.metadata["green_rate_24h"] = report.get("green_rate_24h")
+        decision.metadata["green_rate_24h"] = rate
+        decision.metadata["recent_green_rate"] = recent_rate
 
     decision.auto_approved = should_auto_heal(decision)
-    _record_triage("ci", decision,
-                   severity="warning" if not report.get("healthy") else "info")
+    severity = "info" if (healthy or recovering) else "warning"
+    _record_triage("ci", decision, severity=severity)
     return decision
 
 
