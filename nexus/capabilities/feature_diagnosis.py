@@ -518,6 +518,28 @@ def _build_report(target_id: str, level: str, sections: list[dict[str, Any]],
             lines += ["", f"_Phase error: {section['error']}_"]
         lines.append("")
 
+    if level == "goal":
+        try:
+            from nexus.capabilities.sprint_context import format_for_report as _sp
+            lines += ["", _sp()]
+        except Exception:
+            logger.debug("sprint_context injection failed", exc_info=True)
+        try:
+            from nexus.capabilities.predictions import (
+                format_for_report as _pr, generate_predictions,
+            )
+            from nexus.capabilities.trend_analysis import compute_trend
+            from nexus.sensors import ci_monitor
+            ci = ci_monitor.check_ci() or {}
+            trend = {}
+            if ci.get("green_rate_24h") is not None:
+                trend = compute_trend("ci_green_rate",
+                                       float(ci["green_rate_24h"]))
+            preds = generate_predictions(ci_data={"trend": trend})
+            lines += ["", "## Predictions", _pr(preds)]
+        except Exception:
+            logger.debug("predictions injection failed", exc_info=True)
+
     lines += [
         "---",
         f"Paste into Claude with: \"Here is the {level} diagnosis for "

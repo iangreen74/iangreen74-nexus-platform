@@ -1,8 +1,6 @@
-"""Scheduled autonomous diagnosis — runs Goal diagnosis every
-DIAGNOSIS_INTERVAL_HOURS and records each result as an
-OverwatchDiagnosisHistory node. The dashboard reads these for the
-health timeline; pattern-learning tier will mine them later.
-"""
+"""Scheduled autonomous Goal diagnosis → OverwatchDiagnosisHistory.
+Dashboard reads these for the health timeline; pattern-learning
+tier will mine them later."""
 from __future__ import annotations
 
 import asyncio
@@ -81,6 +79,10 @@ def _record_diagnosis(rec: dict[str, Any]) -> dict[str, Any]:
     if isinstance(report, str) and "**Root cause:**" in report:
         summary = report.split("**Root cause:**", 1)[1].split("\n", 1)[0].strip()
 
+    from nexus.capabilities.timeline_resolution import supersede_prior_active
+    key_findings = _extract_key_findings(rec)
+    resolved_from_prior = supersede_prior_active(key_findings)
+
     props = {
         "diagnosis_id": rec.get("job_id") or str(uuid.uuid4()),
         "level": rec.get("level", "goal"),
@@ -89,10 +91,13 @@ def _record_diagnosis(rec: dict[str, Any]) -> dict[str, Any]:
         "findings_count": findings_count,
         "phase_count": len(rec.get("phases_completed") or []),
         "status": status,
-        "key_findings": json.dumps(_extract_key_findings(rec)),
+        "key_findings": json.dumps(key_findings),
         "report_summary": (summary or "All systems nominal")[:500],
         "job_status": rec.get("status", "unknown"),
         "duration_seconds": 0.0,
+        "resolution_status": "ACTIVE" if findings_count else "RESOLVED",
+        "resolved_at": None if findings_count else _now_iso(),
+        "resolved_findings": json.dumps(resolved_from_prior),
     }
     try:
         node_id = overwatch_graph._create_node(_LABEL, props)
@@ -130,17 +135,16 @@ def get_diagnosis_history(hours: int = 72) -> list[dict[str, Any]]:
         "n.findings_count AS findings_count, n.phase_count AS phase_count, "
         "n.status AS status, n.key_findings AS key_findings, "
         "n.report_summary AS report_summary, n.job_status AS job_status, "
+        "n.resolution_status AS resolution_status, "
+        "n.resolved_at AS resolved_at, n.resolved_findings AS resolved_findings, "
         "n.created_at AS created_at "
         "ORDER BY n.created_at DESC LIMIT 200",
         {"cutoff": cutoff},
     )
     for r in rows:
-        kf = r.get("key_findings")
-        if isinstance(kf, str):
-            try:
-                r["key_findings"] = json.loads(kf)
-            except Exception:
-                r["key_findings"] = []
+        if isinstance(r.get("key_findings"), str):
+            try: r["key_findings"] = json.loads(r["key_findings"])
+            except Exception: r["key_findings"] = []
     return rows
 
 
@@ -151,23 +155,17 @@ def get_health_trend(hours: int = 24) -> dict[str, Any]:
     if len(history) < 2:
         return {"trend": "insufficient_data", "points": len(history)}
     midpoint = len(history) // 2
-    older = history[midpoint:]  # earlier half (history is newest-first)
-    newer = history[:midpoint]
-
-    def _avg(rows: list[dict[str, Any]], key: str) -> float:
-        vals = [float(r.get(key, 0) or 0) for r in rows]
-        return sum(vals) / len(vals) if vals else 0.0
-
+    older, newer = history[midpoint:], history[:midpoint]
+    _avg = lambda rows, key: (sum(float(r.get(key, 0) or 0) for r in rows)
+                               / len(rows)) if rows else 0.0
     conf_delta = _avg(newer, "confidence") - _avg(older, "confidence")
     find_delta = _avg(newer, "findings_count") - _avg(older, "findings_count")
-
     if conf_delta > 5 and find_delta <= 0:
         trend = "improving"
     elif conf_delta < -5 or find_delta > 1:
         trend = "degrading"
     else:
         trend = "stable"
-
     return {
         "trend": trend, "points": len(history),
         "confidence_delta": round(conf_delta, 1),

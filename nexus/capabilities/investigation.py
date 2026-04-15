@@ -319,6 +319,49 @@ async def _synthesize(question: str, evidence: dict[str, Any]) -> dict[str, Any]
         return out
 
 
+# --- Context injection for synthesis -----------------------------------------
+
+
+def _inject_session_context(evidence: dict[str, Any]) -> None:
+    """
+    Enrich the evidence dict with forward-looking + session-level signal
+    right before Bedrock synthesis. Each source is best-effort — a
+    missing module or failed call leaves the key absent rather than
+    breaking investigation.
+    """
+    # Keys are underscore-prefixed so they flow into the synthesis prompt
+    # but don't appear in the classifier's sources_returned list (which
+    # filters out _-prefixed keys). Keeps classifier contract intact.
+    try:
+        from nexus.capabilities.session_context import gather_session_context
+        evidence["_recent_commits"] = gather_session_context(hours=24)
+    except Exception:
+        logger.debug("session_context unavailable", exc_info=True)
+    try:
+        from nexus.capabilities.sprint_context import get_status
+        evidence["_sprint_context"] = get_status()
+    except Exception:
+        logger.debug("sprint_context unavailable", exc_info=True)
+    try:
+        from nexus.capabilities.trend_analysis import compute_trend
+        from nexus.sensors import ci_monitor
+        ci = ci_monitor.check_ci() or {}
+        rate = ci.get("green_rate_24h")
+        if rate is not None:
+            evidence["_trend_ci_green_rate"] = compute_trend(
+                "ci_green_rate", float(rate))
+    except Exception:
+        logger.debug("trend_analysis unavailable", exc_info=True)
+    try:
+        from nexus.capabilities.predictions import generate_predictions
+        preds = generate_predictions(
+            ci_data={"trend": evidence.get("_trend_ci_green_rate", {})})
+        if preds:
+            evidence["_predictions"] = preds
+    except Exception:
+        logger.debug("predictions unavailable", exc_info=True)
+
+
 # --- Orchestrator ------------------------------------------------------------
 
 
@@ -366,6 +409,7 @@ async def investigate(question: str, timeframe_minutes: int = 30) -> dict[str, A
                          f"(per-gatherer budget {PER_GATHERER_TIMEOUT_SEC}s)"
             }
 
+    _inject_session_context(evidence)
     diagnosis = await _synthesize(question, evidence)
     return {
         "question": question, "tier": 1,
