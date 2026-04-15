@@ -223,6 +223,30 @@ def record_healing_action(
     )
 
 
+def record_fix_attempt(
+    finding_fingerprint: str,
+    file_path: str,
+    category: str,
+    status: str,
+    pr_number: int | None = None,
+    pr_url: str | None = None,
+    reason: str | None = None,
+) -> str:
+    """Record an OverwatchFixAttempt node — one per FixAgent invocation."""
+    return _create_node(
+        "OverwatchFixAttempt",
+        {
+            "finding_fingerprint": finding_fingerprint,
+            "file_path": file_path,
+            "category": category,
+            "status": status,
+            "pr_number": pr_number or 0,
+            "pr_url": pr_url or "",
+            "reason": reason or "",
+        },
+    )
+
+
 def record_tenant_snapshot(tenant_id: str, statuses: dict[str, Any]) -> str:
     """Snapshot a tenant's health for trending."""
     payload = {"tenant_id": tenant_id, **{k: v for k, v in statuses.items() if v is not None}}
