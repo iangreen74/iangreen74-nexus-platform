@@ -391,6 +391,78 @@ async def tenant_audit(tenant_id: str) -> dict[str, Any]:
     return call_api("GET", f"/admin/audit/{tenant_id}")
 
 
+@router.post("/findings/classify")
+async def findings_classify(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """
+    Run a batch of raw findings through the dedup + grouping pipeline.
+    Body: {"findings": [{"summary": ..., "severity": ..., ...}, ...]}
+    Returns NEW / ONGOING / RESOLVED groups plus the formatted text block.
+    """
+    from nexus import findings as findings_mod
+
+    raw = body.get("findings") or []
+    items: list[findings_mod.Finding] = []
+    for r in raw:
+        if not isinstance(r, dict) or not r.get("summary"):
+            continue
+        items.append(findings_mod.Finding(
+            summary=str(r["summary"])[:300],
+            severity=str(r.get("severity") or "warning"),
+            category=str(r.get("category") or "generic"),
+            file=r.get("file"),
+            line=r.get("line"),
+            function=r.get("function"),
+            action=str(r.get("action") or ""),
+            prompt=str(r.get("prompt") or ""),
+        ))
+    grouped = findings_mod.track_and_classify(items)
+    return {
+        "new_count": len(grouped["new"]),
+        "ongoing_count": len(grouped["ongoing"]),
+        "resolved_count": len(grouped["resolved"]),
+        "new": [{"summary": e["finding"].summary, "since": e["since"]}
+                for e in grouped["new"]],
+        "ongoing": [{"summary": e["finding"].summary, "since": e["since"],
+                      "cycles": e["cycles"]} for e in grouped["ongoing"]],
+        "resolved": [{"summary": e["finding"].summary, "since": e["since"]}
+                      for e in grouped["resolved"]],
+        "report": findings_mod.format_report(grouped),
+    }
+
+
+@router.post("/release-checklist/mark/{item_name}")
+async def release_checklist_mark(
+    item_name: str,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """
+    Flip a release-readiness item's status. Used for manual gates like
+    incognito walkthrough and waitlist email that have no automated
+    probe. Status defaults to "done" when the body omits it.
+    """
+    from nexus.capabilities import sprint_context
+
+    status = (body.get("status") or "done").strip()
+    if status == "clear":
+        existed = sprint_context.clear_override(item_name)
+        return {"ok": existed, "item": item_name, "cleared": existed}
+    try:
+        ok = sprint_context.set_item_status(item_name, status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"unknown item: {item_name}")
+    return {"ok": True, "item": item_name, "status": status,
+            "checklist": sprint_context.get_status()}
+
+
+@router.get("/release-checklist")
+async def release_checklist() -> dict[str, Any]:
+    """Read-only status of the release readiness checklist."""
+    from nexus.capabilities import sprint_context
+    return sprint_context.get_status()
+
+
 @router.get("/tenant-dive/{tenant_id}")
 async def tenant_deep_dive(tenant_id: str, force: bool = False) -> dict[str, Any]:
     """

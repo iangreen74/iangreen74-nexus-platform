@@ -543,6 +543,35 @@ def _decision_from_pattern(pattern: dict[str, Any]) -> TriageDecision:
     )
 
 
+def _should_suppress_deploy_stuck(report: dict[str, Any]) -> str | None:
+    """
+    Return a human-readable reason when `deploy_stuck` should be treated
+    as info rather than firing the heal chain. Returns None when the
+    heal chain should proceed.
+
+    Suppression rules (any match → suppress):
+      A. Pipeline is PR-blocked: a MissionTask is `in_review` — the
+         user has to click Merge, not us.
+      B. Test/demo tenant: mission_stage=complete with <3 messages.
+      C. Idle tenant: no conversation activity in the last 24h AND no
+         active deploy work — it's asleep, not stuck.
+    """
+    pipeline = report.get("pipeline", {}) or {}
+    conversation = report.get("conversation", {}) or {}
+    mission_stage = (report.get("mission_stage") or "").lower()
+
+    if pipeline.get("tasks_in_review", 0) > 0:
+        return "pipeline PR-blocked (task in_review)"
+
+    if mission_stage == "complete" and conversation.get("message_count", 0) < 3:
+        return "test/demo tenant at stage=complete (<3 messages)"
+
+    if conversation.get("inactive") and pipeline.get("tasks_in_progress", 0) == 0:
+        return "tenant idle >24h with no active work"
+
+    return None
+
+
 def triage_tenant_health(report: dict[str, Any]) -> TriageDecision:
     """Decide what to do about a TenantHealthReport."""
     status = report.get("overall_status", "unknown")
@@ -550,6 +579,20 @@ def triage_tenant_health(report: dict[str, Any]) -> TriageDecision:
 
     # Check for stuck deploy FIRST — highest priority for tenants
     if report.get("deploy_stuck"):
+        suppress_reason = _should_suppress_deploy_stuck(report)
+        if suppress_reason:
+            decision = TriageDecision(
+                action="noop",
+                confidence=0.95,
+                reasoning=(f"Tenant {tenant_id} flagged deploy_stuck but suppressed: "
+                           f"{suppress_reason}."),
+                blast_radius=BLAST_SAFE,
+                auto_approved=True,
+                metadata={"tenant_id": tenant_id,
+                          "deploy_stuck_suppressed": suppress_reason},
+            )
+            _record_triage(f"tenant:{tenant_id}", decision, severity="info")
+            return decision
         event = {"type": "tenant_health", "deploy_stuck": True, "tenant_id": tenant_id}
         pattern = _match_pattern(event)
         if pattern:

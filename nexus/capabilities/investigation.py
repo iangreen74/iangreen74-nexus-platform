@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -103,6 +104,68 @@ def _now_iso() -> str:
 # --- Evidence gatherers (wrap existing capabilities) -------------------------
 
 
+_TRACEBACK_FRAME = re.compile(
+    r'File "(?P<file>[^"]+\.py)", line (?P<line>\d+)'
+    r'(?:, in (?P<func>[A-Za-z_][A-Za-z0-9_]*))?'
+)
+
+_LOGGER_LINE = re.compile(
+    r'^(?P<logger>[\w.]+)\s+(?P<level>ERROR|CRITICAL|WARNING)\s*[-:]\s*(?P<msg>.+)$',
+    re.MULTILINE,
+)
+
+
+def _parse_traceback(message: str) -> dict[str, Any] | None:
+    """
+    Extract `file`, `line`, `function`, and short `exc` summary from a
+    log message containing a Python traceback. Picks the LAST (deepest)
+    frame — that's the actual failure site. Returns None when no
+    traceback-shaped frame is present.
+    """
+    frames = list(_TRACEBACK_FRAME.finditer(message or ""))
+    if not frames:
+        return None
+    last = frames[-1]
+    file_path = last.group("file")
+    if file_path.startswith("/app/"):
+        file_path = file_path[len("/app/"):]
+    lines = [ln for ln in (message or "").splitlines() if ln.strip()]
+    exc = lines[-1].strip() if lines else ""
+    return {
+        "file": file_path,
+        "line": int(last.group("line")),
+        "function": last.group("func") or "",
+        "exc": exc[:160],
+    }
+
+
+def _logger_summary(message: str) -> str:
+    """Pull the first logger/level/message match — gives a clean 1-liner."""
+    m = _LOGGER_LINE.search(message or "")
+    if not m:
+        return (message or "").splitlines()[0][:200]
+    return f"{m.group('logger')} {m.group('level')} - {m.group('msg').strip()}"[:200]
+
+
+def _fetch_context(client, log_group: str, ts_ms: int, window_ms: int = 5000,
+                    limit: int = 10) -> list[dict[str, Any]]:
+    """Surrounding log events around ts_ms — stitches split tracebacks."""
+    if not ts_ms:
+        return []
+    try:
+        resp = client.filter_log_events(
+            logGroupName=log_group,
+            startTime=max(0, ts_ms - window_ms),
+            endTime=ts_ms + window_ms,
+            limit=limit,
+        )
+        return [{"timestamp": ev.get("timestamp"),
+                 "message": (ev.get("message") or "")[:400]}
+                for ev in resp.get("events", [])]
+    except Exception:
+        return []
+
+
 async def _gather_cloudwatch(timeframe_minutes: int = 30) -> dict[str, Any]:
     if MODE != "production":
         return {"type": "cloudwatch", "mock": True, "entries": []}
@@ -113,9 +176,6 @@ async def _gather_cloudwatch(timeframe_minutes: int = 30) -> dict[str, Any]:
         end = int(datetime.now(timezone.utc).timestamp() * 1000)
         start = end - (timeframe_minutes * 60 * 1000)
         out: list[dict[str, Any]] = []
-        # Actual log group names in this account (aria daemon writes to
-        # /aria/daemon, NOT /ecs/aria-daemon). /ecs/aria-daemon does not
-        # exist and used to surface as AccessDenied here.
         for log_group in ("/ecs/forgescaler", "/ecs/forgescaler-staging",
                            "/aria/daemon", "/aria/console", "/aria/agents"):
             try:
@@ -124,8 +184,26 @@ async def _gather_cloudwatch(timeframe_minutes: int = 30) -> dict[str, Any]:
                     filterPattern="ERROR", limit=20,
                 )
                 for ev in resp.get("events", []):
-                    out.append({"source": log_group, "timestamp": ev.get("timestamp"),
-                                "message": (ev.get("message") or "")[:400]})
+                    raw = ev.get("message") or ""
+                    ts_ms = ev.get("timestamp") or 0
+                    entry: dict[str, Any] = {
+                        "source": log_group,
+                        "timestamp": ts_ms,
+                        "message": raw[:1200],
+                        "summary": _logger_summary(raw),
+                    }
+                    frame = _parse_traceback(raw)
+                    if frame:
+                        entry.update(frame)
+                    else:
+                        ctx = _fetch_context(client, log_group, ts_ms)
+                        if ctx:
+                            entry["context"] = ctx
+                            combined = "\n".join(c["message"] for c in ctx)
+                            frame = _parse_traceback(combined)
+                            if frame:
+                                entry.update(frame)
+                    out.append(entry)
             except Exception as exc:
                 out.append({"source": log_group, "error": str(exc)[:200]})
         return out

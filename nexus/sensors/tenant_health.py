@@ -106,6 +106,7 @@ def _pipeline_snapshot(tenant_id: str) -> dict[str, Any]:
     pending = [t for t in tasks if t.get("status") == "pending"]
     complete = [t for t in tasks if t.get("status") == "complete"]
     skipped = [t for t in tasks if t.get("status") == "skipped"]
+    in_review = [t for t in tasks if t.get("status") == "in_review"]
 
     return {
         "last_pr_at": last_pr_ts.isoformat() if last_pr_ts else None,
@@ -113,6 +114,7 @@ def _pipeline_snapshot(tenant_id: str) -> dict[str, Any]:
         "tasks_pending": len(pending),
         "tasks_complete": len(complete),
         "tasks_skipped": len(skipped),
+        "tasks_in_review": len(in_review),
         "stuck_task_count": len(stuck),
         "stuck_task_ids": stuck,
         "total_recent_tasks": len(tasks),
@@ -291,6 +293,7 @@ def check_tenant(tenant_id: str) -> dict[str, Any]:
             "context": ctx,
             "deployment": deployment,
             "pipeline": pipeline,
+            "mission_stage": mission_stage,
             "pipeline_stage": pipeline_stage,
             "pipeline_summary": summary,
             "conversation": conversation,
