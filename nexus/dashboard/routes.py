@@ -391,6 +391,18 @@ async def tenant_audit(tenant_id: str) -> dict[str, Any]:
     return call_api("GET", f"/admin/audit/{tenant_id}")
 
 
+@router.get("/tenant-dive/{tenant_id}")
+async def tenant_deep_dive(tenant_id: str, force: bool = False) -> dict[str, Any]:
+    """
+    Tenant Deep Dive — aggregated intelligence report for one tenant:
+    activity timeline, engagement metrics, pipeline health, intelligence
+    depth, risk signals, and operator recommendations. Cached 5 min.
+    """
+    from nexus import tenant_deep_dive as tdd
+
+    return tdd.get_tenant_dive(tenant_id, force=force)
+
+
 @router.get("/daemon")
 async def daemon() -> dict[str, Any]:
     report = daemon_monitor.check_daemon()

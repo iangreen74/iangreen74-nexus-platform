@@ -808,6 +808,7 @@ async function loadTenants() {
       <div style="display:flex; gap:6px;">
         <button class="btn" style="flex:1; padding:6px; font-size:11px;" onclick="event.stopPropagation();copyTenantReport('${t.tenant_id}')">Copy</button>
         <button class="btn" style="flex:1; padding:6px; font-size:11px;" onclick="event.stopPropagation();diagnoseTenant('${t.tenant_id}', this)">Diagnose</button>
+        <button class="btn" style="flex:1; padding:6px; font-size:11px;" onclick="event.stopPropagation();loadTenantDive('${t.tenant_id}')">Deep Dive</button>
       </div>
     `;
     el.addEventListener('click', () => toggleTenantDetail(el));
@@ -900,6 +901,99 @@ function _escapeHTML(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function loadTenantDive(tid) {
+  const panel = document.getElementById('tenant-detail-panel');
+  panel.dataset.tid = tid;
+  panel.innerHTML = '<div style="padding:12px; color:var(--text-dim); font-size:12px;">Loading deep dive…</div>';
+  const data = await fetchJSON(`${API}/tenant-dive/${encodeURIComponent(tid)}`);
+  if (!data || data.error) {
+    panel.innerHTML = '<div class="err">Failed to load deep dive</div>';
+    return;
+  }
+  if (panel.dataset.tid !== tid) return;
+  renderTenantDivePanel(panel, tid, data);
+}
+
+function renderTenantDivePanel(panel, tid, d) {
+  const eng = d.engagement || {};
+  const pipe = d.pipeline || {};
+  const intel = d.intelligence_depth || {};
+  const signals = d.risk_signals || [];
+  const recs = d.recommendations || [];
+  const timeline = d.activity_timeline || [];
+
+  const sevColor = (s) => s === 'critical' ? 'var(--red-text, #c00)'
+    : s === 'warning' ? 'var(--amber-text, #b85c00)' : 'var(--text-dim)';
+  const kindIcon = { message: '💬', task: '📋', brief: '📝', deploy: '🚀' };
+
+  let html = `
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+        <div style="font-size:14px; font-weight:700; color:var(--text);">Deep Dive <span style="font-weight:400; color:var(--text-dim); font-family:monospace; font-size:11px;">${_escapeHTML(tid)}</span></div>
+        <button class="btn" style="padding:4px 10px; font-size:11px;" onclick="document.getElementById('tenant-detail-panel').innerHTML='';document.getElementById('tenant-detail-panel').dataset.tid='';">Close</button>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+        <div>
+          <div class="label">ENGAGEMENT</div>
+          <div>Score: <strong>${eng.engagement_score ?? '—'}/100</strong> · Trend: <strong>${_escapeHTML(eng.activity_trend || '—')}</strong></div>
+          <div>Last active: ${_escapeHTML(eng.last_active_since || '—')} · Session: ${_escapeHTML(eng.session_pattern || '—')}</div>
+          <div>Msgs 7d: ${eng.messages_last_7d ?? 0} · Avg review: ${eng.avg_review_hours != null ? eng.avg_review_hours + 'h' : '—'}</div>
+          <div>Sentiment: ${_escapeHTML(eng.conversation_sentiment || '—')}</div>
+        </div>
+        <div>
+          <div class="label">PIPELINE</div>
+          <div>Tasks: ${pipe.tasks_complete ?? 0}✓ / ${pipe.tasks_in_review ?? 0}⏳ / ${pipe.tasks_pending ?? 0}· (${pipe.tasks_total ?? 0} total)</div>
+          <div>PRs: ${pipe.prs_open ?? 0} open · ${pipe.prs_merged ?? 0} merged · ${pipe.pr_velocity_per_day ?? 0}/day</div>
+          <div>Deploy: <strong>${_escapeHTML(pipe.deploy_status || '—')}</strong></div>
+          <div>Brief: ${_escapeHTML(pipe.brief_freshness || '—')}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div class="label">INTELLIGENCE DEPTH — ${intel.sources_populated ?? 0}/${intel.sources_total ?? 12} sources</div>
+        <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; height:10px; overflow:hidden; margin:4px 0 6px;">
+          <div style="width:${Math.round(100 * (intel.sources_populated || 0) / (intel.sources_total || 12))}%; height:100%; background:var(--accent, #0969da);"></div>
+        </div>
+        <div style="font-size:11px; color:var(--text-dim);">
+          ${(intel.populated_labels || []).map(l => `<span class="badge safe">${_escapeHTML(l)}</span>`).join(' ')}
+        </div>
+        <div style="font-size:11px; margin-top:6px;">Reports: ${(intel.analysis_reports || []).map(r => _escapeHTML(r)).join(', ') || '—'}
+          · Conventions: ${intel.convention_rules ?? 0}
+          · Portrait: ${intel.portrait_exists ? '✓' : '✗'}
+          · Intent: ${intel.intent_exists ? '✓' : '✗'}
+          · Trajectory: ${intel.trajectory_exists ? '✓' : '✗'}</div>
+      </div>`;
+
+  if (signals.length) {
+    html += `<div style="margin-bottom:16px;"><div class="label">RISK SIGNALS</div>`;
+    for (const s of signals) {
+      html += `<div style="color:${sevColor(s.severity)};">● ${_escapeHTML(s.signal)}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (recs.length) {
+    html += `<div style="margin-bottom:16px;"><div class="label">RECOMMENDATIONS</div>`;
+    for (const r of recs) html += `<div>→ ${_escapeHTML(r)}</div>`;
+    html += `</div>`;
+  }
+
+  html += `<div><div class="label">ACTIVITY (last 48h, ${timeline.length} events)</div>`;
+  if (!timeline.length) {
+    html += `<div style="color:var(--text-dim);">No recent activity</div>`;
+  } else {
+    for (const e of timeline.slice(0, 25)) {
+      html += `<div style="font-size:12px; margin:2px 0;">
+        <span style="color:var(--text-dim); font-size:10px;">[${_escapeHTML(e.since || '')}]</span>
+        ${kindIcon[e.kind] || '•'} ${_escapeHTML(e.summary || '')}</div>`;
+    }
+  }
+  html += `</div></div>`;
+
+  panel.innerHTML = html;
 }
 
 function renderTenantAuditPanel(panel, tid, audit) {
