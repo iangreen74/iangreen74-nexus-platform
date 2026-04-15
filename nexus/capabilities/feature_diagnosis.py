@@ -525,6 +525,21 @@ def _build_report(target_id: str, level: str, sections: list[dict[str, Any]],
         except Exception:
             logger.debug("sprint_context injection failed", exc_info=True)
         try:
+            from nexus.capabilities.cost_monitor import format_for_report as _cost
+            lines += ["", _cost()]
+        except Exception:
+            logger.debug("cost_monitor injection failed", exc_info=True)
+        try:
+            from nexus.capabilities.bedrock_monitor import format_for_report as _br
+            lines += ["", _br()]
+        except Exception:
+            logger.debug("bedrock_monitor injection failed", exc_info=True)
+        try:
+            from nexus.capabilities.onboarding_monitor import format_for_report as _ob
+            lines += ["", _ob()]
+        except Exception:
+            logger.debug("onboarding_monitor injection failed", exc_info=True)
+        try:
             from nexus.capabilities.predictions import (
                 format_for_report as _pr, generate_predictions,
             )

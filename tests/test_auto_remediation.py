@@ -102,7 +102,7 @@ def test_run_and_remediate_returns_summary():
     assert "failed" in result
     assert "remediated" in result
     assert "remediations" in result
-    assert result["total"] == 22  # + 2 CI self-healing readiness synthetics
+    assert result["total"] == 26  # + 4 data/cost/bedrock/healer synthetics
 
 
 def test_run_and_remediate_records_to_graph():

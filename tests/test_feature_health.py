@@ -69,7 +69,10 @@ def test_check_never_raises_even_on_import_failure():
 
 def test_evaluate_feature_healthy_when_no_issues():
     fdef = fh.FEATURES["intelligence"]
-    r = fh._evaluate_feature("intelligence", fdef, {"brief_exists": "pass", "status_scoped": "pass"})
+    r = fh._evaluate_feature("intelligence", fdef, {
+        "brief_exists": "pass", "status_scoped": "pass",
+        "bedrock_health": "skip", "neptune_integrity": "skip",
+    })
     assert r["status"] == "healthy"
     assert r["errors"] == 0
 

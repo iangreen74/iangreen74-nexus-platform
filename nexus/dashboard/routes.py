@@ -1616,6 +1616,48 @@ async def forge_propose_fix(pattern_name: str) -> dict[str, Any]:
     return {"pattern": pattern_name, **result}
 
 
+@router.get("/cost-summary")
+async def cost_summary() -> dict[str, Any]:
+    """AWS spend snapshot: today, MTD, projected monthly, credits runway."""
+    from nexus.capabilities.cost_monitor import get_daily_spend
+    return get_daily_spend()
+
+
+@router.get("/bedrock-metrics")
+async def bedrock_metrics(hours: int = 24) -> dict[str, Any]:
+    """Bedrock invocations, latency percentiles, token usage over N hours."""
+    from nexus.capabilities.bedrock_monitor import get_bedrock_metrics
+    return get_bedrock_metrics(hours=hours)
+
+
+@router.get("/onboarding-status")
+async def onboarding_status() -> dict[str, Any]:
+    """Funnel status for every tenant; flags stalls per stage."""
+    from nexus.capabilities.onboarding_monitor import scan_all_tenants
+    return scan_all_tenants()
+
+
+@router.get("/platform-healer")
+async def platform_healer_status() -> dict[str, Any]:
+    """Active platform heal chains + current step."""
+    from nexus.capabilities.platform_healer import (
+        get_active_chains, HEAL_CHAINS,
+    )
+    return {
+        "active": get_active_chains(),
+        "chains": [{"name": k, "description": v["description"],
+                    "steps": [s["action"] for s in v["steps"]]}
+                   for k, v in HEAL_CHAINS.items()],
+    }
+
+
+@router.post("/neptune-integrity/scan")
+async def neptune_integrity_scan() -> dict[str, Any]:
+    """Run the integrity scan on demand (heavier than the synthetic)."""
+    from nexus.capabilities.neptune_integrity import run_integrity_scan
+    return run_integrity_scan()
+
+
 @router.get("/ci-decision")
 async def ci_decision() -> dict[str, Any]:
     """Current deploy readiness — 8-factor evaluation. Read-only."""

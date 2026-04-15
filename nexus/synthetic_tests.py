@@ -64,6 +64,11 @@ def run_all_journeys(force: bool = False) -> list[dict[str, Any]]:
         # CI self-healing readiness (2026-04-14 outage guards)
         journey_ci_monitoring_health,
         journey_ci_healer_readiness,
+        # Data/cost/AI/platform capability guards
+        journey_neptune_integrity_wrap,
+        journey_cost_monitoring_wrap,
+        journey_bedrock_health_wrap,
+        journey_healer_operational_wrap,
     ]
     results: list[dict[str, Any]] = []
     for fn in journeys:
@@ -759,6 +764,45 @@ def journey_ci_healer_readiness() -> dict[str, Any]:
                 "duration_ms": ms, "error": "No runner instances found"}
     return {"name": "ci_healer_readiness", "status": "pass",
             "duration_ms": ms, "details": f"{count} runner instance(s) visible"}
+
+
+# Delegator wrappers — the actual logic lives in each capability module
+# so it's callable standalone; these give the synthetic suite a thin
+# handle to each journey without pulling in imports at module-load time.
+def journey_neptune_integrity_wrap() -> dict[str, Any]:
+    try:
+        from nexus.capabilities.neptune_integrity import journey_neptune_integrity
+        return journey_neptune_integrity()
+    except Exception as exc:
+        return {"name": "neptune_integrity", "status": "error",
+                "error": str(exc)[:200]}
+
+
+def journey_cost_monitoring_wrap() -> dict[str, Any]:
+    try:
+        from nexus.capabilities.cost_monitor import journey_cost_monitoring
+        return journey_cost_monitoring()
+    except Exception as exc:
+        return {"name": "cost_monitoring", "status": "error",
+                "error": str(exc)[:200]}
+
+
+def journey_bedrock_health_wrap() -> dict[str, Any]:
+    try:
+        from nexus.capabilities.bedrock_monitor import journey_bedrock_health
+        return journey_bedrock_health()
+    except Exception as exc:
+        return {"name": "bedrock_health", "status": "error",
+                "error": str(exc)[:200]}
+
+
+def journey_healer_operational_wrap() -> dict[str, Any]:
+    try:
+        from nexus.capabilities.platform_healer import journey_healer_operational
+        return journey_healer_operational()
+    except Exception as exc:
+        return {"name": "healer_operational", "status": "error",
+                "error": str(exc)[:200]}
 
 
 def get_summary() -> dict[str, Any]:

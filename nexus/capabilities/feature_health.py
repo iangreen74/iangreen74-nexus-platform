@@ -77,6 +77,7 @@ FEATURES: dict[str, dict[str, Any]] = {
         "synthetic_tests": [
             "deploy_readiness", "actions_reflect_reality",
             "ci_monitoring_health", "ci_healer_readiness",
+            "healer_operational", "cost_monitoring",
         ],
         "health_checks": ["check_deploy_health", "check_stuck_deploys"],
     },
@@ -93,7 +94,10 @@ FEATURES: dict[str, dict[str, Any]] = {
         "name": "Intelligence",
         "description": "Accretion Core, Omniscience, Brief synthesis",
         "icon": "🧠",
-        "synthetic_tests": ["brief_exists", "status_scoped"],
+        "synthetic_tests": [
+            "brief_exists", "status_scoped",
+            "bedrock_health", "neptune_integrity",
+        ],
         "health_checks": ["check_intelligence_sources", "check_brief_freshness"],
     },
 }
