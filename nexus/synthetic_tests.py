@@ -69,6 +69,11 @@ def run_all_journeys(force: bool = False) -> list[dict[str, Any]]:
         journey_cost_monitoring_wrap,
         journey_bedrock_health_wrap,
         journey_healer_operational_wrap,
+        # Day 7 regression guards — project isolation + deploy/version drift
+        journey_project_isolation_audit,
+        journey_deploy_consistency,
+        journey_version_drift,
+        journey_merge_key_audit,
     ]
     results: list[dict[str, Any]] = []
     for fn in journeys:
@@ -803,6 +808,289 @@ def journey_healer_operational_wrap() -> dict[str, Any]:
     except Exception as exc:
         return {"name": "healer_operational", "status": "error",
                 "error": str(exc)[:200]}
+
+
+# --- Day 7 regression guards ------------------------------------------------
+#
+# Four checks added after Day 7's outage retrospective caught two project
+# isolation leaks (#8 orphan MissionTasks, #9 unscoped nodes), a deploy
+# building from the wrong repo (Beacon/orgagi23), and frontend/backend
+# version drift. Each failure mode was invisible to every existing check.
+
+_PROJECT_SCOPED_LABELS = (
+    "MissionTask", "MissionBrief", "BriefEntry", "AnalysisReport",
+    "ConversationMessage", "RepoFile", "DeploymentProgress",
+    "PredictedTask", "OmniscientInsight",
+)
+
+_SHOULD_BE_SCOPED_LABELS = (
+    "DeploymentPattern", "DeploymentStack", "DeployedService",
+    "HealthCheck", "EnvRequirement",
+)
+
+
+def journey_project_isolation_audit() -> dict[str, Any]:
+    """
+    Scans every project-scoped node type for rows with null project_id.
+    Would have caught leaks #8 and #9 in one pass. Critical if any null
+    project_id appears on a node created within 7 days; warning for older.
+    """
+    if MODE != "production":
+        return {"name": "project_isolation_audit", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        from nexus import neptune_client
+        start = time.time()
+        now = datetime.now(timezone.utc)
+        recent: list[str] = []
+        older: list[str] = []
+        clean: list[str] = []
+        for label in _PROJECT_SCOPED_LABELS:
+            rows = neptune_client.query(
+                f"MATCH (n:{label}) WHERE n.project_id IS NULL "
+                "RETURN n.created_at AS created_at LIMIT 50"
+            ) or []
+            if not rows:
+                clean.append(label)
+                continue
+            has_recent = False
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                ts_raw = r.get("created_at") or ""
+                try:
+                    dt = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if (now - dt).total_seconds() < 7 * 24 * 3600:
+                    has_recent = True
+                    break
+            (recent if has_recent else older).append(f"{label}({len(rows)})")
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "project_isolation_audit", "status": "error",
+                "error": str(exc)[:200]}
+    if recent:
+        return {"name": "project_isolation_audit", "status": "fail",
+                "duration_ms": ms,
+                "error": f"Recent null project_id on: {', '.join(recent)}"}
+    if older:
+        return {"name": "project_isolation_audit", "status": "fail",
+                "duration_ms": ms,
+                "error": f"Stale orphans (>7d) on: {', '.join(older)}"}
+    return {"name": "project_isolation_audit", "status": "pass",
+            "duration_ms": ms,
+            "details": f"All {len(clean)} project-scoped types clean"}
+
+
+def journey_deploy_consistency() -> dict[str, Any]:
+    """
+    Verifies deployment state matches the active project's actual repo.
+    Would have caught the Beacon/orgagi23 mismatch: DeploymentProgress
+    pointed at one project but CodeBuild was pulling from another.
+    """
+    if MODE != "production":
+        return {"name": "deploy_consistency", "status": "skip",
+                "error": "Requires production Neptune/AWS access"}
+    try:
+        from nexus import neptune_client
+        start = time.time()
+        unscoped = neptune_client.query(
+            "MATCH (d:DeploymentProgress) WHERE d.project_id IS NULL "
+            "RETURN d.tenant_id AS tenant_id LIMIT 5"
+        ) or []
+        rows = neptune_client.query(
+            "MATCH (d:DeploymentProgress) WHERE d.project_id IS NOT NULL "
+            "OPTIONAL MATCH (p:Project {project_id: d.project_id}) "
+            "RETURN d.tenant_id AS tenant_id, d.project_id AS project_id, "
+            "d.codebuild_project AS cb, p.repo_url AS repo_url LIMIT 25"
+        ) or []
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "deploy_consistency", "status": "error",
+                "error": str(exc)[:200]}
+
+    def _repo_slug(url: str) -> str:
+        u = (url or "").strip().rstrip("/").removesuffix(".git").lower()
+        if "/" not in u:
+            return u
+        return "/".join(u.replace("https://", "").replace("http://", "")
+                         .split("/")[-2:])
+
+    mismatches: list[str] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        cb = (r.get("cb") or "").strip()
+        repo_url = (r.get("repo_url") or "").strip()
+        if not cb or not repo_url:
+            continue
+        try:
+            from nexus.aws_client import _client
+            info = _client("codebuild").batch_get_projects(names=[cb])
+            projects = info.get("projects") or []
+            if not projects:
+                continue
+            src = (projects[0].get("source") or {}).get("location") or ""
+        except Exception:
+            continue
+        if _repo_slug(src) and _repo_slug(repo_url) \
+                and _repo_slug(src) != _repo_slug(repo_url):
+            pid = str(r.get("project_id", "?"))[:12]
+            mismatches.append(
+                f"project {pid}: CB={_repo_slug(src)} vs "
+                f"Project.repo={_repo_slug(repo_url)}"
+            )
+            if len(mismatches) >= 3:
+                break
+
+    if mismatches:
+        return {"name": "deploy_consistency", "status": "fail",
+                "duration_ms": ms, "error": "; ".join(mismatches)}
+    if unscoped:
+        return {"name": "deploy_consistency", "status": "fail",
+                "duration_ms": ms,
+                "error": f"{len(unscoped)} DeploymentProgress row(s) have null project_id"}
+    return {"name": "deploy_consistency", "status": "pass",
+            "duration_ms": ms,
+            "details": f"{len(rows)} deploy(s) consistent with project repo"}
+
+
+def journey_version_drift() -> dict[str, Any]:
+    """
+    Compares frontend and backend deploy times via X-API-Deploy-Time
+    (commit 99a47bd) and the frontend's Last-Modified header. Warning at
+    >15 min drift, critical at >30 min — something is stuck.
+    """
+    if MODE != "production":
+        return {"name": "version_drift", "status": "skip",
+                "error": "Requires production HTTP access"}
+    try:
+        import httpx
+        start = time.time()
+        backend = httpx.get("https://api.forgescaler.com/health", timeout=10)
+        frontend = httpx.get("https://forgescaler.com/", timeout=10)
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "version_drift", "status": "error",
+                "error": str(exc)[:200]}
+
+    backend_ts_raw = backend.headers.get("X-API-Deploy-Time") or ""
+    backend_ver = backend.headers.get("X-API-Version") or ""
+    if not backend_ver:
+        try:
+            body = backend.json()
+            backend_ver = body.get("commit") or body.get("version") or ""
+            backend_ts_raw = backend_ts_raw or body.get("deploy_time") or ""
+        except Exception:
+            pass
+
+    frontend_ts_raw = frontend.headers.get("Last-Modified") or ""
+
+    def _parse(ts: str) -> datetime | None:
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception:
+            pass
+        try:
+            from email.utils import parsedate_to_datetime
+            return parsedate_to_datetime(ts)
+        except Exception:
+            return None
+
+    b_dt = _parse(backend_ts_raw)
+    f_dt = _parse(frontend_ts_raw)
+    details = (f"backend_ver={backend_ver[:12]} "
+               f"backend_ts={backend_ts_raw[:25]} "
+               f"frontend_ts={frontend_ts_raw[:25]}")
+
+    if not b_dt or not f_dt:
+        return {"name": "version_drift", "status": "skip",
+                "duration_ms": ms,
+                "error": f"Missing deploy timestamps ({details})"}
+
+    drift_sec = abs((b_dt - f_dt).total_seconds())
+    drift_min = int(drift_sec // 60)
+    if drift_sec > 30 * 60:
+        return {"name": "version_drift", "status": "fail",
+                "duration_ms": ms,
+                "error": f"Critical drift: {drift_min}m ({details})"}
+    if drift_sec > 15 * 60:
+        return {"name": "version_drift", "status": "fail",
+                "duration_ms": ms,
+                "error": f"Warning drift: {drift_min}m ({details})"}
+    return {"name": "version_drift", "status": "pass",
+            "duration_ms": ms,
+            "details": f"Drift {drift_min}m — {details}"}
+
+
+def journey_merge_key_audit() -> dict[str, Any]:
+    """
+    Structural prevention for project-isolation leaks. For tenants with
+    multiple projects, any project-scoped node holding null project_id
+    is a leak waiting to happen. Also surfaces node types that should be
+    project-scoped but aren't yet.
+    """
+    if MODE != "production":
+        return {"name": "merge_key_audit", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        from nexus import neptune_client
+        start = time.time()
+        multi_tenants = neptune_client.query(
+            "MATCH (p:Project) WHERE p.tenant_id IS NOT NULL "
+            "WITH p.tenant_id AS tid, count(p) AS n WHERE n > 1 "
+            "RETURN tid LIMIT 25"
+        ) or []
+        if not multi_tenants:
+            ms = int((time.time() - start) * 1000)
+            return {"name": "merge_key_audit", "status": "pass",
+                    "duration_ms": ms,
+                    "details": "No multi-project tenants to audit"}
+
+        tenant_ids = [r["tid"] for r in multi_tenants
+                      if isinstance(r, dict) and r.get("tid")]
+        orphans: list[str] = []
+        future_migrations: list[str] = []
+        for tid in tenant_ids[:10]:
+            for label in _PROJECT_SCOPED_LABELS:
+                rows = neptune_client.query(
+                    f"MATCH (n:{label} {{tenant_id: $tid}}) "
+                    "WHERE n.project_id IS NULL RETURN count(n) AS c",
+                    {"tid": tid},
+                ) or []
+                c = (rows[0].get("c") if rows and isinstance(rows[0], dict) else 0) or 0
+                if c:
+                    orphans.append(f"{tid[:12]}/{label}={c}")
+            for label in _SHOULD_BE_SCOPED_LABELS:
+                rows = neptune_client.query(
+                    f"MATCH (n:{label} {{tenant_id: $tid}}) "
+                    "WHERE n.project_id IS NULL RETURN count(n) AS c",
+                    {"tid": tid},
+                ) or []
+                c = (rows[0].get("c") if rows and isinstance(rows[0], dict) else 0) or 0
+                if c:
+                    future_migrations.append(f"{tid[:12]}/{label}={c}")
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "merge_key_audit", "status": "error",
+                "error": str(exc)[:200]}
+
+    if orphans:
+        summary = "; ".join(orphans[:5])
+        return {"name": "merge_key_audit", "status": "fail",
+                "duration_ms": ms,
+                "error": f"Orphan project-scoped nodes across {len(tenant_ids)} tenant(s): {summary}"}
+    if future_migrations:
+        summary = "; ".join(future_migrations[:5])
+        return {"name": "merge_key_audit", "status": "pass",
+                "duration_ms": ms,
+                "details": f"Clean; migration candidates: {summary}"}
+    return {"name": "merge_key_audit", "status": "pass",
+            "duration_ms": ms,
+            "details": f"All project-scoped types clean across {len(tenant_ids)} multi-project tenant(s)"}
 
 
 def get_summary() -> dict[str, Any]:

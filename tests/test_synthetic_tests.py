@@ -86,7 +86,7 @@ def test_run_all_journeys_returns_all():
     _clear_cache()
     results = run_all_journeys(force=True)
     assert isinstance(results, list)
-    assert len(results) == 26
+    assert len(results) == 30
     names = {r["name"] for r in results}
     assert "health" in names
     assert "brief_exists" in names
@@ -113,7 +113,7 @@ def test_run_all_journeys_force_bypasses_cache():
     import nexus.synthetic_tests as st
     st._cache = ([{"name": "fake", "status": "pass"}], st._cache[1])
     results = run_all_journeys(force=True)
-    assert len(results) == 26  # re-ran, not the fake cache
+    assert len(results) == 30  # re-ran, not the fake cache
 
 
 # --- get_summary --------------------------------------------------------------
@@ -127,7 +127,48 @@ def test_get_summary():
     assert "failed" in summary
     assert "score_pct" in summary
     assert "results" in summary
-    assert summary["total"] == 26
+    assert summary["total"] == 30
+
+
+# --- Day 7 regression guards --------------------------------------------------
+
+
+def test_journey_project_isolation_audit_local():
+    from nexus.synthetic_tests import journey_project_isolation_audit
+    r = journey_project_isolation_audit()
+    assert r["name"] == "project_isolation_audit"
+    assert r["status"] == "skip"
+
+
+def test_journey_deploy_consistency_local():
+    from nexus.synthetic_tests import journey_deploy_consistency
+    r = journey_deploy_consistency()
+    assert r["name"] == "deploy_consistency"
+    assert r["status"] == "skip"
+
+
+def test_journey_version_drift_local():
+    from nexus.synthetic_tests import journey_version_drift
+    r = journey_version_drift()
+    assert r["name"] == "version_drift"
+    assert r["status"] == "skip"
+
+
+def test_journey_merge_key_audit_local():
+    from nexus.synthetic_tests import journey_merge_key_audit
+    r = journey_merge_key_audit()
+    assert r["name"] == "merge_key_audit"
+    assert r["status"] == "skip"
+
+
+def test_run_all_journeys_includes_day7_guards():
+    _clear_cache()
+    results = run_all_journeys(force=True)
+    names = {r["name"] for r in results}
+    assert "project_isolation_audit" in names
+    assert "deploy_consistency" in names
+    assert "version_drift" in names
+    assert "merge_key_audit" in names
 
 
 # --- Result structure ---------------------------------------------------------
