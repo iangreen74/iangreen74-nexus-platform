@@ -336,6 +336,31 @@ async def list_tenants() -> dict[str, Any]:
         except Exception:
             report["capability_score"] = "unknown"
             report["capability_overall"] = "unknown"
+        # Product name + one-line pitch for tenant tiles. Active Project
+        # supplies the name; MissionBrief supplies a short "what it does".
+        try:
+            proj = neptune_client.query(
+                "MATCH (p:Project {tenant_id: $tid, status: 'active'}) "
+                "RETURN p.name AS name, p.repo_url AS repo_url LIMIT 1",
+                {"tid": tid},
+            ) or []
+            if proj and isinstance(proj[0], dict):
+                report["product_name"] = proj[0].get("name") or ""
+                report["product_repo_url"] = proj[0].get("repo_url") or ""
+            brief = neptune_client.query(
+                "MATCH (b:MissionBrief {tenant_id: $tid}) "
+                "RETURN b.product_summary AS summary "
+                "ORDER BY b.updated_at DESC LIMIT 1",
+                {"tid": tid},
+            ) or []
+            if brief and isinstance(brief[0], dict):
+                s = (brief[0].get("summary") or "").strip()
+                # First sentence or 120 chars, whichever is shorter.
+                if s:
+                    first = s.split(".", 1)[0].strip()
+                    report["product_pitch"] = (first[:120] + "…") if len(first) > 120 else first
+        except Exception:
+            pass
     return {"count": len(reports), "tenants": reports}
 
 

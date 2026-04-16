@@ -41,15 +41,120 @@ def get_tenant_dive(tenant_id: str, force: bool = False) -> dict[str, Any]:
     result = {
         "tenant_id": tenant_id,
         "generated_at": _utcnow_iso(),
+        "product": _product(tenant_id),
         "activity_timeline": _activity_timeline(tenant_id),
         "engagement": _engagement(tenant_id),
         "pipeline": _pipeline(tenant_id),
         "intelligence_depth": _intelligence_depth(tenant_id),
+        "deploy_error": _deploy_error(tenant_id),
     }
     result["risk_signals"] = _risk_signals(result)
     result["recommendations"] = _recommendations(result)
     _cache[tenant_id] = (result, now)
     return result
+
+
+def _product(tid: str) -> dict[str, Any]:
+    """
+    Product summary: name + what's being built + stage. Reads the active
+    Project for the name and the MissionBrief for the prose product_summary.
+    """
+    name = ""
+    repo_url = ""
+    proj_rows = neptune_client.query(
+        "MATCH (p:Project {tenant_id: $tid, status: 'active'}) "
+        "RETURN p.name AS name, p.repo_url AS repo_url, "
+        "p.project_id AS project_id LIMIT 1",
+        {"tid": tid},
+    ) or []
+    if proj_rows and isinstance(proj_rows[0], dict):
+        name = proj_rows[0].get("name") or ""
+        repo_url = proj_rows[0].get("repo_url") or ""
+
+    # MissionBrief carries the prose summary of what the product does.
+    brief_rows = neptune_client.query(
+        "MATCH (b:MissionBrief {tenant_id: $tid}) "
+        "RETURN b.product_summary AS summary, b.updated_at AS updated_at "
+        "ORDER BY b.updated_at DESC LIMIT 1",
+        {"tid": tid},
+    ) or []
+    summary = ""
+    if brief_rows and isinstance(brief_rows[0], dict):
+        summary = (brief_rows[0].get("summary") or "").strip()
+
+    # Stage lives on the Tenant node (mission_stage).
+    stage_rows = neptune_client.query(
+        "MATCH (t:Tenant {tenant_id: $tid}) RETURN t.mission_stage AS stage LIMIT 1",
+        {"tid": tid},
+    ) or []
+    stage = (stage_rows[0].get("stage") if stage_rows and isinstance(stage_rows[0], dict) else "") or ""
+
+    # First ~240 chars of the summary keeps the panel scannable.
+    short_summary = summary[:240] + ("…" if len(summary) > 240 else "")
+
+    return {
+        "name": name,
+        "repo_url": repo_url,
+        "summary": short_summary,
+        "summary_full": summary,
+        "stage": stage,
+    }
+
+
+def _deploy_error(tid: str) -> dict[str, Any] | None:
+    """
+    When the latest DeploymentProgress is in a failed state, surface the
+    crash details (message, last 10 container log lines, diagnosis root
+    cause + suggested fix). Returns None when no failed deploy exists.
+    """
+    rows = neptune_client.query(
+        "MATCH (d:DeploymentProgress {tenant_id: $tid}) "
+        "RETURN d.stage AS stage, d.message AS message, "
+        "d.container_log AS container_log, d.diagnosis_json AS diagnosis, "
+        "d.updated_at AS updated_at "
+        "ORDER BY d.updated_at DESC LIMIT 1",
+        {"tid": tid},
+    ) or []
+    if not rows or not isinstance(rows[0], dict):
+        return None
+    row = rows[0]
+    stage = (row.get("stage") or "").lower()
+    if stage not in ("failed", "error"):
+        return None
+
+    log = (row.get("container_log") or "").strip()
+    log_tail = "\n".join(log.splitlines()[-10:]) if log else ""
+
+    root_cause = ""
+    suggested_fix = ""
+    diag_raw = row.get("diagnosis") or ""
+    if diag_raw:
+        try:
+            import json as _json
+            diag = _json.loads(diag_raw)
+            if isinstance(diag, dict):
+                root_cause = (diag.get("root_cause") or "")[:500]
+                steps = diag.get("user_steps") or []
+                if steps and isinstance(steps, list):
+                    first = steps[0]
+                    if isinstance(first, dict):
+                        suggested_fix = (first.get("step") or "")[:300]
+                    elif isinstance(first, str):
+                        suggested_fix = first[:300]
+        except (ValueError, TypeError):
+            pass
+
+    failed_at = _parse(row.get("updated_at"))
+    return {
+        "stage": stage,
+        "message": (row.get("message") or "").strip()[:500],
+        "log_tail": log_tail,
+        "log_line_count": len(log.splitlines()) if log else 0,
+        "root_cause": root_cause,
+        "suggested_fix": suggested_fix,
+        "failed_at": failed_at.isoformat() if failed_at else None,
+        "failed_since": _since(failed_at),
+    }
 
 
 def _utcnow_iso() -> str:
@@ -332,21 +437,23 @@ def _recommendations(data: dict[str, Any]) -> list[str]:
     pipe = data["pipeline"]
     eng = data["engagement"]
     risks = data["risk_signals"]
+    product = data.get("product") or {}
+    prefix = f"{product.get('name')} — " if product.get("name") else ""
 
     critical = [r for r in risks if r["severity"] == "critical"]
     if critical:
-        recs.extend(f"Investigate: {r['signal']}" for r in critical[:2])
+        recs.extend(f"{prefix}Investigate: {r['signal']}" for r in critical[:2])
         return recs
 
     if pipe["prs_open"] >= 3:
-        recs.append(f"Nudge user — {pipe['prs_open']} PRs have been sitting.")
+        recs.append(f"{prefix}Nudge user — {pipe['prs_open']} PRs have been sitting.")
     if any("brief" in r["signal"].lower() for r in risks):
-        recs.append("Brief is stale — Accretion quality may be degrading; consider re-synthesis.")
+        recs.append(f"{prefix}Brief is stale — Accretion quality may be degrading; consider re-synthesis.")
 
     if eng["messages_last_7d"] >= 10 and pipe["prs_merged"] > pipe["prs_open"]:
-        recs.append("Tenant is in flow state — highly engaged, pipeline healthy. No action needed.")
+        recs.append(f"{prefix}Tenant is in flow state — highly engaged, pipeline healthy. No action needed.")
     elif eng["activity_trend"] == "falling" and eng["messages_last_7d"] < 3:
-        recs.append("Activity trending down — consider outreach before this tenant goes cold.")
+        recs.append(f"{prefix}Activity trending down — consider outreach before this tenant goes cold.")
 
     if not recs:
         recs.append("No action needed.")

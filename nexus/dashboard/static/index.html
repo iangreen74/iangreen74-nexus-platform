@@ -1051,6 +1051,9 @@ async function loadTenants() {
     el.dataset.tid = t.tenant_id;
     el.style.cssText = 'background:var(--bg-elev); border:1px solid var(--border); border-left:4px solid ' + color +
       '; border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04); cursor:pointer;';
+    const productLine = t.product_name
+      ? `<div style="font-size:11px; color:var(--text); margin:2px 0 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">📦 <strong>${_escapeHTML(t.product_name)}</strong>${t.product_pitch ? ` — ${_escapeHTML(t.product_pitch)}` : ''}</div>`
+      : '';
     el.innerHTML = `
       <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
         <div style="min-width:0;">
@@ -1059,6 +1062,7 @@ async function loadTenants() {
         </div>
         <span style="font-size:10px; background:var(--bg); color:var(--text-dim); padding:3px 8px; border-radius:999px; border:1px solid var(--border); font-weight:700; letter-spacing:0.05em; white-space:nowrap;">${stage}</span>
       </div>
+      ${productLine}
       <div style="font-size:12px; color:var(--text); margin-bottom:8px;">${pipelineSummary}</div>
       <div style="font-size:11px; display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${indicators.join(' · ')}</div>
       <div style="display:flex; gap:6px;">
@@ -1173,12 +1177,14 @@ async function loadTenantDive(tid) {
 }
 
 function renderTenantDivePanel(panel, tid, d) {
+  const product = d.product || {};
   const eng = d.engagement || {};
   const pipe = d.pipeline || {};
   const intel = d.intelligence_depth || {};
   const signals = d.risk_signals || [];
   const recs = d.recommendations || [];
   const timeline = d.activity_timeline || [];
+  const deployErr = d.deploy_error || null;
 
   const sevColor = (s) => s === 'critical' ? 'var(--red-text, #c00)'
     : s === 'warning' ? 'var(--amber-text, #b85c00)' : 'var(--text-dim)';
@@ -1189,8 +1195,33 @@ function renderTenantDivePanel(panel, tid, d) {
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
         <div style="font-size:14px; font-weight:700; color:var(--text);">Deep Dive <span style="font-weight:400; color:var(--text-dim); font-family:monospace; font-size:11px;">${_escapeHTML(tid)}</span></div>
         <button class="btn" style="padding:4px 10px; font-size:11px;" onclick="document.getElementById('tenant-detail-panel').innerHTML='';document.getElementById('tenant-detail-panel').dataset.tid='';">Close</button>
-      </div>
+      </div>`;
 
+  if (product.name || product.summary) {
+    html += `
+      <div style="margin-bottom:16px; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px;">
+        <div class="label">PRODUCT</div>
+        ${product.name ? `<div style="font-size:13px; font-weight:600; color:var(--text);">📦 ${_escapeHTML(product.name)}${product.stage ? ` <span style="font-weight:400; color:var(--text-dim); font-size:11px;">· ${_escapeHTML(product.stage)}</span>` : ''}</div>` : ''}
+        ${product.summary ? `<div style="font-size:12px; color:var(--text); margin-top:4px; line-height:1.5;">${_escapeHTML(product.summary)}</div>` : ''}
+        ${product.repo_url ? `<div style="font-size:11px; margin-top:4px;"><a href="${_escapeHTML(product.repo_url)}" target="_blank" style="color:var(--teal);">${_escapeHTML(product.repo_url)}</a></div>` : ''}
+      </div>`;
+  }
+
+  if (deployErr) {
+    const logLines = (deployErr.log_tail || '').split('\n').filter(Boolean);
+    html += `
+      <div style="margin-bottom:16px; padding:10px 12px; background:var(--red-dim, #fee); border:1px solid var(--red-text, #c00); border-radius:8px;">
+        <div class="label" style="color:var(--red-text, #c00);">DEPLOY ERROR${deployErr.failed_since ? ` (${_escapeHTML(deployErr.failed_since)})` : ''}</div>
+        ${deployErr.root_cause ? `<div style="font-size:12px; color:var(--text); margin-top:4px;"><strong>Reason:</strong> ${_escapeHTML(deployErr.root_cause)}</div>` : ''}
+        ${!deployErr.root_cause && deployErr.message ? `<div style="font-size:12px; color:var(--text); margin-top:4px;">${_escapeHTML(deployErr.message)}</div>` : ''}
+        ${logLines.length ? `
+          <div style="font-size:11px; color:var(--text-dim); margin-top:6px;">Log (last ${logLines.length} line${logLines.length !== 1 ? 's' : ''}${deployErr.log_line_count > logLines.length ? ` of ${deployErr.log_line_count}` : ''}):</div>
+          <pre style="font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin:4px 0 0; overflow-x:auto; max-height:160px; white-space:pre-wrap; color:var(--text);">${_escapeHTML(logLines.join('\n'))}</pre>` : ''}
+        ${deployErr.suggested_fix ? `<div style="font-size:12px; color:var(--text); margin-top:6px;"><strong>Suggested fix:</strong> ${_escapeHTML(deployErr.suggested_fix)}</div>` : ''}
+      </div>`;
+  }
+
+  html += `
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
         <div>
           <div class="label">ENGAGEMENT</div>
