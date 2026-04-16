@@ -1795,6 +1795,62 @@ async def fix_agent_propose(payload: dict[str, Any] | None = None) -> dict[str, 
     return agent.propose(finding)
 
 
+@router.get("/training-readiness")
+async def training_readiness() -> dict[str, Any]:
+    """
+    CI/CD intelligence progress: how close aria-platform is to having
+    enough successful DeployAttempt examples to fine-tune a model on.
+    Reads DeployAttempt nodes directly via Neptune (no aria-platform
+    import — this repo never imports from the other).
+    """
+    threshold = 1000
+    try:
+        count_rows = neptune_client.query(
+            "MATCH (d:DeployAttempt) WHERE d.deploy_success = true "
+            "RETURN count(d) AS total"
+        )
+        total = int((count_rows[0].get("total") if count_rows and isinstance(count_rows[0], dict) else 0) or 0)
+
+        quality_rows = neptune_client.query(
+            "MATCH (d:DeployAttempt) "
+            "WHERE d.deploy_success = true AND d.template_quality_score IS NOT NULL "
+            "RETURN avg(toFloat(d.template_quality_score)) AS avg_q"
+        )
+        avg_q = 0.0
+        if quality_rows and isinstance(quality_rows[0], dict):
+            avg_q = float(quality_rows[0].get("avg_q") or 0.0)
+
+        fp_rows = neptune_client.query(
+            "MATCH (d:DeployAttempt) WHERE d.deploy_success = true "
+            "RETURN DISTINCT d.fingerprint AS fp LIMIT 20"
+        )
+        fps = [r.get("fp") for r in (fp_rows or []) if isinstance(r, dict) and r.get("fp")]
+
+        return {
+            "total_examples": total,
+            "examples_needed": max(0, threshold - total),
+            "avg_quality_score": round(avg_q, 3),
+            "language_coverage": fps,
+            "coverage_count": len(fps),
+            "ready_for_finetuning": total >= threshold,
+            "progress_pct": round(min(100.0, total / threshold * 100), 1),
+            "threshold": threshold,
+        }
+    except Exception as exc:
+        logger.exception("training_readiness failed")
+        return {
+            "error": str(exc),
+            "total_examples": 0,
+            "examples_needed": threshold,
+            "avg_quality_score": 0.0,
+            "language_coverage": [],
+            "coverage_count": 0,
+            "ready_for_finetuning": False,
+            "progress_pct": 0.0,
+            "threshold": threshold,
+        }
+
+
 @router.get("/cost-summary")
 async def cost_summary() -> dict[str, Any]:
     """AWS spend snapshot: today, MTD, projected monthly, credits runway."""

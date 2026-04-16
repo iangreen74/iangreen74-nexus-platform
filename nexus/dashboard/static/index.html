@@ -696,6 +696,38 @@
     </table>
   </section>
 
+  <section id="training-readiness-section">
+    <div class="section-head">
+      <h2>🧠 CI/CD Intelligence</h2>
+      <span class="meta" id="training-status">Collecting training data…</span>
+    </div>
+    <div class="section-sub">Successful DeployAttempts become training examples. 1,000 examples unlocks model fine-tuning.</div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;">
+        <div style="font-size:14px; font-weight:600; color:var(--text);"><span id="training-count">0</span> / 1,000 examples</div>
+        <div style="font-size:11px; color:var(--text-dim);" id="training-pct">0%</div>
+      </div>
+      <div style="height:8px; background:var(--border); border-radius:4px; overflow:hidden;">
+        <div id="training-bar" style="height:100%; width:0%; background:var(--teal); border-radius:4px; transition:width 0.5s ease;"></div>
+      </div>
+      <div style="display:flex; gap:24px; margin:14px 0 10px;">
+        <div style="text-align:center; flex:1;">
+          <div id="training-quality" style="font-size:20px; font-weight:700; color:var(--text);">—</div>
+          <div style="font-size:11px; color:var(--text-dim);">Avg quality</div>
+        </div>
+        <div style="text-align:center; flex:1;">
+          <div id="training-coverage" style="font-size:20px; font-weight:700; color:var(--text);">0</div>
+          <div style="font-size:11px; color:var(--text-dim);">Languages seen</div>
+        </div>
+        <div style="text-align:center; flex:1;">
+          <div id="training-needed" style="font-size:20px; font-weight:700; color:var(--text);">1,000</div>
+          <div style="font-size:11px; color:var(--text-dim);">Until fine-tuning</div>
+        </div>
+      </div>
+      <div id="training-coverage-tags" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+    </div>
+  </section>
+
   <section>
     <div class="section-head">
       <h2>Actions History</h2>
@@ -1526,6 +1558,36 @@ async function loadActions() {
   `).join('');
 }
 
+async function loadTrainingReadiness() {
+  const data = await fetchJSON(`${API}/training-readiness`);
+  if (!data) return;
+  const fmt = (n) => Number(n || 0).toLocaleString();
+  document.getElementById('training-count').textContent = fmt(data.total_examples);
+  document.getElementById('training-bar').style.width = (data.progress_pct || 0) + '%';
+  document.getElementById('training-pct').textContent = (data.progress_pct || 0).toFixed(1) + '%';
+  document.getElementById('training-needed').textContent = fmt(data.examples_needed);
+  document.getElementById('training-coverage').textContent = data.coverage_count || 0;
+  const q = document.getElementById('training-quality');
+  q.textContent = data.avg_quality_score > 0
+    ? Math.round(data.avg_quality_score * 100) + '%'
+    : '—';
+  const status = document.getElementById('training-status');
+  if (data.ready_for_finetuning) {
+    status.textContent = '✅ Ready for fine-tuning';
+    status.style.color = 'var(--accent-green)';
+  } else if (data.error) {
+    status.textContent = `error: ${data.error}`;
+    status.style.color = 'var(--amber-text, #b85c00)';
+  } else {
+    status.textContent = `${fmt(data.examples_needed)} more needed for fine-tuning`;
+    status.style.color = '';
+  }
+  const tags = document.getElementById('training-coverage-tags');
+  tags.innerHTML = (data.language_coverage || [])
+    .map(fp => `<span style="font-size:11px; padding:2px 8px; background:var(--bg); border-radius:12px; border:1px solid var(--border); color:var(--text-dim);">${_escapeHTML(fp)}</span>`)
+    .join('');
+}
+
 async function loadPatterns() {
   const data = await fetchJSON(`${API}/patterns`);
   const body = document.getElementById('patterns-body');
@@ -2079,7 +2141,7 @@ async function loadAll() {
   // Wave 5 (10s) — footer / reference panels
   setTimeout(() => {
     if (skip()) return;
-    Promise.all([loadCapabilities(), loadActions(), loadDiscovery(), loadGraphStats()]);
+    Promise.all([loadCapabilities(), loadActions(), loadDiscovery(), loadGraphStats(), loadTrainingReadiness()]);
   }, 10000);
 }
 
