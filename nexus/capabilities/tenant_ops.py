@@ -32,15 +32,32 @@ def _github_app_token_for(installation_id: int) -> str | None:
     """
     if MODE != "production":
         return "ghs_mock_installation_token"
+
+    # Stage 1: Read the GitHub App secret from Secrets Manager
+    try:
+        app_secret = aws_client.get_secret("forgescaler/github-app")
+    except Exception:
+        logger.exception(
+            "github-app-token(%s) STAGE 1 FAILED: cannot read secret 'forgescaler/github-app' from Secrets Manager",
+            installation_id,
+        )
+        return None
+
+    app_id = str(app_secret.get("app_id", ""))
+    private_key = app_secret.get("private_key", "")
+    if not app_id or not private_key:
+        logger.error(
+            "github-app-token(%s) STAGE 1 FAILED: secret present but missing fields — app_id=%s private_key=%s",
+            installation_id,
+            "set" if app_id else "EMPTY",
+            f"{len(private_key)}chars" if private_key else "EMPTY",
+        )
+        return None
+
+    # Stage 2: Generate RS256 JWT
     try:
         import jwt as pyjwt
 
-        app_secret = aws_client.get_secret("forgescaler/github-app")
-        app_id = str(app_secret.get("app_id", ""))
-        private_key = app_secret.get("private_key", "")
-        if not app_id or not private_key:
-            logger.error("github-app secret missing app_id or private_key")
-            return None
         now = int(time.time())
         token = pyjwt.encode(
             {"iat": now - 60, "exp": now + 600, "iss": app_id},
@@ -49,6 +66,15 @@ def _github_app_token_for(installation_id: int) -> str | None:
         )
         if isinstance(token, bytes):
             token = token.decode()
+    except Exception:
+        logger.exception(
+            "github-app-token(%s) STAGE 2 FAILED: JWT generation failed — app_id=%s key_len=%d (bad key format or expired?)",
+            installation_id, app_id, len(private_key),
+        )
+        return None
+
+    # Stage 3: Exchange JWT for installation access token
+    try:
         import httpx
 
         resp = httpx.post(
@@ -59,13 +85,22 @@ def _github_app_token_for(installation_id: int) -> str | None:
             },
             timeout=15,
         )
-        if resp.status_code == 201:
-            return resp.json().get("token")
-        logger.warning("access_tokens returned %s: %s", resp.status_code, resp.text[:200])
-        return None
     except Exception:
-        logger.exception("_github_app_token_for(%s) failed", installation_id)
+        logger.exception(
+            "github-app-token(%s) STAGE 3 FAILED: HTTP request to GitHub API failed (network/timeout)",
+            installation_id,
+        )
         return None
+
+    if resp.status_code == 201:
+        return resp.json().get("token")
+
+    logger.warning(
+        "github-app-token(%s) STAGE 3 FAILED: GitHub returned %s — %s "
+        "(401=bad JWT/key, 404=installation revoked/wrong ID, 422=app suspended)",
+        installation_id, resp.status_code, resp.text[:300],
+    )
+    return None
 
 
 def refresh_tenant_token(tenant_id: str = "", **_: Any) -> dict[str, Any]:

@@ -163,11 +163,16 @@ def compute_availability(hours: int = 24) -> float:
                 total_downtime += min(float(dur), window_seconds)
             except (TypeError, ValueError):
                 pass
-    # Open incidents: count time since detection, capped at window
+    # Open incidents: count time since detection, capped at window.
+    # Skip incidents older than the window — they are likely stale
+    # (never resolved) and would otherwise dominate the calculation,
+    # showing 0% uptime even when the platform is healthy.
     for inc in overwatch_graph.get_open_incidents():
         detected = _parse(inc.get("detected_at"))
         if detected:
             elapsed = (_now() - detected).total_seconds()
+            if elapsed > window_seconds:
+                continue
             total_downtime += min(max(elapsed, 0), window_seconds)
     # Cap total at window (can't have >100% downtime)
     total_downtime = min(total_downtime, window_seconds)

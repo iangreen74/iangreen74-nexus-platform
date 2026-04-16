@@ -545,6 +545,31 @@
       </thead>
       <tbody id="forge-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
     </table>
+    <div id="fix-agent-panel" style="margin-top:16px; padding:16px; background:var(--bg-elev); border:1px solid var(--border); border-radius:10px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+        <strong style="font-size:14px;">Fix Agent</strong>
+        <span style="font-size:12px; color:var(--text-dim);">Bedrock-driven — reads file, generates minimal fix, opens draft PR</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+        <div style="flex:2; min-width:200px;">
+          <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:3px;">Finding summary</label>
+          <input id="fix-agent-summary" type="text" placeholder="e.g. TypeError in deploy_monitor.py:47"
+            style="width:100%; background:var(--bg-row); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; font-size:13px; font-family:inherit;">
+        </div>
+        <div style="flex:1; min-width:150px;">
+          <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:3px;">File path</label>
+          <input id="fix-agent-file" type="text" placeholder="aria/intelligence/quality_gate.py"
+            style="width:100%; background:var(--bg-row); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; font-size:13px; font-family:inherit;">
+        </div>
+        <div style="width:60px;">
+          <label style="font-size:11px; color:var(--text-dim); display:block; margin-bottom:3px;">Line</label>
+          <input id="fix-agent-line" type="number" placeholder="42"
+            style="width:100%; background:var(--bg-row); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; font-size:13px; font-family:inherit;">
+        </div>
+        <button onclick="proposeFixAgent(this)" style="padding:8px 18px; background:var(--teal); color:var(--bg); border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer; font-family:inherit; white-space:nowrap;">Generate Fix PR</button>
+      </div>
+      <div id="fix-agent-result" style="margin-top:10px; display:none;"></div>
+    </div>
   </section>
 
   </div>
@@ -1553,6 +1578,42 @@ async function loadForge() {
       <td>${p.draft ? 'draft' : 'open'}</td>
     </tr>
   `).join('');
+}
+
+async function proposeFixAgent(btn) {
+  const summary = document.getElementById('fix-agent-summary').value.trim();
+  const file = document.getElementById('fix-agent-file').value.trim();
+  const line = document.getElementById('fix-agent-line').value.trim();
+  const result = document.getElementById('fix-agent-result');
+  if (!summary || !file || !line) {
+    result.style.display = 'block';
+    result.innerHTML = '<span style="color:var(--amber);">Fill in summary, file, and line.</span>';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  result.style.display = 'block';
+  result.innerHTML = '<span style="color:var(--text-dim);">Reading file and invoking Bedrock…</span>';
+  try {
+    const resp = await fetch(`${API}/forge/fix-agent/propose`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ summary, file, line: parseInt(line, 10), category: 'code_fix' }),
+    });
+    const data = await resp.json();
+    if (data.status === 'pr_opened') {
+      result.innerHTML = `<span class="badge success">Draft PR #${data.pr_number} opened</span> `
+        + `<a href="${data.pr_url}" target="_blank" style="color:var(--teal);">Review before merging</a>`;
+      loadForge();
+    } else {
+      result.innerHTML = `<span class="badge failed">${data.status}</span> `
+        + `<span style="color:var(--text-dim);">${data.reason || data.error || 'No fix generated'}</span>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<span class="badge failed">Error</span> <span style="color:var(--text-dim);">${e.message}</span>`;
+  }
+  btn.disabled = false;
+  btn.textContent = 'Generate Fix PR';
 }
 
 async function loadDiscovery() {

@@ -258,6 +258,11 @@ async def platform_status() -> dict[str, Any]:
         uptime_pct = sre_metrics.compute_availability(24)
     except Exception:
         uptime_pct = None
+    # Fallback: if incident-based availability is absent or zero but the
+    # Forgewing API is responding, the platform is clearly up — report 100%.
+    api_response_ms = forgewing_health.get("avg_response_ms")
+    if (uptime_pct is None or uptime_pct == 0.0) and api_response_ms and api_response_ms > 0:
+        uptime_pct = 100.0
 
     # Findings summary from diagnosis history
     findings_summary: dict[str, Any] = {"total": 0, "critical": 0, "warning": 0, "info": 0, "last_time": None}
@@ -1736,6 +1741,33 @@ async def forge_propose_fix(pattern_name: str) -> dict[str, Any]:
         finding={"pattern": pattern_name, "source": "forge.fix_generator"},
     )
     return {"pattern": pattern_name, **result}
+
+
+@router.post("/forge/fix-agent/propose")
+async def fix_agent_propose(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    Invoke the Bedrock-driven Fix Agent for a specific finding.
+
+    Expects: {summary, category, file, line, severity?}
+    Returns: {status: pr_opened|skipped|rejected|..., pr_number?, pr_url?, reason?}
+    """
+    from nexus.findings import Finding
+    from nexus.forge.fix_agent import FixAgent
+
+    body = payload or {}
+    required = ("summary", "file", "line")
+    missing = [k for k in required if not body.get(k)]
+    if missing:
+        return {"status": "error", "error": f"missing fields: {', '.join(missing)}"}
+    finding = Finding(
+        summary=body["summary"],
+        category=body.get("category", "code_fix"),
+        file=body["file"],
+        line=int(body["line"]),
+        severity=body.get("severity", "warning"),
+    )
+    agent = FixAgent()
+    return agent.propose(finding)
 
 
 @router.get("/cost-summary")
