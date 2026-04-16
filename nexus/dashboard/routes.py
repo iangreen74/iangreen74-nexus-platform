@@ -459,6 +459,30 @@ async def tenant_audit(tenant_id: str) -> dict[str, Any]:
     return call_api("GET", f"/admin/audit/{tenant_id}")
 
 
+@router.get("/learning-overview")
+async def learning_overview(force: bool = False) -> dict[str, Any]:
+    """
+    Aggregated state for the Learning tab: training progress, dogfood
+    runner stats, pattern library, recent runs, model status. 30s cache.
+    """
+    from nexus import learning_overview as lo
+    return lo.get_overview(force=force)
+
+
+@router.post("/trigger-finetuning")
+async def trigger_finetuning() -> dict[str, Any]:
+    """
+    Stub that gates on the 1,000-example threshold. Returns
+    `{"status": "queued"}` when ready — actual Bedrock/SageMaker
+    job wiring is future work.
+    """
+    from nexus import learning_overview as lo
+    result = lo.trigger_finetuning()
+    if result.get("error"):
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
 @router.post("/findings/classify")
 async def findings_classify(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """

@@ -311,6 +311,7 @@
     <button type="button" class="tab-btn" role="tab" data-tab="health" aria-selected="true">Health</button>
     <button type="button" class="tab-btn" role="tab" data-tab="investigate" aria-selected="false">Investigate</button>
     <button type="button" class="tab-btn" role="tab" data-tab="system" aria-selected="false">System</button>
+    <button type="button" class="tab-btn" role="tab" data-tab="learning" aria-selected="false">Learning</button>
   </nav>
 
   <div class="tab-panel" id="tab-health" role="tabpanel" aria-labelledby="tab-btn-health">
@@ -748,6 +749,83 @@
 
   </div>
 
+  <div class="tab-panel" id="tab-learning" role="tabpanel" aria-labelledby="tab-btn-learning" hidden>
+
+  <section>
+    <div class="section-head">
+      <h2>🧠 Training Progress</h2>
+      <span class="meta" id="learning-meta">—</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <div style="font-size:13px; color:var(--text);"><strong id="learning-examples-count">0</strong> / 1,000 examples</div>
+        <div id="learning-threshold-status" style="font-size:11px; color:var(--text-dim);">—</div>
+      </div>
+      <div style="width:100%; height:10px; background:var(--bg-row); border-radius:5px; overflow:hidden;">
+        <div id="learning-progress-fill" style="height:100%; width:0%; background:var(--accent-green); transition:width 0.5s ease;"></div>
+      </div>
+      <div class="metrics" style="margin-top:14px;">
+        <div class="metric"><div class="label">AVG QUALITY</div><div class="value" id="learning-avg-quality">—</div></div>
+        <div class="metric"><div class="label">LANGUAGES SEEN</div><div class="value" id="learning-coverage-count">—</div></div>
+        <div class="metric"><div class="label">DAYS TO THRESHOLD</div><div class="value" id="learning-days-to-threshold">—</div></div>
+      </div>
+      <div id="learning-coverage-tags" style="margin-top:12px; display:flex; gap:6px; flex-wrap:wrap;"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>🤖 Automated Training Runner</h2>
+      <span id="dogfood-status-badge" class="status-badge">—</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <div id="dogfood-stats-row" style="font-size:13px; color:var(--text); margin-bottom:14px;">—</div>
+      <table class="tbl">
+        <thead>
+          <tr><th>App</th><th>Fingerprint</th><th>Status</th><th>Duration</th></tr>
+        </thead>
+        <tbody id="dogfood-runs-body">
+          <tr><td colspan="4" class="empty">No dogfood runs yet</td></tr>
+        </tbody>
+      </table>
+      <div id="dogfood-activation-note" style="margin-top:10px; font-size:11px; color:var(--text-dim);"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>📚 Pattern Library</h2>
+      <span class="meta">Templates proven across multiple deploys</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <table class="tbl">
+        <thead>
+          <tr><th>Fingerprint</th><th>Deployments</th><th>Avg Quality</th><th>Status</th></tr>
+        </thead>
+        <tbody id="pattern-library-body">
+          <tr><td colspan="4" class="empty">No patterns yet — deploy some apps to build the library</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>🔬 Model Fine-Tuning</h2>
+      <span id="model-status-badge" class="status-badge">—</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <div id="model-status-text" style="font-size:13px; color:var(--text); margin-bottom:10px;">—</div>
+      <button id="model-finetune-btn" class="btn" style="font-size:12px; padding:8px 14px;" disabled onclick="triggerFinetuning()">Trigger Fine-Tuning</button>
+      <div id="model-finetune-msg" style="margin-top:8px; font-size:11px; color:var(--text-dim); min-height:14px;"></div>
+      <div style="margin-top:14px; font-size:11px; color:var(--text-dim);">
+        Roadmap: <strong>Collect</strong> 1,000 quality examples → <strong>Fine-tune</strong> base model → <strong>Deploy</strong> replacement → <strong>Improve</strong> with feedback loop.
+      </div>
+    </div>
+  </section>
+
+  </div>
+
 
   <footer>OVERWATCH · Polls every 30s · Data refreshes automatically · Click Copy Report for a diagnostic snapshot · <span id="graph-stats">graph: —</span></footer>
 </div>
@@ -816,7 +894,7 @@
 // switching tabs is instant and shows fresh data immediately.
 (function initTabs() {
   const KEY = 'overwatch.activeTab';
-  const valid = new Set(['health', 'investigate', 'system']);
+  const valid = new Set(['health', 'investigate', 'system', 'learning']);
   function activate(name) {
     if (!valid.has(name)) name = 'health';
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -826,6 +904,9 @@
       panel.hidden = panel.id !== 'tab-' + name;
     });
     try { localStorage.setItem(KEY, name); } catch (_) {}
+    if (name === 'learning' && typeof loadLearningTab === 'function') {
+      loadLearningTab();
+    }
   }
   document.addEventListener('DOMContentLoaded', () => {
     let initial = 'health';
@@ -2594,6 +2675,155 @@ async function sendOpsMessage() {
   } catch (e) {
     removeLastMsg();
     appendChatMsg('assistant', 'Network error: ' + (e && e.message ? e.message : e));
+  }
+}
+
+// --- Learning tab -----------------------------------------------------------
+
+let _learningTimer = null;
+
+async function loadLearningTab() {
+  const data = await fetchJSON(`${API}/learning-overview`);
+  if (!data || data.error) {
+    const meta = document.getElementById('learning-meta');
+    if (meta) meta.textContent = 'Failed to load';
+    return;
+  }
+  updateTrainingProgress(data.training || {});
+  updateDogfoodStatus(data.dogfood || {});
+  renderRecentRuns(data.recent_runs || []);
+  renderPatternLibrary(data.patterns || []);
+  updateModelStatus(data.model || {}, data.training || {});
+  const meta = document.getElementById('learning-meta');
+  if (meta) meta.textContent = `Updated ${fmtTime(new Date().toISOString())}`;
+  if (_learningTimer) clearTimeout(_learningTimer);
+  _learningTimer = setTimeout(() => {
+    const active = document.querySelector('.tab-btn[aria-selected="true"]');
+    if (active && active.dataset.tab === 'learning') loadLearningTab();
+  }, 30000);
+}
+
+function updateTrainingProgress(t) {
+  const total = t.total_examples || 0;
+  const pct = Math.min(100, Math.round((total / 1000) * 100));
+  document.getElementById('learning-examples-count').textContent = total.toLocaleString();
+  document.getElementById('learning-progress-fill').style.width = pct + '%';
+  document.getElementById('learning-avg-quality').textContent =
+    t.avg_quality != null ? Math.round(t.avg_quality * 100) + '%' : '—';
+  document.getElementById('learning-coverage-count').textContent = t.coverage_count || 0;
+  document.getElementById('learning-days-to-threshold').textContent =
+    t.days_to_threshold != null ? t.days_to_threshold : '—';
+  const status = document.getElementById('learning-threshold-status');
+  if (total >= 1000) {
+    status.innerHTML = '<span style="color:var(--accent-green);">✅ Ready for fine-tuning</span>';
+  } else {
+    status.textContent = `${(1000 - total).toLocaleString()} more examples needed`;
+  }
+  const tags = document.getElementById('learning-coverage-tags');
+  tags.innerHTML = '';
+  for (const fp of (t.fingerprints || [])) {
+    const span = document.createElement('span');
+    span.className = 'badge safe';
+    span.textContent = fp;
+    tags.appendChild(span);
+  }
+}
+
+function updateDogfoodStatus(d) {
+  const badge = document.getElementById('dogfood-status-badge');
+  let label = 'PAUSED';
+  let cls = 'warn';
+  if (d.circuit_open) { label = 'CIRCUIT OPEN'; cls = 'fail'; }
+  else if (d.enabled) { label = 'RUNNING'; cls = 'ok'; }
+  badge.textContent = label;
+  badge.className = 'status-badge ' + cls;
+  const rate = d.success_rate != null ? Math.round(d.success_rate * 100) : 0;
+  const cost = d.cost_today_usd != null ? d.cost_today_usd.toFixed(2) : '0.00';
+  document.getElementById('dogfood-stats-row').innerHTML =
+    `<strong>${d.runs_today || 0}</strong> runs today · <strong>${rate}%</strong> success · <strong>$${cost}</strong> spent today`;
+  document.getElementById('dogfood-activation-note').textContent =
+    d.enabled ? '' : 'Activate via DOGFOOD_ENABLED=true on ECS task.';
+}
+
+function renderRecentRuns(runs) {
+  const body = document.getElementById('dogfood-runs-body');
+  if (!runs || !runs.length) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No dogfood runs yet</td></tr>';
+    return;
+  }
+  const statusIcon = (s) => s === 'success' ? '✅ success'
+    : s === 'failed' ? '❌ failed'
+    : s === 'timeout' ? '⏱ timeout' : s;
+  body.innerHTML = runs.slice(0, 10).map(r => {
+    const dur = r.elapsed_seconds != null ? `${r.elapsed_seconds}s` : '—';
+    return `<tr>
+      <td>${_escapeHTML(r.app || '')}</td>
+      <td><code style="font-size:11px;">${_escapeHTML(r.fingerprint || '')}</code></td>
+      <td>${_escapeHTML(statusIcon(r.status || ''))}</td>
+      <td>${_escapeHTML(dur)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPatternLibrary(patterns) {
+  const body = document.getElementById('pattern-library-body');
+  if (!patterns || !patterns.length) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No patterns yet — deploy some apps to build the library</td></tr>';
+    return;
+  }
+  body.innerHTML = patterns.map(p => {
+    const q = p.avg_quality != null ? Math.round(p.avg_quality * 100) + '%' : '—';
+    const status = p.ready_to_bypass_sonnet
+      ? '<span class="badge ok">⚡ Bypass ready</span>'
+      : '<span class="badge info">📈 Learning</span>';
+    return `<tr>
+      <td><code style="font-size:11px;">${_escapeHTML(p.fingerprint || '')}</code></td>
+      <td>${p.uses || 0}</td>
+      <td>${q}</td>
+      <td>${status}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateModelStatus(m, training) {
+  const badge = document.getElementById('model-status-badge');
+  const text = document.getElementById('model-status-text');
+  const btn = document.getElementById('model-finetune-btn');
+  const total = training.total_examples || 0;
+  const needed = Math.max(0, 1000 - total);
+  if ((m.status || 'not_started') === 'not_started') {
+    if (needed > 0) {
+      badge.textContent = 'NOT READY';
+      badge.className = 'status-badge warn';
+      text.textContent = `Not started — ${needed.toLocaleString()} more examples needed`;
+      btn.disabled = true;
+    } else {
+      badge.textContent = 'READY';
+      badge.className = 'status-badge ok';
+      text.textContent = 'Ready — click to trigger fine-tuning run';
+      btn.disabled = false;
+    }
+  } else {
+    badge.textContent = (m.status || '').toUpperCase();
+    badge.className = 'status-badge info';
+    text.textContent = `Fine-tuning runs: ${m.finetuning_runs || 0}`;
+    btn.disabled = true;
+  }
+}
+
+async function triggerFinetuning() {
+  const msg = document.getElementById('model-finetune-msg');
+  msg.textContent = 'Queuing…';
+  try {
+    const resp = await fetch(`${API}/trigger-finetuning`, { method: 'POST' });
+    const body = await resp.json();
+    if (!resp.ok || body.error) {
+      msg.innerHTML = `<span style="color:var(--red-text,#c00);">${_escapeHTML(body.error || 'Failed')}</span>`;
+      return;
+    }
+    msg.innerHTML = `<span style="color:var(--accent-green);">✓ ${_escapeHTML(body.status || 'queued')}</span>`;
+  } catch (e) {
+    msg.innerHTML = `<span style="color:var(--red-text,#c00);">Network error</span>`;
   }
 }
 </script>
