@@ -510,6 +510,24 @@ async def intelligence_score() -> dict[str, Any]:
     return lo.intelligence_score()
 
 
+@router.get("/dogfood/schedule")
+async def dogfood_schedule_get() -> dict[str, Any]:
+    from nexus import learning_overview as lo
+    return lo.get_schedule()
+
+
+@router.post("/dogfood/schedule")
+async def dogfood_schedule_set(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from nexus import learning_overview as lo
+    rpd = body.get("runs_per_day", 0)
+    if not isinstance(rpd, int):
+        raise HTTPException(status_code=400, detail="runs_per_day must be int")
+    result = lo.set_schedule(rpd)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 @router.post("/findings/classify")
 async def findings_classify(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """

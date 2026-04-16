@@ -145,6 +145,8 @@ def _dogfood() -> dict[str, Any]:
     runs_today = _runs_today()
     cost_today = round(runs_today * DOGFOOD_COST_PER_RUN_USD, 2)
 
+    enabled, enabled_source = _resolve_enabled()
+
     return {
         "total_runs": total,
         "successes": successes,
@@ -153,13 +155,25 @@ def _dogfood() -> dict[str, Any]:
         "success_rate": round(success_rate, 3),
         "runs_today": runs_today,
         "cost_today_usd": cost_today,
-        "enabled": _dogfood_enabled(),
+        "enabled": enabled,
+        "enabled_source": enabled_source,
         "circuit_open": _dogfood_circuit_open(failures, total),
     }
 
 
 def _dogfood_enabled() -> bool:
     return os.environ.get("DOGFOOD_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def _resolve_enabled() -> tuple[bool, str]:
+    """Return (enabled, source) reading Neptune config first, env fallback."""
+    from nexus import overwatch_graph
+    config = overwatch_graph.get_dogfood_config()
+    neptune_flag = config.get("enabled")
+    if neptune_flag is not None:
+        return bool(neptune_flag), config.get("activated_by") or "neptune"
+    env = _dogfood_enabled()
+    return env, "env" if env else "off"
 
 
 def _dogfood_circuit_open(failures: int, total: int) -> bool:
@@ -303,6 +317,7 @@ def run_batch(count: int) -> dict[str, Any]:
     import uuid
     batch_id = f"batch-{uuid.uuid4().hex[:12]}"
     overwatch_graph.create_dogfood_batch(batch_id, count)
+    overwatch_graph.set_dogfood_config(enabled=True, activated_by="batch")
 
     cost = round(count * DOGFOOD_COST_PER_RUN_USD, 2)
     runs_today = _runs_today()
@@ -479,4 +494,35 @@ def intelligence_score() -> dict[str, Any]:
             "from_quality": round(from_quality, 1),
         },
         "next_milestone": next_milestone,
+    }
+
+
+# --- Auto-schedule ----------------------------------------------------------
+
+VALID_DAILY_RUNS = (0, 10, 50, 100)
+
+
+def get_schedule() -> dict[str, Any]:
+    from nexus import overwatch_graph
+    sched = overwatch_graph.get_dogfood_schedule()
+    return {
+        "runs_per_day": int(sched.get("runs_per_day") or 0),
+        "enabled": bool(sched.get("enabled")),
+        "next_run": sched.get("next_run") or None,
+    }
+
+
+def set_schedule(runs_per_day: int) -> dict[str, Any]:
+    from nexus import overwatch_graph
+    if runs_per_day not in VALID_DAILY_RUNS:
+        return {"error": f"runs_per_day must be one of {VALID_DAILY_RUNS}"}
+    overwatch_graph.set_dogfood_schedule(runs_per_day, enabled=runs_per_day > 0)
+    cost = round(runs_per_day * DOGFOOD_COST_PER_RUN_USD, 2)
+    logger.info("[learning] schedule updated: %d runs/day (~$%.2f/day)",
+                runs_per_day, cost)
+    return {
+        "ok": True,
+        "runs_per_day": runs_per_day,
+        "enabled": runs_per_day > 0,
+        "cost_per_day_usd": cost,
     }

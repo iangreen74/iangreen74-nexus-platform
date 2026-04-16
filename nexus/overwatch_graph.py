@@ -395,6 +395,88 @@ def decrement_batch(batch_id: str, success: bool) -> None:
     )
 
 
+def get_dogfood_config() -> dict[str, Any]:
+    """Read the DogfoodConfig singleton — activation state set by the UI."""
+    if MODE != "production":
+        with _lock:
+            rows = _local_store.get("OverwatchDogfoodConfig", [])
+            return dict(rows[0]) if rows else {}
+    rows = query(
+        "MATCH (c:OverwatchDogfoodConfig {config_id: 'main'}) "
+        "RETURN c.enabled AS enabled, c.activated_by AS activated_by, "
+        "c.activated_at AS activated_at, c.paused_at AS paused_at LIMIT 1"
+    )
+    return rows[0] if rows and isinstance(rows[0], dict) else {}
+
+
+def set_dogfood_config(enabled: bool, activated_by: str = "ui") -> None:
+    """Write the DogfoodConfig singleton."""
+    ts = _now_iso()
+    if MODE != "production":
+        with _lock:
+            rows = _local_store.setdefault("OverwatchDogfoodConfig", [])
+            if rows:
+                rows[0]["enabled"] = enabled
+                rows[0]["activated_by"] = activated_by
+                if enabled:
+                    rows[0]["activated_at"] = ts
+                else:
+                    rows[0]["paused_at"] = ts
+            else:
+                rows.append({"config_id": "main", "id": _new_id(),
+                             "enabled": enabled, "activated_by": activated_by,
+                             "activated_at": ts if enabled else "",
+                             "paused_at": "" if enabled else ts})
+        return
+    if enabled:
+        query(
+            "MERGE (c:OverwatchDogfoodConfig {config_id: 'main'}) "
+            "SET c.enabled = true, c.activated_at = $ts, c.activated_by = $by",
+            {"ts": ts, "by": activated_by},
+        )
+    else:
+        query(
+            "MERGE (c:OverwatchDogfoodConfig {config_id: 'main'}) "
+            "SET c.enabled = false, c.paused_at = $ts",
+            {"ts": ts},
+        )
+
+
+def get_dogfood_schedule() -> dict[str, Any]:
+    """Read the DogfoodSchedule singleton — auto-batch config."""
+    if MODE != "production":
+        with _lock:
+            rows = _local_store.get("OverwatchDogfoodSchedule", [])
+            return dict(rows[0]) if rows else {}
+    rows = query(
+        "MATCH (s:OverwatchDogfoodSchedule {schedule_id: 'main'}) "
+        "RETURN s.runs_per_day AS runs_per_day, s.enabled AS enabled, "
+        "s.next_run AS next_run LIMIT 1"
+    )
+    return rows[0] if rows and isinstance(rows[0], dict) else {}
+
+
+def set_dogfood_schedule(runs_per_day: int, enabled: bool) -> None:
+    """Write the DogfoodSchedule singleton."""
+    ts = _now_iso()
+    if MODE != "production":
+        with _lock:
+            rows = _local_store.setdefault("OverwatchDogfoodSchedule", [])
+            data = {"schedule_id": "main", "id": _new_id(),
+                    "runs_per_day": runs_per_day, "enabled": enabled,
+                    "updated_at": ts, "next_run": ""}
+            if rows:
+                rows[0].update(data)
+            else:
+                rows.append(data)
+        return
+    query(
+        "MERGE (s:OverwatchDogfoodSchedule {schedule_id: 'main'}) "
+        "SET s.runs_per_day = $rpd, s.enabled = $en, s.updated_at = $ts",
+        {"rpd": runs_per_day, "en": enabled, "ts": ts},
+    )
+
+
 def advance_dogfood_cursor() -> int:
     """Advance the catalogue cursor by 1. Returns the NEW position."""
     new_pos = get_dogfood_cursor() + 1

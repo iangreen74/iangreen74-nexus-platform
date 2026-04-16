@@ -839,6 +839,17 @@
           <button class="batch-btn recommended" onclick="confirmBatch(1000)">1,000 runs<br><small style="color:var(--text-dim);">~$150 · fine-tune</small></button>
         </div>
       </div>
+      <div style="margin-top:14px; display:flex; align-items:center; gap:10px; font-size:12px;">
+        <label style="color:var(--text); font-weight:600;">Auto-run daily:</label>
+        <select id="daily-runs" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 8px; font-size:12px; font-family:inherit;">
+          <option value="0">Off</option>
+          <option value="10">10/day (~$1.50)</option>
+          <option value="50">50/day (~$7.50)</option>
+          <option value="100">100/day (~$15)</option>
+        </select>
+        <button class="btn" style="font-size:11px; padding:4px 12px;" onclick="saveSchedule()">Save</button>
+        <span id="schedule-status" style="color:var(--text-dim); font-size:11px;"></span>
+      </div>
     </div>
   </section>
 
@@ -2771,6 +2782,7 @@ async function loadLearningTab() {
   if (scoreData && !scoreData.error) updateIntelligenceScore(scoreData);
   if (cicdData && !cicdData.error) updateCicdMetrics(cicdData);
   if (batchData && !batchData.error) updateBatchProgress(batchData);
+  loadSchedule();
   const meta = document.getElementById('learning-meta');
   if (meta) meta.textContent = `Updated ${fmtTime(new Date().toISOString())}`;
   if (_learningTimer) clearTimeout(_learningTimer);
@@ -2808,10 +2820,10 @@ function updateTrainingProgress(t) {
 
 function updateDogfoodStatus(d) {
   const badge = document.getElementById('dogfood-status-badge');
-  let label = 'PAUSED';
-  let cls = 'warn';
+  let label = 'PAUSED'; let cls = 'warn';
   if (d.circuit_open) { label = 'CIRCUIT OPEN'; cls = 'fail'; }
   else if (d.enabled) { label = 'RUNNING'; cls = 'ok'; }
+  else { label = 'PAUSED'; cls = ''; }
   badge.textContent = label;
   badge.className = 'status-badge ' + cls;
   const rate = d.success_rate != null ? Math.round(d.success_rate * 100) : 0;
@@ -2819,7 +2831,7 @@ function updateDogfoodStatus(d) {
   document.getElementById('dogfood-stats-row').innerHTML =
     `<strong>${d.runs_today || 0}</strong> runs today · <strong>${rate}%</strong> success · <strong>$${cost}</strong> spent today`;
   document.getElementById('dogfood-activation-note').textContent =
-    d.enabled ? '' : 'Activate via DOGFOOD_ENABLED=true on ECS task.';
+    d.enabled ? '' : 'Click a batch size above to start training runs.';
 }
 
 function renderRecentRuns(runs) {
@@ -2984,6 +2996,30 @@ function confirmBatch(count) {
       loadLearningTab();
     }
   }).catch(() => alert('Network error'));
+}
+
+async function loadSchedule() {
+  const data = await fetchJSON(`${API}/dogfood/schedule`);
+  if (!data || data.error) return;
+  const sel = document.getElementById('daily-runs');
+  if (sel) sel.value = String(data.runs_per_day || 0);
+  const st = document.getElementById('schedule-status');
+  if (st) st.textContent = data.enabled ? `Active (${data.runs_per_day}/day)` : '';
+}
+
+async function saveSchedule() {
+  const rpd = parseInt(document.getElementById('daily-runs').value, 10);
+  const st = document.getElementById('schedule-status');
+  st.textContent = 'Saving…';
+  try {
+    const resp = await fetch(`${API}/dogfood/schedule`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({runs_per_day: rpd}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { st.textContent = data.detail || 'Failed'; return; }
+    st.textContent = rpd > 0 ? `Saved: ${rpd}/day (~$${data.cost_per_day_usd})` : 'Schedule off';
+  } catch (e) { st.textContent = 'Network error'; }
 }
 </script>
 </body>

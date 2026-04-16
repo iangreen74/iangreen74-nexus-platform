@@ -285,6 +285,88 @@ def test_intelligence_score_endpoint():
     assert "score_history" in body
 
 
+# --- Neptune activation + schedule ------------------------------------------
+
+
+def test_run_batch_activates_neptune_config():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    lo.run_batch(100)
+    config = overwatch_graph.get_dogfood_config()
+    assert config.get("enabled") is True
+    assert config.get("activated_by") == "batch"
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
+def test_resolve_enabled_reads_neptune_first():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    overwatch_graph.set_dogfood_config(enabled=True, activated_by="test")
+    enabled, source = lo._resolve_enabled()
+    assert enabled is True
+    assert source == "test"
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
+def test_resolve_enabled_falls_back_to_env(monkeypatch):
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    monkeypatch.setenv("DOGFOOD_ENABLED", "true")
+    enabled, source = lo._resolve_enabled()
+    assert enabled is True
+    assert source == "env"
+
+
+def test_schedule_get_empty():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodSchedule", None)
+    s = lo.get_schedule()
+    assert s["runs_per_day"] == 0
+    assert s["enabled"] is False
+
+
+def test_schedule_set_and_get():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodSchedule", None)
+    result = lo.set_schedule(50)
+    assert result["ok"] is True
+    assert result["cost_per_day_usd"] == 7.5
+    s = lo.get_schedule()
+    assert s["runs_per_day"] == 50
+    assert s["enabled"] is True
+    overwatch_graph._local_store.pop("OverwatchDogfoodSchedule", None)
+
+
+def test_schedule_invalid_rpd():
+    result = lo.set_schedule(42)
+    assert "error" in result
+
+
+def test_schedule_endpoints():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodSchedule", None)
+    resp = client.get("/api/dogfood/schedule")
+    assert resp.status_code == 200
+    assert resp.json()["runs_per_day"] == 0
+
+    resp = client.post("/api/dogfood/schedule", json={"runs_per_day": 10})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    overwatch_graph._local_store.pop("OverwatchDogfoodSchedule", None)
+
+
+def test_dogfood_is_enabled_reads_neptune():
+    from nexus import overwatch_graph
+    from nexus.capabilities.dogfood_capability import _is_enabled
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    assert _is_enabled() is False  # no config, no env var
+    overwatch_graph.set_dogfood_config(enabled=True, activated_by="test")
+    assert _is_enabled() is True
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
 def test_intelligence_score_with_data(monkeypatch):
     def fake_query(cypher, params=None):
         if "RETURN count(d) AS total_examples" in cypher:

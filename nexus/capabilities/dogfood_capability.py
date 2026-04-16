@@ -2,8 +2,10 @@
 Dogfood Capability — kicks off one automated deploy of a catalogue app.
 
 Registered under the Capability registry as BLAST_DANGEROUS with
-requires_approval=True — cannot run unless DOGFOOD_ENABLED=true is set
-on the daemon environment AND the circuit breaker is closed.
+requires_approval=True. The runner activates when:
+  1. A DogfoodConfig node has enabled=true (written by the UI batch button), OR
+  2. An active DogfoodBatch exists (remaining > 0), OR
+  3. DOGFOOD_ENABLED=true is set on the ECS environment (legacy fallback).
 
 This capability only KICKS OFF a deploy. Polling for outcome lives in
 `sensors/dogfood_sensor.py` and cleanup in `sensors/dogfood_reconciler.py`
@@ -93,19 +95,26 @@ def _push_file(repo: str, path: str, content: str, token: str) -> None:
     )
 
 
+def _is_enabled() -> bool:
+    """Check Neptune DogfoodConfig first, env var as fallback."""
+    config = overwatch_graph.get_dogfood_config()
+    neptune_flag = config.get("enabled")
+    if neptune_flag is not None:
+        return bool(neptune_flag)
+    return os.environ.get("DOGFOOD_ENABLED", "").lower() in ("true", "1", "yes")
+
+
 def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     """
     Kick off one dogfood deploy. Never blocks waiting for the deploy to
     complete — the sensor picks up the outcome on a later cycle.
 
-    When an active DogfoodBatch exists the cycle runs up to
-    DOGFOOD_PER_CYCLE apps per call, decrementing the batch remaining
-    counter after each run.
+    When an active DogfoodBatch exists the cycle runs even without
+    explicit activation — the batch itself is the activation signal.
     """
     batch = overwatch_graph.get_active_batch()
-    enabled = os.environ.get("DOGFOOD_ENABLED", "false").lower() == "true"
-    if not enabled and not batch:
-        return {"skipped": True, "reason": "DOGFOOD_ENABLED not true"}
+    if not _is_enabled() and not batch:
+        return {"skipped": True, "reason": "not enabled"}
 
     if not tenant_id:
         tenant_id = os.environ.get("DOGFOOD_TENANT_ID", "")

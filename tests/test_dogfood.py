@@ -117,7 +117,7 @@ def test_disabled_env_skips_run(monkeypatch):
     monkeypatch.setenv("DOGFOOD_ENABLED", "false")
     result = dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
     assert result.get("skipped") is True
-    assert "DOGFOOD_ENABLED" in result.get("reason", "")
+    assert "not enabled" in result.get("reason", "")
 
 
 # --- kickoff (local mode) -------------------------------------------------
