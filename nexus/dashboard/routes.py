@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from nexus import neptune_client, overwatch_graph
 from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, pr_proposer, project_lifecycle, tenant_ops  # noqa: F401
 from nexus.capabilities.registry import registry
-from nexus.config import AWS_REGION, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
+from nexus.config import AWS_REGION, DAEMON_CYCLE_STALE_MINUTES, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
 from nexus.forge import aria_repo, deploy_manager, fix_generator
 from nexus.reasoning import triage
 from nexus.reasoning.alert_dispatcher import maybe_alert
@@ -252,7 +252,7 @@ async def platform_status() -> dict[str, Any]:
     # Dials — derived from data already computed above
     daemon_cycles = perf_daemon.get("sample_count", 0)
     daemon_hours = perf_daemon.get("hours", 1) or 1
-    expected_cycles_per_hr = 60 / 5  # 5-min ECS health-check cadence
+    expected_cycles_per_hr = 60 / DAEMON_CYCLE_STALE_MINUTES
     daemon_cycle_pct = min(100.0, (daemon_cycles / (daemon_hours * expected_cycles_per_hr)) * 100)
     try:
         uptime_pct = sre_metrics.compute_availability(24)

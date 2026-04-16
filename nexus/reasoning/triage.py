@@ -566,6 +566,9 @@ def _should_suppress_deploy_stuck(report: dict[str, Any]) -> str | None:
     if mission_stage == "complete" and conversation.get("message_count", 0) < 3:
         return "test/demo tenant at stage=complete (<3 messages)"
 
+    if mission_stage == "complete" and pipeline.get("tasks_in_progress", 0) == 0:
+        return "completed tenant with no active work"
+
     if conversation.get("inactive") and pipeline.get("tasks_in_progress", 0) == 0:
         return "tenant idle >24h with no active work"
 

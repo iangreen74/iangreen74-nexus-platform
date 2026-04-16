@@ -103,7 +103,7 @@ def _check_test_screen() -> bool | None:
 DEFAULT_SPRINT_ITEMS: list[dict[str, Any]] = [
     {"id": "pr_generation", "name": "PR generation working",
      "status": "done", "live_check": _check_pr_generation},
-    {"id": "brief_isolation", "name": "Brief isolation (7 leaks fixed)",
+    {"id": "brief_isolation", "name": "Brief isolation (12 leaks fixed)",
      "status": "done", "live_check": _check_brief_isolation},
     {"id": "repofile_isolation", "name": "RepoFile project scoping",
      "status": "done", "live_check": _check_repofile_isolation},
