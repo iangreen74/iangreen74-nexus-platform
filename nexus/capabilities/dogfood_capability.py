@@ -1,0 +1,185 @@
+"""
+Dogfood Capability — kicks off one automated deploy of a catalogue app.
+
+Registered under the Capability registry as BLAST_DANGEROUS with
+requires_approval=True — cannot run unless DOGFOOD_ENABLED=true is set
+on the daemon environment AND the circuit breaker is closed.
+
+This capability only KICKS OFF a deploy. Polling for outcome lives in
+`sensors/dogfood_sensor.py` and cleanup in `sensors/dogfood_reconciler.py`
+so the daemon is never blocked waiting on a deploy to finish.
+"""
+from __future__ import annotations
+
+import base64
+import logging
+import os
+from typing import Any
+
+import httpx
+
+from nexus import overwatch_graph
+from nexus.capabilities import forgewing_api
+from nexus.capabilities.dogfood_catalogue import CATALOGUE, pick_app
+from nexus.capabilities.registry import Capability, registry
+from nexus.config import BLAST_DANGEROUS, GITHUB_SECRET_ID, MODE
+
+logger = logging.getLogger("nexus.capabilities.dogfood")
+
+GITHUB_API = "https://api.github.com"
+GITHUB_USER = "iangreen74"
+CIRCUIT_WINDOW = 10
+CIRCUIT_MIN_SUCCESSES = 2
+
+
+def _gh_token() -> str:
+    """Read the GitHub PAT from Secrets Manager. Empty in local mode."""
+    if MODE != "production":
+        return ""
+    try:
+        from nexus.aws_client import get_secret
+        secret = get_secret(GITHUB_SECRET_ID)
+        return secret.get("_raw") or secret.get("github_pat") or secret.get("token") or ""
+    except Exception:
+        logger.exception("dogfood: failed to read github-token secret")
+        return ""
+
+
+def _gh_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def circuit_open() -> bool:
+    """
+    True when the last CIRCUIT_WINDOW terminal runs had fewer than
+    CIRCUIT_MIN_SUCCESSES successes. When open, new runs are suppressed
+    until an operator resets by toggling DOGFOOD_ENABLED off and back on.
+    """
+    runs = overwatch_graph.list_dogfood_runs(limit=CIRCUIT_WINDOW * 3)
+    terminal = [r for r in runs if r.get("status") in ("success", "failed", "timeout")]
+    terminal = terminal[:CIRCUIT_WINDOW]
+    if len(terminal) < CIRCUIT_WINDOW:
+        return False
+    successes = sum(1 for r in terminal if r.get("status") == "success")
+    return successes < CIRCUIT_MIN_SUCCESSES
+
+
+def _create_repo(name: str, token: str) -> bool:
+    resp = httpx.post(
+        f"{GITHUB_API}/user/repos",
+        headers=_gh_headers(token),
+        json={"name": name, "private": True, "auto_init": True},
+        timeout=20,
+    )
+    if resp.status_code == 201:
+        return True
+    logger.warning("dogfood: repo create failed %s: %s", resp.status_code, resp.text[:200])
+    return False
+
+
+def _push_file(repo: str, path: str, content: str, token: str) -> None:
+    httpx.put(
+        f"{GITHUB_API}/repos/{GITHUB_USER}/{repo}/contents/{path}",
+        headers=_gh_headers(token),
+        json={
+            "message": f"dogfood: add {path}",
+            "content": base64.b64encode(content.encode()).decode(),
+        },
+        timeout=20,
+    )
+
+
+def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
+    """
+    Kick off one dogfood deploy. Never blocks waiting for the deploy to
+    complete — the sensor picks up the outcome on a later cycle.
+    """
+    if os.environ.get("DOGFOOD_ENABLED", "false").lower() != "true":
+        return {"skipped": True, "reason": "DOGFOOD_ENABLED not true"}
+
+    if not tenant_id:
+        tenant_id = os.environ.get("DOGFOOD_TENANT_ID", "")
+    if not tenant_id:
+        return {"skipped": True, "reason": "no tenant_id"}
+
+    if circuit_open():
+        logger.warning("dogfood: circuit breaker OPEN — skipping run")
+        return {"skipped": True, "reason": "circuit_open"}
+
+    position = overwatch_graph.get_dogfood_cursor()
+    app = pick_app(position)
+    import time as _time
+    repo_name = f"{app['name']}-{int(_time.time())}"
+
+    if MODE != "production":
+        # Local mode: record a pending run without hitting GitHub/Forgewing.
+        run_id = overwatch_graph.record_dogfood_run(
+            app_name=app["name"],
+            fingerprint=app["fingerprint"],
+            repo_name=repo_name,
+            project_id=f"proj-local-{position}",
+            tenant_id=tenant_id,
+        )
+        overwatch_graph.advance_dogfood_cursor()
+        return {"status": "kicked_off", "run_id": run_id, "repo_name": repo_name,
+                "app": app["name"], "mock": True}
+
+    token = _gh_token()
+    if not token:
+        return {"status": "failed", "reason": "no github token"}
+
+    if not _create_repo(repo_name, token):
+        return {"status": "failed", "reason": "repo_create_failed"}
+
+    for path, content in app["files"].items():
+        _push_file(repo_name, path, content, token)
+
+    repo_url = f"https://github.com/{GITHUB_USER}/{repo_name}"
+    proj = forgewing_api.call_api(
+        "POST", f"/projects/{tenant_id}",
+        data={"name": repo_name, "repo_url": repo_url},
+    )
+    project_id = proj.get("project_id", "") if isinstance(proj, dict) else ""
+    if not project_id or proj.get("error"):
+        httpx.delete(f"{GITHUB_API}/repos/{GITHUB_USER}/{repo_name}",
+                     headers=_gh_headers(token), timeout=10)
+        return {"status": "failed", "reason": f"project_create_failed: {proj.get('error')}"}
+
+    forgewing_api.call_api("POST", f"/deploy/{tenant_id}",
+                            data={"project_id": project_id})
+
+    run_id = overwatch_graph.record_dogfood_run(
+        app_name=app["name"],
+        fingerprint=app["fingerprint"],
+        repo_name=repo_name,
+        project_id=project_id,
+        tenant_id=tenant_id,
+    )
+    overwatch_graph.advance_dogfood_cursor()
+    logger.info("dogfood: kicked off %s (run_id=%s, project=%s)",
+                repo_name, run_id, project_id)
+    return {
+        "status": "kicked_off",
+        "run_id": run_id,
+        "repo_name": repo_name,
+        "project_id": project_id,
+        "app": app["name"],
+        "fingerprint": app["fingerprint"],
+    }
+
+
+registry.register(Capability(
+    name="run_dogfood_cycle",
+    function=run_dogfood_cycle,
+    blast_radius=BLAST_DANGEROUS,
+    description=(
+        f"Automated dogfood deploy: creates a repo from the {len(CATALOGUE)}-app "
+        "catalogue, triggers Forgewing deploy. Kickoff only — sensor handles "
+        "outcome polling, reconciler cleans up. Gated: DOGFOOD_ENABLED=true required."
+    ),
+    requires_approval=True,
+))

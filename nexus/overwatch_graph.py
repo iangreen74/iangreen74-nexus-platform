@@ -247,6 +247,114 @@ def record_fix_attempt(
     )
 
 
+def record_dogfood_run(
+    app_name: str,
+    fingerprint: str,
+    repo_name: str,
+    project_id: str,
+    tenant_id: str,
+) -> str:
+    """Record a new DogfoodRun node in status=pending."""
+    return _create_node(
+        "OverwatchDogfoodRun",
+        {
+            "app_name": app_name,
+            "fingerprint": fingerprint,
+            "repo_name": repo_name,
+            "project_id": project_id or "",
+            "tenant_id": tenant_id,
+            "status": "pending",
+            "started_at": _now_iso(),
+            "completed_at": "",
+            "cleaned_up": "",
+        },
+    )
+
+
+def update_dogfood_run(run_id: str, **fields: Any) -> None:
+    """Patch fields on an existing DogfoodRun node."""
+    if not fields:
+        return
+    if MODE != "production":
+        with _lock:
+            for row in _local_store.get("OverwatchDogfoodRun", []):
+                if row.get("id") == run_id:
+                    row.update(fields)
+                    return
+        return
+    set_clauses = ", ".join(f"d.{k} = ${k}" for k in fields)
+    query(
+        f"MATCH (d:OverwatchDogfoodRun {{id: $id}}) SET {set_clauses}",
+        {"id": run_id, **fields},
+    )
+
+
+def list_dogfood_runs(
+    status: str | None = None,
+    since_hours: int | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Return DogfoodRun rows, most recent first."""
+    if MODE != "production":
+        rows = list(_local_store.get("OverwatchDogfoodRun", []))
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        rows.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+        return rows[:limit]
+    where = []
+    params: dict[str, Any] = {"limit": limit}
+    if status:
+        where.append("d.status = $status")
+        params["status"] = status
+    if since_hours is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
+        where.append("d.started_at >= $cutoff")
+        params["cutoff"] = cutoff
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    return query(
+        f"MATCH (d:OverwatchDogfoodRun) {clause} "
+        "RETURN d.id AS id, d.app_name AS app_name, d.fingerprint AS fingerprint, "
+        "d.repo_name AS repo_name, d.project_id AS project_id, "
+        "d.tenant_id AS tenant_id, d.status AS status, "
+        "d.started_at AS started_at, d.completed_at AS completed_at, "
+        "d.cleaned_up AS cleaned_up "
+        "ORDER BY d.started_at DESC LIMIT $limit",
+        params,
+    )
+
+
+def get_dogfood_cursor() -> int:
+    """Return the current catalogue cursor position (0 if unset)."""
+    if MODE != "production":
+        with _lock:
+            rows = _local_store.get("OverwatchDogfoodCursor", [])
+            return int(rows[0].get("position", 0)) if rows else 0
+    rows = query(
+        "MATCH (c:OverwatchDogfoodCursor {cursor_id: 'main'}) "
+        "RETURN c.position AS position LIMIT 1"
+    )
+    return int((rows[0].get("position") if rows and isinstance(rows[0], dict) else 0) or 0)
+
+
+def advance_dogfood_cursor() -> int:
+    """Advance the catalogue cursor by 1. Returns the NEW position."""
+    new_pos = get_dogfood_cursor() + 1
+    if MODE != "production":
+        with _lock:
+            rows = _local_store.setdefault("OverwatchDogfoodCursor", [])
+            if rows:
+                rows[0]["position"] = new_pos
+            else:
+                rows.append({"cursor_id": "main", "position": new_pos, "id": _new_id()})
+        return new_pos
+    query(
+        "MERGE (c:OverwatchDogfoodCursor {cursor_id: 'main'}) "
+        "SET c.position = $pos, c.updated_at = $ts",
+        {"pos": new_pos, "ts": _now_iso()},
+    )
+    return new_pos
+
+
 def record_tenant_snapshot(tenant_id: str, statuses: dict[str, Any]) -> str:
     """Snapshot a tenant's health for trending."""
     payload = {"tenant_id": tenant_id, **{k: v for k, v in statuses.items() if v is not None}}

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import Response
 
 from nexus import neptune_client, overwatch_graph
-from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, ecs_ops, pr_proposer, project_lifecycle, tenant_ops  # noqa: F401
+from nexus.capabilities import alert, ci_ops, daemon_ops, deploy_ops, dogfood_capability, ecs_ops, pr_proposer, project_lifecycle, tenant_ops  # noqa: F401
 from nexus.capabilities.registry import registry
 from nexus.config import AWS_REGION, DAEMON_CYCLE_STALE_MINUTES, MODE, OPS_CHAT_MAX_TOKENS, OPS_CHAT_MODEL_ID
 from nexus.forge import aria_repo, deploy_manager, fix_generator
@@ -1826,7 +1826,7 @@ async def training_readiness() -> dict[str, Any]:
         )
         fps = [r.get("fp") for r in (fp_rows or []) if isinstance(r, dict) and r.get("fp")]
 
-        return {
+        result = {
             "total_examples": total,
             "examples_needed": max(0, threshold - total),
             "avg_quality_score": round(avg_q, 3),
@@ -1838,7 +1838,7 @@ async def training_readiness() -> dict[str, Any]:
         }
     except Exception as exc:
         logger.exception("training_readiness failed")
-        return {
+        result = {
             "error": str(exc),
             "total_examples": 0,
             "examples_needed": threshold,
@@ -1849,6 +1849,29 @@ async def training_readiness() -> dict[str, Any]:
             "progress_pct": 0.0,
             "threshold": threshold,
         }
+
+    # Dogfood runner stats — additive so the System-tab card can show
+    # automated progress alongside the organic DeployAttempt total.
+    try:
+        import os as _os
+
+        from nexus import overwatch_graph as _og
+        from nexus.capabilities.dogfood_capability import circuit_open as _circuit_open
+        all_runs = _og.list_dogfood_runs(limit=500)
+        recent = _og.list_dogfood_runs(since_hours=24, limit=500)
+        terminal_recent = [r for r in recent if r.get("status") in ("success", "failed", "timeout")]
+        wins = sum(1 for r in terminal_recent if r.get("status") == "success")
+        success_rate = round(wins / len(terminal_recent), 3) if terminal_recent else None
+        result.update({
+            "dogfood_runs_total": len(all_runs),
+            "dogfood_runs_24h": len(recent),
+            "dogfood_success_rate_24h": success_rate,
+            "dogfood_enabled": _os.environ.get("DOGFOOD_ENABLED", "false").lower() == "true",
+            "dogfood_circuit_open": _circuit_open(),
+        })
+    except Exception:
+        logger.exception("training_readiness: dogfood stats failed")
+    return result
 
 
 @router.get("/cost-summary")

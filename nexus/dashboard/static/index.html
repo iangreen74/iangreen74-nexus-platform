@@ -725,6 +725,10 @@
         </div>
       </div>
       <div id="training-coverage-tags" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+      <div id="training-dogfood" style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); font-size:12px; color:var(--text-dim); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span id="training-dogfood-status">🤖 Automated dogfood: off</span>
+        <span id="training-dogfood-stats"></span>
+      </div>
     </div>
   </section>
 
@@ -1586,6 +1590,20 @@ async function loadTrainingReadiness() {
   tags.innerHTML = (data.language_coverage || [])
     .map(fp => `<span style="font-size:11px; padding:2px 8px; background:var(--bg); border-radius:12px; border:1px solid var(--border); color:var(--text-dim);">${_escapeHTML(fp)}</span>`)
     .join('');
+  const dfStatus = document.getElementById('training-dogfood-status');
+  const dfStats  = document.getElementById('training-dogfood-stats');
+  if (data.dogfood_circuit_open) {
+    dfStatus.innerHTML = '⚠️ <span style="color:var(--red-text, #c00); font-weight:600;">Dogfood circuit breaker OPEN</span>';
+  } else if (data.dogfood_enabled) {
+    dfStatus.innerHTML = '🤖 Automated dogfood: <span style="color:var(--accent-green); font-weight:600;">● running</span>';
+  } else {
+    dfStatus.innerHTML = '🤖 Automated dogfood: <span style="color:var(--text-dim);">○ off</span>';
+  }
+  const total = data.dogfood_runs_total ?? 0;
+  const last24 = data.dogfood_runs_24h ?? 0;
+  const rate = data.dogfood_success_rate_24h;
+  const ratePart = rate != null ? ` (${Math.round(rate * 100)}% success)` : '';
+  dfStats.textContent = total > 0 ? `${last24} runs/24h${ratePart} · ${total} total` : '';
 }
 
 async function loadPatterns() {
