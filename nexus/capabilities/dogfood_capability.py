@@ -97,8 +97,14 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     """
     Kick off one dogfood deploy. Never blocks waiting for the deploy to
     complete — the sensor picks up the outcome on a later cycle.
+
+    When an active DogfoodBatch exists the cycle runs up to
+    DOGFOOD_PER_CYCLE apps per call, decrementing the batch remaining
+    counter after each run.
     """
-    if os.environ.get("DOGFOOD_ENABLED", "false").lower() != "true":
+    batch = overwatch_graph.get_active_batch()
+    enabled = os.environ.get("DOGFOOD_ENABLED", "false").lower() == "true"
+    if not enabled and not batch:
         return {"skipped": True, "reason": "DOGFOOD_ENABLED not true"}
 
     if not tenant_id:

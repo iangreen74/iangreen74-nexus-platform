@@ -241,6 +241,26 @@
   .tab-btn:hover { color: var(--text); }
   .tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent-green); }
   .tab-panel[hidden] { display: none; }
+  .score-badge { font-size:28px; font-weight:800; padding:4px 14px; border-radius:8px; }
+  .score-bar-container { height:12px; background:var(--border); border-radius:6px; overflow:hidden; margin:10px 0; position:relative; }
+  .score-bar-fill { height:100%; border-radius:6px; background:linear-gradient(90deg,#ef4444,#f59e0b,#10b981,#0ea5e9); transition:width 0.5s ease; }
+  .score-labels { display:flex; justify-content:space-between; font-size:10px; color:var(--text-dim); margin-top:2px; }
+  .batch-buttons { display:flex; gap:8px; margin-top:12px; }
+  .batch-btn { flex:1; padding:10px 8px; border-radius:8px; border:1px solid var(--border); cursor:pointer; background:var(--bg); font-size:13px; text-align:center; font-family:inherit; color:var(--text); }
+  .batch-btn.recommended { border-color:var(--accent-green); background:rgba(16,185,129,0.08); }
+  .batch-btn:hover { background:var(--bg-elev); }
+  .metrics-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+  .metric-tile { text-align:center; padding:12px; background:var(--bg); border-radius:8px; border:1px solid var(--border); }
+  .metric-value { font-size:22px; font-weight:700; color:var(--text); }
+  .metric-label-sm { font-size:11px; color:var(--text-dim); margin-top:4px; }
+  .error-feed-header { display:flex; justify-content:space-between; align-items:center; margin:14px 0 8px; font-weight:600; color:var(--text); font-size:13px; }
+  .error-badge { background:#ef4444; color:#fff; border-radius:12px; padding:2px 8px; font-size:12px; font-weight:700; }
+  .error-row { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
+  .error-tenant { font-weight:600; min-width:110px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .error-msg { flex:1; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .error-time { font-size:11px; color:var(--text-dim); min-width:55px; text-align:right; }
+  .diagnose-btn { padding:4px 12px; border-radius:6px; background:var(--accent-green); color:#fff; border:none; cursor:pointer; font-size:11px; white-space:nowrap; font-family:inherit; }
+  .diagnose-btn:hover { opacity:0.85; }
 
   /* ── Metric Dials ──────────────────────────────────────────── */
   .dials-row {
@@ -753,6 +773,21 @@
 
   <section>
     <div class="section-head">
+      <h2>⚡ CI/CD Intelligence Score</h2>
+      <span class="score-badge" id="intel-score" style="color:var(--text-dim);">--</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <div class="score-bar-container">
+        <div class="score-bar-fill" id="intel-bar" style="width:0%;"></div>
+      </div>
+      <div class="score-labels"><span>60 Baseline</span><span>75 Good</span><span>90 Excellent</span><span>100 Perfect</span></div>
+      <div id="intel-breakdown" style="font-size:12px; color:var(--text-dim); margin-top:10px;"></div>
+      <div id="intel-milestone" style="font-size:12px; color:var(--text); margin-top:6px;"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>🧠 Training Progress</h2>
       <span class="meta" id="learning-meta">—</span>
     </div>
@@ -789,6 +824,21 @@
         </tbody>
       </table>
       <div id="dogfood-activation-note" style="margin-top:10px; font-size:11px; color:var(--text-dim);"></div>
+      <div id="batch-progress" style="margin-top:12px; display:none;">
+        <div style="font-size:12px; color:var(--text); margin-bottom:4px;" id="batch-progress-text"></div>
+        <div style="width:100%; height:6px; background:var(--bg-row); border-radius:3px; overflow:hidden;">
+          <div id="batch-progress-fill" style="height:100%; background:var(--accent-green); transition:width 0.5s ease;"></div>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <div style="font-size:12px; font-weight:600; color:var(--text); margin-bottom:4px;">Run training batch:</div>
+        <div class="batch-buttons">
+          <button class="batch-btn" onclick="confirmBatch(100)">100 runs<br><small style="color:var(--text-dim);">~$15</small></button>
+          <button class="batch-btn" onclick="confirmBatch(200)">200 runs<br><small style="color:var(--text-dim);">~$30</small></button>
+          <button class="batch-btn" onclick="confirmBatch(500)">500 runs<br><small style="color:var(--text-dim);">~$75</small></button>
+          <button class="batch-btn recommended" onclick="confirmBatch(1000)">1,000 runs<br><small style="color:var(--text-dim);">~$150 · fine-tune</small></button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -806,6 +856,25 @@
           <tr><td colspan="4" class="empty">No patterns yet — deploy some apps to build the library</td></tr>
         </tbody>
       </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>🚀 CI/CD Performance</h2>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <div class="metrics-grid">
+        <div class="metric-tile"><div class="metric-value" id="m-success-rate">--</div><div class="metric-label-sm">Success rate (7d)</div></div>
+        <div class="metric-tile"><div class="metric-value" id="m-avg-time">--</div><div class="metric-label-sm">Avg deploy time</div></div>
+        <div class="metric-tile"><div class="metric-value" id="m-total">--</div><div class="metric-label-sm">Total deploys</div></div>
+        <div class="metric-tile"><div class="metric-value" id="m-bypass">--</div><div class="metric-label-sm">Bypass rate (7d)</div></div>
+      </div>
+      <div class="error-feed-header">
+        <span>Recent deploy failures</span>
+        <span id="error-count" class="error-badge">0</span>
+      </div>
+      <div id="error-feed"></div>
     </div>
   </section>
 
@@ -2683,7 +2752,12 @@ async function sendOpsMessage() {
 let _learningTimer = null;
 
 async function loadLearningTab() {
-  const data = await fetchJSON(`${API}/learning-overview`);
+  const [data, scoreData, cicdData, batchData] = await Promise.all([
+    fetchJSON(`${API}/learning-overview`),
+    fetchJSON(`${API}/intelligence-score`),
+    fetchJSON(`${API}/cicd-metrics`),
+    fetchJSON(`${API}/dogfood/batch-status`),
+  ]);
   if (!data || data.error) {
     const meta = document.getElementById('learning-meta');
     if (meta) meta.textContent = 'Failed to load';
@@ -2694,6 +2768,9 @@ async function loadLearningTab() {
   renderRecentRuns(data.recent_runs || []);
   renderPatternLibrary(data.patterns || []);
   updateModelStatus(data.model || {}, data.training || {});
+  if (scoreData && !scoreData.error) updateIntelligenceScore(scoreData);
+  if (cicdData && !cicdData.error) updateCicdMetrics(cicdData);
+  if (batchData && !batchData.error) updateBatchProgress(batchData);
   const meta = document.getElementById('learning-meta');
   if (meta) meta.textContent = `Updated ${fmtTime(new Date().toISOString())}`;
   if (_learningTimer) clearTimeout(_learningTimer);
@@ -2825,6 +2902,88 @@ async function triggerFinetuning() {
   } catch (e) {
     msg.innerHTML = `<span style="color:var(--red-text,#c00);">Network error</span>`;
   }
+}
+
+function updateIntelligenceScore(s) {
+  const score = s.current_score || 0;
+  const badge = document.getElementById('intel-score');
+  badge.textContent = score;
+  if (score >= 95) { badge.style.color = 'var(--accent-green)'; }
+  else if (score >= 85) { badge.style.color = '#10b981'; }
+  else if (score >= 70) { badge.style.color = '#f59e0b'; }
+  else { badge.style.color = '#ef4444'; }
+  document.getElementById('intel-bar').style.width = score + '%';
+  const bd = s.score_breakdown || {};
+  document.getElementById('intel-breakdown').textContent =
+    `Base: ${bd.base || 60} + Bypasses: +${bd.from_bypasses || 0} + Examples: +${bd.from_examples || 0} + Quality: +${bd.from_quality || 0}`;
+  const ms = s.next_milestone;
+  document.getElementById('intel-milestone').textContent =
+    ms ? `Next milestone (${ms.score}): ${ms.description}` : 'All milestones reached.';
+}
+
+function updateCicdMetrics(c) {
+  document.getElementById('m-success-rate').textContent =
+    c.success_rate_7d != null ? Math.round(c.success_rate_7d * 100) + '%' : '--';
+  document.getElementById('m-avg-time').textContent =
+    c.avg_time_to_healthy_seconds != null ? Math.round(c.avg_time_to_healthy_seconds) + 's' : '--';
+  document.getElementById('m-total').textContent =
+    c.total_deploys != null ? c.total_deploys.toLocaleString() : '--';
+  document.getElementById('m-bypass').textContent =
+    c.bypass_rate_7d != null ? Math.round(c.bypass_rate_7d * 100) + '%' : '--';
+  document.getElementById('error-count').textContent = c.active_failures || 0;
+  const feed = document.getElementById('error-feed');
+  const failures = c.recent_failures || [];
+  if (!failures.length) {
+    feed.innerHTML = '<div style="color:var(--text-dim); font-size:12px; padding:8px 0;">No recent failures</div>';
+    return;
+  }
+  feed.innerHTML = failures.slice(0, 10).map(f => `
+    <div class="error-row">
+      <div class="error-tenant">${_escapeHTML(f.tenant_id || '').slice(0, 20)}</div>
+      <div class="error-msg">${_escapeHTML(f.message || '')}</div>
+      <div class="error-time">${fmtAge(f.failed_at)}</div>
+      <button class="diagnose-btn" onclick="diagnoseError('${_escapeHTML(f.tenant_id || '')}')">Diagnose</button>
+    </div>
+  `).join('');
+}
+
+function diagnoseError(tid) {
+  if (typeof loadTenantDive === 'function') loadTenantDive(tid);
+  const panel = document.getElementById('tenant-detail-panel');
+  if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+}
+
+function updateBatchProgress(b) {
+  const el = document.getElementById('batch-progress');
+  if (!b.active) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const pct = b.requested ? Math.round((b.completed / b.requested) * 100) : 0;
+  document.getElementById('batch-progress-text').textContent =
+    `Batch: ${b.completed}/${b.requested} complete (${Math.round((b.success_rate || 0) * 100)}% success) · ${b.remaining} remaining`;
+  document.getElementById('batch-progress-fill').style.width = pct + '%';
+}
+
+function confirmBatch(count) {
+  const cost = (count * 0.15).toFixed(2);
+  const ok = confirm(
+    `Run ${count.toLocaleString()} training deploys?\n\n` +
+    `Estimated cost: $${cost}\n` +
+    `This will deploy test apps automatically and delete them after each run.\n\n` +
+    `Continue?`
+  );
+  if (!ok) return;
+  fetch(`${API}/dogfood/run-batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ count }),
+  }).then(r => r.json()).then(data => {
+    if (data.error || data.detail) {
+      alert(data.error || data.detail || 'Failed to start batch');
+    } else {
+      alert(`Batch queued: ${data.batch_id}\n${count} runs, ~$${data.estimated_cost_usd}`);
+      loadLearningTab();
+    }
+  }).catch(() => alert('Network error'));
 }
 </script>
 </body>

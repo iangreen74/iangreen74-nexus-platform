@@ -275,3 +275,208 @@ def trigger_finetuning() -> dict[str, Any]:
 def clear_cache() -> None:
     global _cache
     _cache = ({}, 0.0)
+
+
+# --- Batch runs -------------------------------------------------------------
+
+VALID_BATCH_SIZES = (100, 200, 500, 1000)
+
+
+def run_batch(count: int) -> dict[str, Any]:
+    """
+    Queue a batch of dogfood runs. Creates a DogfoodBatch node that the
+    daemon's run_dogfood_cycle reads each cycle.
+    """
+    from nexus import overwatch_graph
+
+    if count not in VALID_BATCH_SIZES:
+        return {"error": f"count must be one of {VALID_BATCH_SIZES}"}
+
+    existing = overwatch_graph.get_active_batch()
+    if existing:
+        return {
+            "error": "A batch is already running",
+            "active_batch": existing.get("batch_id"),
+            "remaining": existing.get("remaining"),
+        }
+
+    import uuid
+    batch_id = f"batch-{uuid.uuid4().hex[:12]}"
+    overwatch_graph.create_dogfood_batch(batch_id, count)
+
+    cost = round(count * DOGFOOD_COST_PER_RUN_USD, 2)
+    runs_today = _runs_today()
+    rate = max(runs_today, 1)
+    est_days = max(1, round(count / rate))
+
+    logger.info("[learning] batch queued: %s (%d runs, ~$%.2f)", batch_id, count, cost)
+    return {
+        "ok": True,
+        "batch_id": batch_id,
+        "count": count,
+        "estimated_cost_usd": cost,
+        "estimated_days": est_days,
+    }
+
+
+def batch_status() -> dict[str, Any]:
+    """Return the active batch if one is running."""
+    from nexus import overwatch_graph
+    batch = overwatch_graph.get_active_batch()
+    if not batch:
+        return {"active": False}
+    requested = int(batch.get("requested") or 0)
+    completed = int(batch.get("completed") or 0)
+    successes = int(batch.get("successes") or 0)
+    return {
+        "active": True,
+        "batch_id": batch.get("batch_id"),
+        "requested": requested,
+        "remaining": int(batch.get("remaining") or 0),
+        "completed": completed,
+        "successes": successes,
+        "failures": int(batch.get("failures") or 0),
+        "success_rate": round(successes / completed, 3) if completed else 0.0,
+        "started_at": batch.get("started_at"),
+    }
+
+
+# --- CI/CD metrics ----------------------------------------------------------
+
+
+def cicd_metrics() -> dict[str, Any]:
+    """Aggregate CI/CD performance data for the Learning tab."""
+    cutoff_7d = _cutoff_iso(7 * 24)
+    cutoff_48h = _cutoff_iso(48)
+
+    total_rows = neptune_client.query(
+        "MATCH (d:DeployAttempt) RETURN count(d) AS total"
+    ) or []
+    total = int(_scalar(total_rows, "total", 0) or 0)
+
+    rate_rows = neptune_client.query(
+        "MATCH (d:DeployAttempt) WHERE d.started_at > $cutoff "
+        "RETURN count(d) AS total, "
+        "sum(CASE WHEN d.deploy_success = true THEN 1 ELSE 0 END) AS successes",
+        {"cutoff": cutoff_7d},
+    ) or []
+    recent_total = int(_scalar(rate_rows, "total", 0) or 0)
+    recent_successes = int(_scalar(rate_rows, "successes", 0) or 0)
+    success_rate = round(recent_successes / recent_total, 3) if recent_total else 0.0
+
+    time_rows = neptune_client.query(
+        "MATCH (d:DeployAttempt) WHERE d.deploy_success = true "
+        "AND d.time_to_healthy IS NOT NULL AND d.started_at > $cutoff "
+        "RETURN avg(toFloat(d.time_to_healthy)) AS avg_seconds",
+        {"cutoff": cutoff_7d},
+    ) or []
+    avg_time_raw = _scalar(time_rows, "avg_seconds", None)
+    avg_time: float | None = None
+    if avg_time_raw is not None:
+        try:
+            avg_time = round(float(avg_time_raw), 1)
+        except (TypeError, ValueError):
+            pass
+
+    bypass_rows = neptune_client.query(
+        "MATCH (d:DeployAttempt) WHERE d.started_at > $cutoff "
+        "AND d.bypass = true RETURN count(d) AS bypasses",
+        {"cutoff": cutoff_7d},
+    ) or []
+    bypasses = int(_scalar(bypass_rows, "bypasses", 0) or 0)
+    bypass_rate = round(bypasses / recent_total, 3) if recent_total else 0.0
+
+    fail_rows = neptune_client.query(
+        "MATCH (d:DeploymentProgress) WHERE d.stage = 'failed' "
+        "AND d.updated_at > $cutoff "
+        "RETURN d.tenant_id AS tid, "
+        "substring(coalesce(d.message,''),0,120) AS msg, "
+        "d.updated_at AS failed_at, "
+        "d.diagnosis_json AS diag "
+        "ORDER BY d.updated_at DESC LIMIT 20",
+        {"cutoff": cutoff_48h},
+    ) or []
+    failures: list[dict[str, Any]] = []
+    for r in fail_rows:
+        if not isinstance(r, dict):
+            continue
+        failures.append({
+            "tenant_id": r.get("tid") or "",
+            "message": (r.get("msg") or "")[:120],
+            "failed_at": r.get("failed_at"),
+            "has_diagnosis": bool(r.get("diag")),
+        })
+
+    return {
+        "total_deploys": total,
+        "success_rate_7d": success_rate,
+        "avg_time_to_healthy_seconds": avg_time,
+        "bypass_rate_7d": bypass_rate,
+        "bypass_count_7d": bypasses,
+        "recent_total_7d": recent_total,
+        "active_failures": len(failures),
+        "recent_failures": failures,
+    }
+
+
+# --- Intelligence score -----------------------------------------------------
+
+INTELLIGENCE_BASE = 60
+
+
+def intelligence_score() -> dict[str, Any]:
+    """
+    Composite score tracking how well the deploy system performs as data
+    accumulates. Formula:
+      60 base + bypass_count*4 + examples/50 + quality*10, capped at 100.
+    """
+    training = _training()
+    patterns = _patterns()
+    bypass_ready = sum(1 for p in patterns if p.get("ready_to_bypass_sonnet"))
+    total_examples = training.get("total_examples", 0)
+    avg_quality = training.get("avg_quality") or 0.0
+
+    from_bypasses = min(bypass_ready * 4, 20)
+    from_examples = min(int(total_examples / 50), 10)
+    from_quality = min(round(avg_quality * 10, 1), 10)
+    score = min(100, INTELLIGENCE_BASE + from_bypasses + from_examples + from_quality)
+
+    history_rows = neptune_client.query(
+        "MATCH (d:DogfoodRun) WHERE d.status = 'success' "
+        "RETURN toString(date(d.completed_at)) AS day, count(d) AS runs "
+        "ORDER BY day ASC"
+    ) or []
+    history: list[dict[str, Any]] = []
+    cumulative = 0
+    for r in history_rows:
+        if not isinstance(r, dict) or not r.get("day"):
+            continue
+        cumulative += int(r.get("runs") or 0)
+        day_score = min(100, INTELLIGENCE_BASE + min(int(cumulative / 50), 10))
+        history.append({
+            "date": r["day"],
+            "score": day_score,
+            "examples": cumulative,
+        })
+
+    next_milestone: dict[str, Any] | None = None
+    if score < 70:
+        next_milestone = {"score": 70, "description": "Reach first bypass-ready pattern"}
+    elif score < 80:
+        next_milestone = {"score": 80, "description": "3+ bypass-ready patterns"}
+    elif score < 90:
+        next_milestone = {"score": 90, "description": "500+ examples with >90% quality"}
+    elif score < 100:
+        next_milestone = {"score": 100, "description": "All patterns bypass-ready + fine-tuned model"}
+
+    return {
+        "current_score": round(score),
+        "score_history": history,
+        "score_breakdown": {
+            "base": INTELLIGENCE_BASE,
+            "from_bypasses": from_bypasses,
+            "from_examples": from_examples,
+            "from_quality": round(from_quality, 1),
+        },
+        "next_milestone": next_milestone,
+    }

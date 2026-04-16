@@ -471,16 +471,43 @@ async def learning_overview(force: bool = False) -> dict[str, Any]:
 
 @router.post("/trigger-finetuning")
 async def trigger_finetuning() -> dict[str, Any]:
-    """
-    Stub that gates on the 1,000-example threshold. Returns
-    `{"status": "queued"}` when ready — actual Bedrock/SageMaker
-    job wiring is future work.
-    """
     from nexus import learning_overview as lo
     result = lo.trigger_finetuning()
     if result.get("error"):
         raise HTTPException(status_code=409, detail=result["error"])
     return result
+
+
+@router.post("/dogfood/run-batch")
+async def dogfood_run_batch(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Queue a batch of dogfood runs."""
+    from nexus import learning_overview as lo
+    count = body.get("count")
+    if count not in lo.VALID_BATCH_SIZES:
+        raise HTTPException(status_code=400,
+                            detail=f"count must be one of {lo.VALID_BATCH_SIZES}")
+    result = lo.run_batch(count)
+    if result.get("error"):
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
+@router.get("/dogfood/batch-status")
+async def dogfood_batch_status() -> dict[str, Any]:
+    from nexus import learning_overview as lo
+    return lo.batch_status()
+
+
+@router.get("/cicd-metrics")
+async def cicd_metrics() -> dict[str, Any]:
+    from nexus import learning_overview as lo
+    return lo.cicd_metrics()
+
+
+@router.get("/intelligence-score")
+async def intelligence_score() -> dict[str, Any]:
+    from nexus import learning_overview as lo
+    return lo.intelligence_score()
 
 
 @router.post("/findings/classify")

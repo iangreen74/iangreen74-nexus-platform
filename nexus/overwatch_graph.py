@@ -336,6 +336,65 @@ def get_dogfood_cursor() -> int:
     return int((rows[0].get("position") if rows and isinstance(rows[0], dict) else 0) or 0)
 
 
+def create_dogfood_batch(batch_id: str, count: int) -> str:
+    """Create a DogfoodBatch node tracking a multi-run batch."""
+    return _create_node(
+        "OverwatchDogfoodBatch",
+        {
+            "id": batch_id,
+            "batch_id": batch_id,
+            "requested": count,
+            "remaining": count,
+            "completed": 0,
+            "successes": 0,
+            "failures": 0,
+            "started_at": _now_iso(),
+        },
+    )
+
+
+def get_active_batch() -> dict[str, Any] | None:
+    """Return the active DogfoodBatch (remaining > 0), or None."""
+    if MODE != "production":
+        with _lock:
+            for row in _local_store.get("OverwatchDogfoodBatch", []):
+                if int(row.get("remaining") or 0) > 0:
+                    return dict(row)
+        return None
+    rows = query(
+        "MATCH (b:OverwatchDogfoodBatch) WHERE b.remaining > 0 "
+        "RETURN b.batch_id AS batch_id, b.requested AS requested, "
+        "b.remaining AS remaining, b.completed AS completed, "
+        "b.successes AS successes, b.failures AS failures, "
+        "b.started_at AS started_at "
+        "ORDER BY b.started_at DESC LIMIT 1"
+    )
+    return rows[0] if rows and isinstance(rows[0], dict) else None
+
+
+def decrement_batch(batch_id: str, success: bool) -> None:
+    """Decrement remaining, bump completed/successes/failures counts."""
+    if MODE != "production":
+        with _lock:
+            for row in _local_store.get("OverwatchDogfoodBatch", []):
+                if row.get("batch_id") == batch_id:
+                    row["remaining"] = max(0, int(row.get("remaining") or 0) - 1)
+                    row["completed"] = int(row.get("completed") or 0) + 1
+                    if success:
+                        row["successes"] = int(row.get("successes") or 0) + 1
+                    else:
+                        row["failures"] = int(row.get("failures") or 0) + 1
+                    return
+        return
+    key = "successes" if success else "failures"
+    query(
+        "MATCH (b:OverwatchDogfoodBatch {batch_id: $bid}) "
+        f"SET b.remaining = b.remaining - 1, b.completed = b.completed + 1, "
+        f"b.{key} = b.{key} + 1",
+        {"bid": batch_id},
+    )
+
+
 def advance_dogfood_cursor() -> int:
     """Advance the catalogue cursor by 1. Returns the NEW position."""
     new_pos = get_dogfood_cursor() + 1

@@ -180,3 +180,128 @@ def test_cache_hits_on_repeat_call():
     r1 = lo.get_overview(force=True)
     r2 = lo.get_overview()
     assert r1["generated_at"] == r2["generated_at"]
+
+
+# --- Batch runs -------------------------------------------------------------
+
+
+def test_run_batch_invalid_count():
+    r = lo.run_batch(42)
+    assert "error" in r
+
+
+def test_run_batch_valid_count():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    r = lo.run_batch(100)
+    assert r.get("ok") is True
+    assert r["count"] == 100
+    assert r["estimated_cost_usd"] == 15.0
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+
+
+def test_run_batch_rejects_when_active():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    lo.run_batch(100)
+    r = lo.run_batch(200)
+    assert "error" in r
+    assert "already running" in r["error"]
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+
+
+def test_batch_status_no_active():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    r = lo.batch_status()
+    assert r["active"] is False
+
+
+def test_batch_status_with_active():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    lo.run_batch(200)
+    r = lo.batch_status()
+    assert r["active"] is True
+    assert r["requested"] == 200
+    assert r["remaining"] == 200
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+
+
+def test_batch_status_endpoint():
+    resp = client.get("/api/dogfood/batch-status")
+    assert resp.status_code == 200
+    assert "active" in resp.json()
+
+
+def test_run_batch_endpoint():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    resp = client.post("/api/dogfood/run-batch", json={"count": 100})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+
+
+def test_run_batch_endpoint_bad_count():
+    resp = client.post("/api/dogfood/run-batch", json={"count": 42})
+    assert resp.status_code == 400
+
+
+# --- CI/CD metrics ----------------------------------------------------------
+
+
+def test_cicd_metrics_shape():
+    m = lo.cicd_metrics()
+    for key in ("total_deploys", "success_rate_7d",
+                "avg_time_to_healthy_seconds", "bypass_rate_7d",
+                "active_failures", "recent_failures"):
+        assert key in m
+    assert isinstance(m["recent_failures"], list)
+
+
+def test_cicd_metrics_endpoint():
+    resp = client.get("/api/cicd-metrics")
+    assert resp.status_code == 200
+    assert "success_rate_7d" in resp.json()
+
+
+# --- Intelligence score -----------------------------------------------------
+
+
+def test_intelligence_score_shape():
+    s = lo.intelligence_score()
+    assert "current_score" in s
+    assert "score_breakdown" in s
+    assert s["score_breakdown"]["base"] == 60
+    assert 60 <= s["current_score"] <= 100
+
+
+def test_intelligence_score_endpoint():
+    resp = client.get("/api/intelligence-score")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "current_score" in body
+    assert "score_history" in body
+
+
+def test_intelligence_score_with_data(monkeypatch):
+    def fake_query(cypher, params=None):
+        if "RETURN count(d) AS total_examples" in cypher:
+            return [{"total_examples": 500}]
+        if "RETURN avg(toFloat" in cypher:
+            return [{"avg_quality": 0.9}]
+        if "RETURN DISTINCT d.fingerprint" in cypher:
+            return [{"fp": "python/flask"}, {"fp": "node/express"}]
+        if "WITH d.fingerprint" in cypher:
+            return [
+                {"fp": "python/flask", "uses": 6, "avg_q": 0.95},
+                {"fp": "node/express", "uses": 5, "avg_q": 0.92},
+            ]
+        return []
+    monkeypatch.setattr(lo.neptune_client, "query", fake_query)
+    lo.clear_cache()
+    s = lo.intelligence_score()
+    assert s["current_score"] > 60
+    assert s["score_breakdown"]["from_bypasses"] == 8
+    assert s["score_breakdown"]["from_examples"] == 10
