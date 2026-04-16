@@ -228,6 +228,19 @@
   }
   .teach-option:hover { border-color: var(--text-dim); }
   .teach-option:has(input:checked) { border-color: var(--amber); background: var(--amber-dim); }
+  .tab-nav {
+    display: flex; gap: 4px; margin: 18px 0 22px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 10px 18px; font: inherit; font-size: 14px; font-weight: 600;
+    color: var(--text-dim); cursor: pointer; margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent-green); }
+  .tab-panel[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -248,6 +261,14 @@
     </div>
   </header>
 
+  <nav class="tab-nav" role="tablist" aria-label="Dashboard sections">
+    <button type="button" class="tab-btn" role="tab" data-tab="health" aria-selected="true">Health</button>
+    <button type="button" class="tab-btn" role="tab" data-tab="investigate" aria-selected="false">Investigate</button>
+    <button type="button" class="tab-btn" role="tab" data-tab="system" aria-selected="false">System</button>
+  </nav>
+
+  <div class="tab-panel" id="tab-health" role="tabpanel" aria-labelledby="tab-btn-health">
+
   <section id="goal-health-section">
     <div class="section-head">
       <h2>Goal Health</h2>
@@ -262,17 +283,6 @@
         style="padding:10px 22px; background:var(--text); color:var(--bg-elev); border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">
         Diagnose
       </button>
-    </div>
-  </section>
-
-  <section id="health-timeline-section">
-    <div class="section-head">
-      <h2>Health Timeline</h2>
-      <span class="meta" id="timeline-meta">Loading…</span>
-    </div>
-    <div class="section-sub">Autonomous Goal diagnoses run every 4 hours. Last 72 hours shown below.</div>
-    <div id="health-timeline" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="color:var(--text-dim); font-size:12px;">Loading…</div>
     </div>
   </section>
 
@@ -306,13 +316,20 @@
     <div id="tenant-detail-panel" style="margin-top:12px;"></div>
   </section>
 
-  <section>
+  <section id="health-timeline-section">
     <div class="section-head">
-      <h2>System Overview</h2>
-      <span class="meta" id="overview-meta"></span>
+      <h2>Health Timeline</h2>
+      <span class="meta" id="timeline-meta">Loading…</span>
     </div>
-    <div class="metrics" id="overview"></div>
+    <div class="section-sub">Autonomous Goal diagnoses run every 4 hours. Last 72 hours shown below.</div>
+    <div id="health-timeline" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="color:var(--text-dim); font-size:12px;">Loading…</div>
+    </div>
   </section>
+
+  </div>
+
+  <div class="tab-panel" id="tab-investigate" role="tabpanel" aria-labelledby="tab-btn-investigate" hidden>
 
   <section>
     <div class="section-head">
@@ -328,23 +345,6 @@
         <tr><td colspan="5" class="empty">No active heal chains</td></tr>
       </tbody>
     </table>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>SRE Metrics</h2>
-      <span class="meta" id="sre-meta"></span>
-    </div>
-    <div class="metrics" id="sre-metrics"></div>
-    <div id="error-budget-bar" style="margin-top:12px; background:var(--bg-elev); border:1px solid var(--border); border-radius:6px; padding:12px 16px; display:none;">
-      <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-        <span class="label">Error Budget (30d)</span>
-        <span id="budget-text" style="font-size:11px; color:var(--text-dim)"></span>
-      </div>
-      <div style="width:100%; height:8px; background:var(--bg-row); border-radius:4px; overflow:hidden;">
-        <div id="budget-fill" style="height:100%; border-radius:4px; transition:width 0.5s ease;"></div>
-      </div>
-    </div>
   </section>
 
   <section id="research-panel">
@@ -421,6 +421,48 @@
 
   <section>
     <div class="section-head">
+      <h2>Forge — Proposed Fixes</h2>
+      <span class="meta" id="forge-meta"></span>
+    </div>
+    <table id="forge-table">
+      <thead>
+        <tr><th>#</th><th>Title</th><th>Branch</th><th>State</th></tr>
+      </thead>
+      <tbody id="forge-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  </div>
+
+  <div class="tab-panel" id="tab-system" role="tabpanel" aria-labelledby="tab-btn-system" hidden>
+
+  <section>
+    <div class="section-head">
+      <h2>System Overview</h2>
+      <span class="meta" id="overview-meta"></span>
+    </div>
+    <div class="metrics" id="overview"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>SRE Metrics</h2>
+      <span class="meta" id="sre-meta"></span>
+    </div>
+    <div class="metrics" id="sre-metrics"></div>
+    <div id="error-budget-bar" style="margin-top:12px; background:var(--bg-elev); border:1px solid var(--border); border-radius:6px; padding:12px 16px; display:none;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+        <span class="label">Error Budget (30d)</span>
+        <span id="budget-text" style="font-size:11px; color:var(--text-dim)"></span>
+      </div>
+      <div style="width:100%; height:8px; background:var(--bg-row); border-radius:4px; overflow:hidden;">
+        <div id="budget-fill" style="height:100%; border-radius:4px; transition:width 0.5s ease;"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Triage Feed</h2>
       <span class="meta" id="triage-meta"></span>
     </div>
@@ -484,19 +526,6 @@
 
   <section>
     <div class="section-head">
-      <h2>Forge — Proposed Fixes</h2>
-      <span class="meta" id="forge-meta"></span>
-    </div>
-    <table id="forge-table">
-      <thead>
-        <tr><th>#</th><th>Title</th><th>Branch</th><th>State</th></tr>
-      </thead>
-      <tbody id="forge-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
-    </table>
-  </section>
-
-  <section>
-    <div class="section-head">
       <h2>Capabilities</h2>
       <span class="meta" id="capabilities-meta"></span>
     </div>
@@ -540,6 +569,9 @@
       <tbody id="actions-body"><tr><td colspan="4" class="empty">No actions recorded yet</td></tr></tbody>
     </table>
   </section>
+
+  </div>
+
 
   <footer>OVERWATCH · Polls every 30s · Data refreshes automatically · Click Copy Report for a diagnostic snapshot · <span id="graph-stats">graph: —</span></footer>
 </div>
@@ -603,6 +635,32 @@
 </div>
 
 <script>
+// Tab switching. Panels are rendered into the DOM regardless of which
+// tab is visible, so polling loops continue to update hidden panels —
+// switching tabs is instant and shows fresh data immediately.
+(function initTabs() {
+  const KEY = 'overwatch.activeTab';
+  const valid = new Set(['health', 'investigate', 'system']);
+  function activate(name) {
+    if (!valid.has(name)) name = 'health';
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.setAttribute('aria-selected', btn.dataset.tab === name ? 'true' : 'false');
+    });
+    document.querySelectorAll('.tab-panel').forEach(panel => {
+      panel.hidden = panel.id !== 'tab-' + name;
+    });
+    try { localStorage.setItem(KEY, name); } catch (_) {}
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    let initial = 'health';
+    try { initial = localStorage.getItem(KEY) || 'health'; } catch (_) {}
+    activate(initial);
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => activate(btn.dataset.tab));
+    });
+  });
+})();
+
 const API = '/api';
 // 60s poll keeps the dashboard current without hammering the single
 // ECS task. Each cycle staggers its fetches (see loadAll) rather than
