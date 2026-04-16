@@ -498,6 +498,12 @@ async def dogfood_batch_status() -> dict[str, Any]:
     return lo.batch_status()
 
 
+@router.post("/dogfood/cancel-batch")
+async def dogfood_cancel_batch() -> dict[str, Any]:
+    from nexus import learning_overview as lo
+    return lo.cancel_batch()
+
+
 @router.get("/cicd-metrics")
 async def cicd_metrics() -> dict[str, Any]:
     from nexus import learning_overview as lo

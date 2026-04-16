@@ -356,6 +356,44 @@ def batch_status() -> dict[str, Any]:
     }
 
 
+def cancel_batch() -> dict[str, Any]:
+    """Cancel the active batch and pause the runner if batch-activated."""
+    from nexus import overwatch_graph
+
+    batch = overwatch_graph.get_active_batch()
+    if not batch:
+        return {"cancelled": False, "reason": "No active batch"}
+
+    batch_id = batch.get("batch_id") or ""
+    remaining = int(batch.get("remaining") or 0)
+
+    if MODE != "production":
+        with overwatch_graph._lock:
+            for row in overwatch_graph._local_store.get("OverwatchDogfoodBatch", []):
+                if int(row.get("remaining") or 0) > 0:
+                    row["remaining"] = 0
+                    row["status"] = "cancelled"
+                    row["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        now = datetime.now(timezone.utc).isoformat()
+        neptune_client.query(
+            "MATCH (b:OverwatchDogfoodBatch) WHERE b.remaining > 0 "
+            "SET b.remaining = 0, b.status = 'cancelled', b.cancelled_at = $now",
+            {"now": now},
+        )
+
+    config = overwatch_graph.get_dogfood_config()
+    if config.get("activated_by") == "batch":
+        overwatch_graph.set_dogfood_config(enabled=False, activated_by="cancel")
+
+    logger.info("[learning] batch cancelled: %s (%d runs remaining)", batch_id, remaining)
+    return {
+        "cancelled": True,
+        "batch_id": batch_id,
+        "runs_cancelled": remaining,
+    }
+
+
 # --- CI/CD metrics ----------------------------------------------------------
 
 

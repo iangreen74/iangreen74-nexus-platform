@@ -344,6 +344,41 @@ def test_schedule_invalid_rpd():
     assert "error" in result
 
 
+def test_cancel_batch_when_active():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    lo.run_batch(200)
+    assert lo.batch_status()["active"] is True
+    result = lo.cancel_batch()
+    assert result["cancelled"] is True
+    assert result["runs_cancelled"] == 200
+    assert lo.batch_status()["active"] is False
+    config = overwatch_graph.get_dogfood_config()
+    assert config.get("enabled") is False
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
+def test_cancel_batch_when_none_active():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    result = lo.cancel_batch()
+    assert result["cancelled"] is False
+
+
+def test_cancel_batch_endpoint():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    lo.run_batch(100)
+    resp = client.post("/api/dogfood/cancel-batch")
+    assert resp.status_code == 200
+    assert resp.json()["cancelled"] is True
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
 def test_schedule_endpoints():
     from nexus import overwatch_graph
     overwatch_graph._local_store.pop("OverwatchDogfoodSchedule", None)
