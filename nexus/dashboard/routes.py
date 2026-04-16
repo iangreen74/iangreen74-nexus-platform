@@ -249,6 +249,36 @@ async def platform_status() -> dict[str, Any]:
     executed_count = sum(1 for e in executions if e.get("status") == "executed")
     escalated_count = sum(1 for e in executions if e.get("status") == "escalated")
 
+    # Dials — derived from data already computed above
+    daemon_cycles = perf_daemon.get("sample_count", 0)
+    daemon_hours = perf_daemon.get("hours", 1) or 1
+    expected_cycles_per_hr = 60 / 5  # 5-min ECS health-check cadence
+    daemon_cycle_pct = min(100.0, (daemon_cycles / (daemon_hours * expected_cycles_per_hr)) * 100)
+    try:
+        uptime_pct = sre_metrics.compute_availability(24)
+    except Exception:
+        uptime_pct = None
+
+    # Findings summary from diagnosis history
+    findings_summary: dict[str, Any] = {"total": 0, "critical": 0, "warning": 0, "info": 0, "last_time": None}
+    try:
+        from nexus.capabilities.scheduled_diagnosis import get_diagnosis_history
+        history = get_diagnosis_history(hours=72)
+        for entry in history:
+            fc = entry.get("findings_count", 0)
+            findings_summary["total"] += fc
+            st = (entry.get("status") or "").lower()
+            if st == "critical":
+                findings_summary["critical"] += fc
+            elif st == "degraded":
+                findings_summary["warning"] += fc
+            else:
+                findings_summary["info"] += fc
+        if history:
+            findings_summary["last_time"] = history[0].get("created_at")
+    except Exception:
+        logger.debug("findings summary failed", exc_info=True)
+
     return {
         "overall": overall,
         "daemon": daemon,
@@ -275,6 +305,14 @@ async def platform_status() -> dict[str, Any]:
             "daemon_cycle": perf_daemon,
         },
         "forgewing_capabilities": forgewing_health,
+        "dials": {
+            "response_time_ms": forgewing_health.get("avg_response_ms"),
+            "error_rate_pct": round(daemon.get("error_rate", 0) * 60 / max(1, daemon_cycles / daemon_hours), 2) if daemon_cycles > 0 else 0.0,
+            "uptime_pct": uptime_pct,
+            "daemon_cycle_pct": round(daemon_cycle_pct, 1),
+            "ci_green_pct": round((ci.get("green_rate_24h") or 0) * 100, 1),
+        },
+        "findings_summary": findings_summary,
     }
 
 

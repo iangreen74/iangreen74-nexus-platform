@@ -241,6 +241,52 @@
   .tab-btn:hover { color: var(--text); }
   .tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent-green); }
   .tab-panel[hidden] { display: none; }
+
+  /* ── Metric Dials ──────────────────────────────────────────── */
+  .dials-row {
+    display: flex; gap: 1.5rem; justify-content: space-between;
+    margin-bottom: 1.5rem; padding: 1.25rem 1.5rem;
+    background: var(--bg-elev); border: 1px solid var(--nav-border);
+    border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .dial-card { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 0; }
+  .dial-label {
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-dim); margin-top: 0.5rem; text-align: center;
+  }
+  .dial-value {
+    font-size: 1.35rem; font-weight: 700; color: var(--text);
+    text-anchor: middle; dominant-baseline: middle;
+  }
+  .dial-arc-bg { fill: none; stroke: #e8edf2; stroke-width: 6; }
+  .dial-arc-fg {
+    fill: none; stroke-width: 6; stroke-linecap: round;
+    transition: stroke-dasharray 0.6s ease, stroke 0.4s ease;
+  }
+  .dial-arc-fg.green  { stroke: #22c55e; }
+  .dial-arc-fg.yellow { stroke: #f59e0b; }
+  .dial-arc-fg.red    { stroke: #ef4444; }
+
+  /* ── Findings Summary ──────────────────────────────────────── */
+  .findings-summary-card {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1rem 1.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .findings-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .findings-card-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.04em; }
+  .findings-count-badge {
+    background: #e8edf2; border-radius: 12px;
+    padding: 2px 10px; font-size: 0.8rem; font-weight: 600;
+  }
+  .findings-summary-body { display: flex; gap: 2rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  .finding-stat { display: flex; flex-direction: column; }
+  .finding-stat-label { font-size: 0.7rem; text-transform: uppercase; color: var(--text-dim); }
+  .finding-stat-val { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+  .finding-stat-val.red { color: var(--red); }
+  .finding-stat-val.yellow { color: var(--amber); }
 </style>
 </head>
 <body>
@@ -268,6 +314,55 @@
   </nav>
 
   <div class="tab-panel" id="tab-health" role="tabpanel" aria-labelledby="tab-btn-health">
+
+  <!-- Metric Dials -->
+  <div class="dials-row" id="dials-row">
+    <div class="dial-card">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="dial-arc-bg" cx="40" cy="40" r="30"/>
+        <circle class="dial-arc-fg" id="dial-response-arc" cx="40" cy="40" r="30"
+                stroke-dasharray="0 188.5" transform="rotate(-90 40 40)"/>
+        <text class="dial-value" id="dial-response-val" x="40" y="40">—</text>
+      </svg>
+      <div class="dial-label">Response</div>
+    </div>
+    <div class="dial-card">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="dial-arc-bg" cx="40" cy="40" r="30"/>
+        <circle class="dial-arc-fg" id="dial-error-arc" cx="40" cy="40" r="30"
+                stroke-dasharray="0 188.5" transform="rotate(-90 40 40)"/>
+        <text class="dial-value" id="dial-error-val" x="40" y="40">—</text>
+      </svg>
+      <div class="dial-label">Error Rate</div>
+    </div>
+    <div class="dial-card">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="dial-arc-bg" cx="40" cy="40" r="30"/>
+        <circle class="dial-arc-fg" id="dial-uptime-arc" cx="40" cy="40" r="30"
+                stroke-dasharray="0 188.5" transform="rotate(-90 40 40)"/>
+        <text class="dial-value" id="dial-uptime-val" x="40" y="40">—</text>
+      </svg>
+      <div class="dial-label">Uptime</div>
+    </div>
+    <div class="dial-card">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="dial-arc-bg" cx="40" cy="40" r="30"/>
+        <circle class="dial-arc-fg" id="dial-daemon-arc" cx="40" cy="40" r="30"
+                stroke-dasharray="0 188.5" transform="rotate(-90 40 40)"/>
+        <text class="dial-value" id="dial-daemon-val" x="40" y="40">—</text>
+      </svg>
+      <div class="dial-label">Daemon</div>
+    </div>
+    <div class="dial-card">
+      <svg width="80" height="80" viewBox="0 0 80 80">
+        <circle class="dial-arc-bg" cx="40" cy="40" r="30"/>
+        <circle class="dial-arc-fg" id="dial-ci-arc" cx="40" cy="40" r="30"
+                stroke-dasharray="0 188.5" transform="rotate(-90 40 40)"/>
+        <text class="dial-value" id="dial-ci-val" x="40" y="40">—</text>
+      </svg>
+      <div class="dial-label">CI</div>
+    </div>
+  </div>
 
   <section id="goal-health-section">
     <div class="section-head">
@@ -316,14 +411,34 @@
     <div id="tenant-detail-panel" style="margin-top:12px;"></div>
   </section>
 
-  <section id="health-timeline-section">
+  <section id="findings-summary-section">
     <div class="section-head">
-      <h2>Health Timeline</h2>
-      <span class="meta" id="timeline-meta">Loading…</span>
+      <h2>Findings Summary</h2>
+      <span class="meta" id="findings-meta">Loading…</span>
     </div>
-    <div class="section-sub">Autonomous Goal diagnoses run every 4 hours. Last 72 hours shown below.</div>
-    <div id="health-timeline" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="color:var(--text-dim); font-size:12px;">Loading…</div>
+    <div class="findings-summary-card" id="findings-summary">
+      <div class="findings-card-header">
+        <span class="findings-card-title">Last 72 hours</span>
+        <span class="findings-count-badge" id="findings-count">—</span>
+      </div>
+      <div class="findings-summary-body">
+        <div class="finding-stat">
+          <span class="finding-stat-label">Critical</span>
+          <span class="finding-stat-val red" id="findings-critical">—</span>
+        </div>
+        <div class="finding-stat">
+          <span class="finding-stat-label">Warning</span>
+          <span class="finding-stat-val yellow" id="findings-warning">—</span>
+        </div>
+        <div class="finding-stat">
+          <span class="finding-stat-label">Info</span>
+          <span class="finding-stat-val" id="findings-info">—</span>
+        </div>
+        <div class="finding-stat">
+          <span class="finding-stat-label">Last finding</span>
+          <span class="finding-stat-val" id="findings-last">—</span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -787,6 +902,64 @@ async function loadOverview() {
     </div>
   `).join('');
   document.getElementById('overview-meta').textContent = `updated ${fmtTime(new Date().toISOString())}`;
+  updateDials(data.dials);
+  updateFindingsSummary(data.findings_summary);
+}
+
+function updateDials(dials) {
+  if (!dials) return;
+  const CIRCUM = 2 * Math.PI * 30;
+  function setDial(arcId, valId, pct, displayText, colorClass) {
+    const arc = document.getElementById(arcId);
+    const val = document.getElementById(valId);
+    if (!arc || !val) return;
+    const filled = Math.max(0, Math.min(1, pct)) * CIRCUM;
+    arc.setAttribute('stroke-dasharray', `${filled.toFixed(1)} ${CIRCUM.toFixed(1)}`);
+    arc.className.baseVal = `dial-arc-fg ${colorClass}`;
+    val.textContent = displayText;
+  }
+  function band(val, greenMax, yellowMax, invert) {
+    if (invert) return val <= greenMax ? 'green' : val <= yellowMax ? 'yellow' : 'red';
+    return val >= greenMax ? 'green' : val >= yellowMax ? 'yellow' : 'red';
+  }
+  const rt = dials.response_time_ms;
+  if (rt != null) {
+    const pct = Math.max(0, 1 - rt / 2000);
+    setDial('dial-response-arc', 'dial-response-val', pct,
+      rt < 1000 ? `${Math.round(rt)}ms` : `${(rt/1000).toFixed(1)}s`,
+      band(rt, 300, 800, true));
+  }
+  const er = dials.error_rate_pct;
+  if (er != null) {
+    setDial('dial-error-arc', 'dial-error-val', Math.max(0, 1 - er / 20),
+      `${er.toFixed(1)}%`, band(er, 1, 5, true));
+  }
+  const up = dials.uptime_pct;
+  if (up != null) {
+    setDial('dial-uptime-arc', 'dial-uptime-val', up / 100,
+      `${up.toFixed(1)}%`, band(up, 99, 95, false));
+  }
+  const dm = dials.daemon_cycle_pct;
+  if (dm != null) {
+    setDial('dial-daemon-arc', 'dial-daemon-val', dm / 100,
+      `${Math.round(dm)}%`, band(dm, 90, 70, false));
+  }
+  const ci = dials.ci_green_pct;
+  if (ci != null) {
+    setDial('dial-ci-arc', 'dial-ci-val', ci / 100,
+      `${Math.round(ci)}%`, band(ci, 95, 80, false));
+  }
+}
+
+function updateFindingsSummary(fs) {
+  if (!fs) return;
+  const el = (id) => document.getElementById(id);
+  el('findings-count').textContent = fs.total ?? '—';
+  el('findings-meta').textContent = `${fs.total ?? 0} findings · last 72h`;
+  el('findings-critical').textContent = fs.critical ?? 0;
+  el('findings-warning').textContent = fs.warning ?? 0;
+  el('findings-info').textContent = fs.info ?? 0;
+  el('findings-last').textContent = fs.last_time ? fmtAge(fs.last_time) : '—';
 }
 
 const TENANT_STATUS_COLORS = {
@@ -1578,50 +1751,6 @@ async function loadGoalHealth() {
   } catch (_) { /* non-fatal */ }
 }
 
-const TIMELINE_STATUS_COLORS = {
-  healthy: '#10B981', degraded: '#F59E0B', critical: '#EF4444', unknown: '#9CA3AF'
-};
-const TREND_LABEL = {
-  improving: '↑ improving', degrading: '↓ degrading',
-  stable: '→ stable', insufficient_data: 'collecting…'
-};
-
-async function loadTimeline() {
-  const box = document.getElementById('health-timeline');
-  const meta = document.getElementById('timeline-meta');
-  if (!box) return;
-  try {
-    const r = await fetch(`${API}/diagnosis-history?hours=72`);
-    if (!r.ok) return;
-    const data = await r.json();
-    const entries = data.history || [];
-    const trend = data.trend || {};
-    meta.textContent = `${entries.length} diagnoses · ${TREND_LABEL[trend.trend] || trend.trend || '—'}`;
-    if (entries.length === 0) {
-      box.innerHTML = '<div style="color:var(--text-dim); font-size:12px;">No diagnoses yet — first autonomous run starts within 30s of service launch.</div>';
-      return;
-    }
-    box.innerHTML = entries.slice(0, 20).map(e => {
-      const color = TIMELINE_STATUS_COLORS[e.status] || TIMELINE_STATUS_COLORS.unknown;
-      const ago = fmtAge(e.created_at);
-      const summary = (e.report_summary || 'All systems nominal').slice(0, 180);
-      return `
-        <div style="display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-bottom:1px solid var(--border);">
-          <div style="width:10px; height:10px; border-radius:50%; background:${color}; margin-top:6px; flex:none;"></div>
-          <div style="flex:1; min-width:0;">
-            <div style="display:flex; gap:10px; align-items:baseline; font-size:12px;">
-              <span style="color:var(--text-dim); font-family:monospace;">${ago}</span>
-              <span style="font-weight:700; color:var(--text); text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">${e.status || '?'}</span>
-              <span style="color:var(--text-dim);">conf ${e.confidence || 0}%</span>
-              <span style="color:var(--text-dim);">${e.findings_count || 0} finding${(e.findings_count||0)!==1?'s':''}</span>
-            </div>
-            <div style="font-size:12px; color:var(--text); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${summary}</div>
-          </div>
-        </div>`;
-    }).join('');
-  } catch (e) { /* non-fatal */ }
-}
-
 async function loadFeatureHealth() {
   try {
     const r = await fetch(`${API}/feature-health`);
@@ -1835,7 +1964,7 @@ async function loadAll() {
   const skip = () => _diagnosisActive;
 
   // Wave 1 (immediate) — hero panels + timeline
-  await Promise.all([loadGoalHealth(), loadFeatureHealth(), loadTenants(), loadTimeline()]);
+  await Promise.all([loadGoalHealth(), loadFeatureHealth(), loadTenants()]);
 
   // Wave 2 (1.5s) — main body
   setTimeout(() => {
