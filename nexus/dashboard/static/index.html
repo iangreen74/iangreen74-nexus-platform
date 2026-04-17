@@ -909,6 +909,14 @@
 
   </div>
 
+  <section>
+    <div style="text-align:center; padding:12px;">
+      <button class="btn" style="font-size:13px; padding:10px 20px;" onclick="generateReport()">📊 Generate Intelligence Report</button>
+    </div>
+  </section>
+
+  </div>
+
 
   <footer>OVERWATCH · Polls every 30s · Data refreshes automatically · Click Copy Report for a diagnostic snapshot · <span id="graph-stats">graph: —</span></footer>
 </div>
@@ -3013,6 +3021,20 @@ async function cancelBatch() {
       alert('Could not cancel: ' + (data.reason || 'unknown error'));
     }
   } catch (e) { alert('Network error'); }
+}
+
+async function generateReport() {
+  try {
+    const resp = await fetch(`${API}/learning-report`);
+    const md = await resp.text();
+    const blob = new Blob([md], {type: 'text/markdown'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `learning-report-${new Date().toISOString().slice(0,19).replace(/:/g,'')}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Failed to generate report: ' + e); }
 }
 
 async function loadSchedule() {

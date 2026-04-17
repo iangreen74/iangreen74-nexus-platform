@@ -534,6 +534,19 @@ async def dogfood_schedule_set(body: dict[str, Any] = Body(default_factory=dict)
     return result
 
 
+@router.get("/learning-report")
+async def learning_report_endpoint() -> Response:
+    """Return the Learning Intelligence Report as markdown."""
+    from nexus.intelligence.learning_report import generate_report
+    try:
+        md = generate_report()
+        return Response(content=md, media_type="text/markdown")
+    except Exception as e:
+        return Response(
+            content=f"# Report Generation Failed\n\n{e}",
+            status_code=500, media_type="text/markdown")
+
+
 @router.post("/admin/advance-deploy/{tenant_id}")
 async def admin_advance_deploy(tenant_id: str) -> dict[str, Any]:
     """
