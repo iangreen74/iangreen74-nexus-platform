@@ -148,7 +148,9 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
 
     token = _gh_token()
     if not token:
-        return {"status": "failed", "reason": "no github token"}
+        logger.warning("dogfood: no github token (key=%s, mode=%s)",
+                        GITHUB_SECRET_ID, MODE)
+        return {"status": "failed", "reason": f"no github token (key={GITHUB_SECRET_ID})"}
 
     if not _create_repo(repo_name, token):
         return {"status": "failed", "reason": "repo_create_failed"}
