@@ -83,7 +83,7 @@ def test_ready_to_bypass_sonnet_requires_uses_and_quality(monkeypatch):
 
 def test_circuit_open_when_majority_fail(monkeypatch):
     def fake_query(cypher, params=None):
-        if "MATCH (d:DogfoodRun)" in cypher and "total_runs" in cypher:
+        if "MATCH (d:OverwatchDogfoodRun)" in cypher and "total_runs" in cypher:
             return [{"total_runs": 20, "successes": 5, "failures": 13,
                      "timeouts": 2}]
         return []
@@ -95,7 +95,7 @@ def test_circuit_open_when_majority_fail(monkeypatch):
 
 def test_circuit_closed_when_below_sample_threshold(monkeypatch):
     def fake_query(cypher, params=None):
-        if "MATCH (d:DogfoodRun)" in cypher and "total_runs" in cypher:
+        if "MATCH (d:OverwatchDogfoodRun)" in cypher and "total_runs" in cypher:
             return [{"total_runs": 5, "successes": 0, "failures": 5,
                      "timeouts": 0}]
         return []

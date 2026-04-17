@@ -115,7 +115,7 @@ def _training() -> dict[str, Any]:
 def _runs_today() -> int:
     """DogfoodRuns started in the last 24h — used for pacing estimate."""
     rows = neptune_client.query(
-        "MATCH (d:DogfoodRun) WHERE d.started_at >= $cutoff "
+        "MATCH (d:OverwatchDogfoodRun) WHERE d.started_at >= $cutoff "
         "RETURN count(d) AS runs_today",
         {"cutoff": _cutoff_iso(24)},
     ) or []
@@ -130,7 +130,7 @@ def _cutoff_iso(hours: int) -> str:
 
 def _dogfood() -> dict[str, Any]:
     rows = neptune_client.query(
-        "MATCH (d:DogfoodRun) "
+        "MATCH (d:OverwatchDogfoodRun) "
         "RETURN count(d) AS total_runs, "
         "sum(CASE WHEN d.status = 'success' THEN 1 ELSE 0 END) AS successes, "
         "sum(CASE WHEN d.status = 'failed' THEN 1 ELSE 0 END) AS failures, "
@@ -186,7 +186,7 @@ def _dogfood_circuit_open(failures: int, total: int) -> bool:
 
 def _recent_runs() -> list[dict[str, Any]]:
     rows = neptune_client.query(
-        "MATCH (d:DogfoodRun) "
+        "MATCH (d:OverwatchDogfoodRun) "
         "RETURN d.app_name AS app, d.fingerprint AS fp, "
         "d.status AS status, d.started_at AS started, "
         "d.completed_at AS completed "
@@ -499,7 +499,7 @@ def intelligence_score() -> dict[str, Any]:
     score = min(100, INTELLIGENCE_BASE + from_bypasses + from_examples + from_quality)
 
     history_rows = neptune_client.query(
-        "MATCH (d:DogfoodRun) WHERE d.status = 'success' "
+        "MATCH (d:OverwatchDogfoodRun) WHERE d.status = 'success' "
         "RETURN toString(date(d.completed_at)) AS day, count(d) AS runs "
         "ORDER BY day ASC"
     ) or []
