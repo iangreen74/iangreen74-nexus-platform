@@ -237,7 +237,8 @@ def _activity_timeline(tid: str, hours: int = 48) -> list[dict[str, Any]]:
 def _engagement(tid: str) -> dict[str, Any]:
     rows = neptune_client.query(
         "MATCH (m:ConversationMessage {tenant_id: $tid, role: 'user'}) "
-        "RETURN m.timestamp AS ts, length(coalesce(m.content,'')) AS len "
+        "RETURN m.timestamp AS ts, "
+        "CASE WHEN m.content IS NOT NULL THEN size(m.content) ELSE 0 END AS len "
         "ORDER BY m.timestamp DESC LIMIT 500",
         {"tid": tid},
     ) or []
