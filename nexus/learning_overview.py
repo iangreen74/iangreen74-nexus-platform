@@ -28,7 +28,7 @@ _cache: tuple[dict[str, Any], float] = ({}, 0.0)
 # "ready to bypass Sonnet". Kept here so tests can reach them.
 FINETUNE_EXAMPLE_THRESHOLD = 1000
 BYPASS_MIN_USES = 5
-DOGFOOD_TENANT_ID = "forge-1dba4143ca24ed1f"
+DOGFOOD_TENANT_ID = "forge-dogfood-runner"
 BYPASS_MIN_QUALITY = 0.9
 DOGFOOD_COST_PER_RUN_USD = 0.15
 
@@ -294,7 +294,7 @@ def clear_cache() -> None:
 
 # --- Batch runs -------------------------------------------------------------
 
-VALID_BATCH_SIZES = (100, 200, 500, 1000)
+VALID_BATCH_SIZES = (10, 100, 200, 500, 1000)
 
 
 def run_batch(count: int) -> dict[str, Any]:
