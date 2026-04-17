@@ -22,6 +22,7 @@ from nexus.capabilities import forgewing_api
 logger = logging.getLogger("nexus.sensors.dogfood")
 
 DEFAULT_MAX_WAIT_MINUTES = 90
+STUCK_NOT_STARTED_MINUTES = int(os.environ.get("DOGFOOD_STUCK_NOT_STARTED_MIN", "5"))
 
 
 def _decrement_if_batch(batch_id: str, success: bool) -> None:
@@ -100,6 +101,17 @@ def check_dogfood_runs() -> dict[str, Any]:
             )
             _decrement_if_batch(batch_id, success=False)
             failed += 1
+        elif stage == "not_started" and batch_id and age_seconds > STUCK_NOT_STARTED_MINUTES * 60:
+            msg = (f"Deploy stayed at not_started for {age_seconds / 60:.0f}m. "
+                   "Likely cause: AWS role missing or trust policy wrong.")
+            overwatch_graph.update_dogfood_run(
+                run_id, status="failed", completed_at=now.isoformat(),
+                outcome="deploy_never_started", failure_message=msg,
+            )
+            _decrement_if_batch(batch_id, success=False)
+            failed += 1
+            logger.info("dogfood: run %s failed — deploy never started (%.0fm)",
+                         run_id, age_seconds / 60)
 
     report = {
         "polled": len(pending),
