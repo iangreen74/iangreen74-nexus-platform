@@ -64,19 +64,63 @@ async def run_deploy_cycle() -> dict[str, Any]:
         logger.exception("deploy_cycle: dogfood_reconciler failed")
         results["dogfood_reconciler"] = {"error": "exception"}
 
-    # 3. Check auto-schedule
+    # 3. Kick off dogfood run if enabled/batch active
+    try:
+        results["dogfood_kick"] = await asyncio.wait_for(
+            asyncio.to_thread(_kick_dogfood_if_needed), timeout=60)
+    except asyncio.TimeoutError:
+        logger.warning("deploy_cycle: dogfood kick timed out (60s)")
+        results["dogfood_kick"] = {"error": "timeout"}
+    except Exception:
+        logger.exception("deploy_cycle: dogfood kick failed")
+        results["dogfood_kick"] = {"error": "exception"}
+
+    # 4. Check auto-schedule
     try:
         results["schedule"] = await asyncio.to_thread(_check_schedule)
     except Exception:
         logger.exception("deploy_cycle: schedule check failed")
 
-    # 4. Check batch completion → auto-pause
+    # 5. Check batch completion → auto-pause
     try:
         results["batch"] = await asyncio.to_thread(_check_batch_completion)
     except Exception:
         logger.exception("deploy_cycle: batch completion check failed")
 
+    kicked = results.get("dogfood_kick", {})
+    if not kicked.get("skipped"):
+        logger.info("deploy_cycle: tick done (kick=%s, sensor=%s, recon=%s)",
+                     kicked.get("status") or kicked.get("error", "—"),
+                     "ok" if "error" not in (results.get("dogfood_sensor") or {}) else "err",
+                     "ok" if "error" not in (results.get("dogfood_reconciler") or {}) else "err")
     return results
+
+
+def _kick_dogfood_if_needed() -> dict[str, Any]:
+    """
+    If the runner is enabled or a batch is active, kick off one dogfood
+    deploy per cycle. This is the bridge between "batch queued in Neptune"
+    and "repos actually being created + deployed."
+    """
+    from nexus import overwatch_graph
+    from nexus.capabilities.dogfood_capability import _is_enabled, run_dogfood_cycle
+
+    batch = overwatch_graph.get_active_batch()
+    if not _is_enabled() and not batch:
+        return {"skipped": True, "reason": "not enabled, no batch"}
+
+    result = run_dogfood_cycle()
+    status = result.get("status") or result.get("reason") or "unknown"
+    logger.info("deploy_cycle: dogfood kick → %s (app=%s)",
+                status, result.get("app", "—"))
+
+    # Decrement batch counter if this was a batch run
+    if batch and not result.get("skipped"):
+        batch_id = batch.get("batch_id") or ""
+        success = result.get("status") == "kicked_off"
+        overwatch_graph.decrement_batch(batch_id, success)
+
+    return result
 
 
 def _check_schedule() -> dict[str, Any]:
