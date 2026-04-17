@@ -2023,10 +2023,10 @@ async def neptune_integrity_scan() -> dict[str, Any]:
 
 @router.get("/ci-decision")
 async def ci_decision() -> dict[str, Any]:
-    """Current deploy readiness — 8-factor evaluation. Read-only."""
-    from nexus.capabilities.ci_decision_engine import evaluate_deploy_readiness
+    """Current deploy readiness — 8-factor evaluation. Honors active override."""
+    from nexus.capabilities.ci_cd_gates import evaluate_ci_gate
 
-    return evaluate_deploy_readiness()
+    return evaluate_ci_gate()
 
 
 @router.post("/incident-signatures/bootstrap")
