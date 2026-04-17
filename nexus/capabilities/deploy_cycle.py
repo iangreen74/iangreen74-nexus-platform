@@ -119,6 +119,8 @@ def _kick_dogfood_if_needed() -> dict[str, Any]:
     if batch and not result.get("skipped") and result.get("run_id"):
         batch_id = batch.get("batch_id") or ""
         overwatch_graph.update_dogfood_run(result["run_id"], batch_id=batch_id)
+        logger.info("deploy_cycle: stamped batch_id=%s on run %s",
+                     batch_id, result["run_id"])
 
     return result
 
