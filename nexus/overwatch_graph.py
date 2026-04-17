@@ -317,7 +317,7 @@ def list_dogfood_runs(
         "d.repo_name AS repo_name, d.project_id AS project_id, "
         "d.tenant_id AS tenant_id, d.status AS status, "
         "d.started_at AS started_at, d.completed_at AS completed_at, "
-        "d.cleaned_up AS cleaned_up "
+        "d.cleaned_up AS cleaned_up, d.batch_id AS batch_id "
         "ORDER BY d.started_at DESC LIMIT $limit",
         params,
     )
