@@ -117,6 +117,9 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
         return {"skipped": True, "reason": "not enabled"}
 
     if not tenant_id:
+        config = overwatch_graph.get_dogfood_config()
+        tenant_id = config.get("tenant_id") or ""
+    if not tenant_id:
         tenant_id = os.environ.get("DOGFOOD_TENANT_ID", "")
     if not tenant_id:
         return {"skipped": True, "reason": "no tenant_id"}

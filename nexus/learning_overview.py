@@ -28,6 +28,7 @@ _cache: tuple[dict[str, Any], float] = ({}, 0.0)
 # "ready to bypass Sonnet". Kept here so tests can reach them.
 FINETUNE_EXAMPLE_THRESHOLD = 1000
 BYPASS_MIN_USES = 5
+DOGFOOD_TENANT_ID = "forge-1dba4143ca24ed1f"
 BYPASS_MIN_QUALITY = 0.9
 DOGFOOD_COST_PER_RUN_USD = 0.15
 
@@ -317,7 +318,10 @@ def run_batch(count: int) -> dict[str, Any]:
     import uuid
     batch_id = f"batch-{uuid.uuid4().hex[:12]}"
     overwatch_graph.create_dogfood_batch(batch_id, count)
-    overwatch_graph.set_dogfood_config(enabled=True, activated_by="batch")
+    overwatch_graph.set_dogfood_config(
+        enabled=True, activated_by="batch",
+        tenant_id=DOGFOOD_TENANT_ID,
+    )
 
     cost = round(count * DOGFOOD_COST_PER_RUN_USD, 2)
     runs_today = _runs_today()

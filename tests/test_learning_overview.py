@@ -288,6 +288,28 @@ def test_intelligence_score_endpoint():
 # --- Neptune activation + schedule ------------------------------------------
 
 
+def test_run_batch_stores_tenant_id_in_config():
+    from nexus import overwatch_graph
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    lo.run_batch(100)
+    config = overwatch_graph.get_dogfood_config()
+    assert config.get("tenant_id") == lo.DOGFOOD_TENANT_ID
+    overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
+def test_dogfood_cycle_reads_tenant_from_config():
+    from nexus import overwatch_graph
+    from nexus.capabilities.dogfood_capability import run_dogfood_cycle
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+    overwatch_graph.set_dogfood_config(enabled=True, activated_by="test",
+                                       tenant_id="forge-test-tenant")
+    result = run_dogfood_cycle()
+    assert result.get("skipped") is not True or result.get("reason") != "no tenant_id"
+    overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
+
+
 def test_run_batch_activates_neptune_config():
     from nexus import overwatch_graph
     overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)

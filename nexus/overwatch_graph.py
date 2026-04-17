@@ -404,12 +404,14 @@ def get_dogfood_config() -> dict[str, Any]:
     rows = query(
         "MATCH (c:OverwatchDogfoodConfig {config_id: 'main'}) "
         "RETURN c.enabled AS enabled, c.activated_by AS activated_by, "
-        "c.activated_at AS activated_at, c.paused_at AS paused_at LIMIT 1"
+        "c.activated_at AS activated_at, c.paused_at AS paused_at, "
+        "c.tenant_id AS tenant_id LIMIT 1"
     )
     return rows[0] if rows and isinstance(rows[0], dict) else {}
 
 
-def set_dogfood_config(enabled: bool, activated_by: str = "ui") -> None:
+def set_dogfood_config(enabled: bool, activated_by: str = "ui",
+                       tenant_id: str | None = None) -> None:
     """Write the DogfoodConfig singleton."""
     ts = _now_iso()
     if MODE != "production":
@@ -418,6 +420,8 @@ def set_dogfood_config(enabled: bool, activated_by: str = "ui") -> None:
             if rows:
                 rows[0]["enabled"] = enabled
                 rows[0]["activated_by"] = activated_by
+                if tenant_id is not None:
+                    rows[0]["tenant_id"] = tenant_id
                 if enabled:
                     rows[0]["activated_at"] = ts
                 else:
@@ -425,20 +429,25 @@ def set_dogfood_config(enabled: bool, activated_by: str = "ui") -> None:
             else:
                 rows.append({"config_id": "main", "id": _new_id(),
                              "enabled": enabled, "activated_by": activated_by,
+                             "tenant_id": tenant_id or "",
                              "activated_at": ts if enabled else "",
                              "paused_at": "" if enabled else ts})
         return
+    tid_clause = ", c.tenant_id = $tid" if tenant_id is not None else ""
+    params: dict[str, Any] = {"ts": ts, "by": activated_by}
+    if tenant_id is not None:
+        params["tid"] = tenant_id
     if enabled:
         query(
             "MERGE (c:OverwatchDogfoodConfig {config_id: 'main'}) "
-            "SET c.enabled = true, c.activated_at = $ts, c.activated_by = $by",
-            {"ts": ts, "by": activated_by},
+            f"SET c.enabled = true, c.activated_at = $ts, c.activated_by = $by{tid_clause}",
+            params,
         )
     else:
         query(
             "MERGE (c:OverwatchDogfoodConfig {config_id: 'main'}) "
-            "SET c.enabled = false, c.paused_at = $ts",
-            {"ts": ts},
+            f"SET c.enabled = false, c.paused_at = $ts{tid_clause}",
+            params,
         )
 
 
