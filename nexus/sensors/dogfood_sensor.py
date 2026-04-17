@@ -24,6 +24,13 @@ logger = logging.getLogger("nexus.sensors.dogfood")
 DEFAULT_MAX_WAIT_MINUTES = 90
 
 
+def _decrement_if_batch(batch_id: str, success: bool) -> None:
+    """Decrement the batch counter when a run reaches terminal state."""
+    if not batch_id:
+        return
+    overwatch_graph.decrement_batch(batch_id, success)
+
+
 def _max_wait_minutes() -> int:
     try:
         return int(os.environ.get("DOGFOOD_MAX_WAIT_MINUTES", DEFAULT_MAX_WAIT_MINUTES))
@@ -59,6 +66,7 @@ def check_dogfood_runs() -> dict[str, Any]:
 
         started = _parse_iso(run.get("started_at"))
         age_seconds = (now - started).total_seconds() if started else 0
+        batch_id = run.get("batch_id") or ""
 
         # Timeout check — don't even bother polling if already over cap.
         if age_seconds > max_wait_seconds:
@@ -67,6 +75,7 @@ def check_dogfood_runs() -> dict[str, Any]:
                 status="timeout",
                 completed_at=now.isoformat(),
             )
+            _decrement_if_batch(batch_id, success=False)
             timed_out += 1
             logger.info("dogfood: run %s timed out after %.0fs", run_id, age_seconds)
             continue
@@ -82,12 +91,14 @@ def check_dogfood_runs() -> dict[str, Any]:
             overwatch_graph.update_dogfood_run(
                 run_id, status="success", completed_at=now.isoformat(),
             )
+            _decrement_if_batch(batch_id, success=True)
             completed += 1
         elif stage in ("failed", "error"):
             overwatch_graph.update_dogfood_run(
                 run_id, status="failed", completed_at=now.isoformat(),
                 failure_message=(progress.get("message") or "")[:500],
             )
+            _decrement_if_batch(batch_id, success=False)
             failed += 1
 
     report = {

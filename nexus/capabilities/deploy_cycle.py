@@ -114,11 +114,11 @@ def _kick_dogfood_if_needed() -> dict[str, Any]:
     logger.info("deploy_cycle: dogfood kick → %s (app=%s)",
                 status, result.get("app", "—"))
 
-    # Decrement batch counter if this was a batch run
-    if batch and not result.get("skipped"):
+    # Stamp batch_id on the DogfoodRun so the sensor can decrement
+    # the correct batch when the run reaches terminal state.
+    if batch and not result.get("skipped") and result.get("run_id"):
         batch_id = batch.get("batch_id") or ""
-        success = result.get("status") == "kicked_off"
-        overwatch_graph.decrement_batch(batch_id, success)
+        overwatch_graph.update_dogfood_run(result["run_id"], batch_id=batch_id)
 
     return result
 
