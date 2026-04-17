@@ -165,9 +165,12 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     )
     project_id = proj.get("project_id", "") if isinstance(proj, dict) else ""
     if not project_id or proj.get("error"):
+        err = proj.get("error") if isinstance(proj, dict) else str(proj)[:200]
+        logger.warning("dogfood: project_create_failed for %s: %s (response=%s)",
+                        repo_name, err, str(proj)[:300])
         httpx.delete(f"{GITHUB_API}/repos/{GITHUB_USER}/{repo_name}",
                      headers=_gh_headers(token), timeout=10)
-        return {"status": "failed", "reason": f"project_create_failed: {proj.get('error')}"}
+        return {"status": "failed", "reason": f"project_create_failed: {err}"}
 
     forgewing_api.call_api("POST", f"/deploy/{tenant_id}",
                             data={"project_id": project_id})
