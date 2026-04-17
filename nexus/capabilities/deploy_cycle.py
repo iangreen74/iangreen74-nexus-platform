@@ -87,6 +87,12 @@ async def run_deploy_cycle() -> dict[str, Any]:
     except Exception:
         logger.exception("deploy_cycle: batch completion check failed")
 
+    # 6. Daily learning snapshot (idempotent by date)
+    try:
+        await asyncio.to_thread(_maybe_capture_snapshot)
+    except Exception:
+        logger.exception("deploy_cycle: snapshot capture failed")
+
     kicked = results.get("dogfood_kick", {})
     if not kicked.get("skipped"):
         logger.info("deploy_cycle: tick done (kick=%s, sensor=%s, recon=%s)",
@@ -123,6 +129,23 @@ def _kick_dogfood_if_needed() -> dict[str, Any]:
                      batch_id, result["run_id"])
 
     return result
+
+
+_last_snapshot_date: str = ""
+
+
+def _maybe_capture_snapshot() -> None:
+    """Capture one learning snapshot per day."""
+    global _last_snapshot_date
+    today = datetime.now(timezone.utc).date().isoformat()
+    if _last_snapshot_date == today:
+        return
+    try:
+        from nexus.intelligence.learning_snapshot import capture_snapshot
+        capture_snapshot()
+        _last_snapshot_date = today
+    except Exception:
+        logger.exception("deploy_cycle: snapshot capture failed")
 
 
 def _check_schedule() -> dict[str, Any]:

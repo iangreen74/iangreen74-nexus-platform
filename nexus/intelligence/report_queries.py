@@ -60,6 +60,34 @@ def mission_tasks_for_runs(
         return []
 
 
+def briefs_for_projects(project_ids: list[str]) -> set[str]:
+    if not project_ids:
+        return set()
+    try:
+        rows = overwatch_graph.query(
+            "MATCH (b:MissionBrief) WHERE b.project_id IN $pids "
+            "RETURN DISTINCT b.project_id AS pid",
+            {"pids": project_ids},
+        ) or []
+        return {r.get("pid") for r in rows if r.get("pid")}
+    except Exception:
+        return set()
+
+
+def blueprints_for_projects(project_ids: list[str]) -> set[str]:
+    if not project_ids:
+        return set()
+    try:
+        rows = overwatch_graph.query(
+            "MATCH (b:ProductBlueprint) WHERE b.project_id IN $pids "
+            "RETURN DISTINCT b.project_id AS pid",
+            {"pids": project_ids},
+        ) or []
+        return {r.get("pid") for r in rows if r.get("pid")}
+    except Exception:
+        return set()
+
+
 def pattern_fingerprint_counts() -> tuple[int, int]:
     try:
         total = overwatch_graph.query(
@@ -88,9 +116,18 @@ def active_heal_chains() -> list[dict[str, Any]]:
 
 
 def bedrock_24h_cost() -> dict[str, Any]:
+    """AWS daily spend from Cost Explorer (best available proxy)."""
     try:
-        from nexus.capabilities.bedrock_monitor import journey_bedrock_health
-        r = journey_bedrock_health()
-        return {"cost_usd": 0.0, "call_count": 0, "raw": r}
+        from nexus.capabilities.cost_monitor import get_daily_spend
+        r = get_daily_spend()
+        if r.get("error"):
+            return {"cost_usd": 0.0, "call_count": 0}
+        return {
+            "cost_usd": float(r.get("today") or 0.0),
+            "call_count": 0,
+            "yesterday_usd": float(r.get("yesterday") or 0.0),
+            "mtd_usd": float(r.get("month_to_date") or 0.0),
+            "burn_rate_per_day": float(r.get("burn_rate_per_day") or 0.0),
+        }
     except Exception:
         return {"cost_usd": 0.0, "call_count": 0}

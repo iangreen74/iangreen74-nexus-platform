@@ -6,10 +6,14 @@ from collections import Counter
 from nexus.intelligence import capability_matrix as cm
 from nexus.intelligence import report_queries as q
 
+STAGE_LEGEND = ("K=Kickoff · B=Brief · L=Blueprint · C=Codegen "
+                "· P=PR · I=CI · D=Deploy · H=Health · T=Pattern")
+
 
 def section_1_executive_summary() -> str:
     runs = q.recent_dogfood_runs(hours=168)
-    completed = [r for r in runs if r.get("status") in ("success", "failed", "timeout")]
+    completed = [r for r in runs
+                 if r.get("status") in ("success", "failed", "timeout")]
     successes = [r for r in completed if r.get("status") == "success"]
 
     attempts = q.deploy_attempts(hours=168)
@@ -17,17 +21,16 @@ def section_1_executive_summary() -> str:
               if isinstance(a.get("quality"), (int, float))]
     avg_q = (sum(scores) / len(scores)) if scores else None
 
-    daily = max(1, len(successes) / 7.0)
+    daily = len(successes) / 7.0
     remaining = max(0, 1000 - len(successes))
-    days = int(remaining / daily) if daily > 0 else 9999
+    days_display = str(int(remaining / daily)) if daily > 0 else "∞ (velocity = 0)"
 
     lines = ["## 1. Executive Summary", ""]
     lines.append(f"**Runs this week:** {len(runs)} "
                  f"({len(completed)} completed, {len(successes)} successes)")
     lines.append(f"**Avg code quality:** "
                  f"{f'{avg_q:.2f}' if avg_q else 'no data'}")
-    lines.append(f"**Days to fine-tune threshold (1000):** "
-                 f"{days if days < 9999 else '∞ (velocity = 0)'}")
+    lines.append(f"**Days to fine-tune threshold (1000):** {days_display}")
     lines.append("")
     lines.append(_synthesis(runs, completed, successes))
     return "\n".join(lines)
@@ -58,32 +61,54 @@ def section_2_causal_chain() -> str:
     for t in q.mission_tasks_for_runs(pids):
         tasks_map.setdefault(t.get("project_id"), []).append(t)
 
-    lines = ["## 2. Per-Run Causal Chain (last 48h)", ""]
-    lines.append("| Run | App | Kickoff | Deploy | Outcome |")
-    lines.append("|---|---|---|---|---|")
+    briefs = q.briefs_for_projects(pids)
+    blueprints = q.blueprints_for_projects(pids)
+    attempts = {a["project_id"]: a for a in q.deploy_attempts(hours=48)
+                if a.get("project_id")}
+
+    lines = [
+        "## 2. Per-Run Causal Chain (last 48h)",
+        "", f"_{STAGE_LEGEND}_", "",
+        "| Run | App | K | B | L | C | P | I | D | H | T | Outcome |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
     for r in runs[:30]:
-        tasks = tasks_map.get(r.get("project_id"), [])
-        lines.append(_causal_row(r, tasks))
+        pid = r.get("project_id")
+        lines.append(_causal_row(
+            r, tasks_map.get(pid, []),
+            pid in briefs, pid in blueprints, attempts.get(pid),
+        ))
     if len(runs) > 30:
         lines.append(f"\n_... {len(runs) - 30} more_")
     return "\n".join(lines)
 
 
-def _causal_row(run, tasks) -> str:
+def _causal_row(run, tasks, has_brief, has_blueprint, attempt) -> str:
     status = run.get("status", "?")
     outcome = run.get("outcome") or status
-    app = (run.get("app") or "?")[:15]
+    app = (run.get("app") or "?")[:13]
     rid = (run.get("run_id") or "?")[:8]
-    kick = "✓" if status != "kick_failed" else "✗"
-    if outcome == "deploy_never_started":
-        deploy = "✗ never started"
-    elif outcome == "success":
-        deploy = "✓"
+
+    k = "✓" if status != "kick_failed" else "✗"
+    b = "✓" if has_brief else ("—" if outcome == "deploy_never_started" else "?")
+    bp = "✓" if has_blueprint else ("—" if not has_brief else "?")
+    has_prs = any(t.get("pr_url") for t in tasks)
+    merged = [t for t in tasks if t.get("status") == "complete"]
+    c = "✓" if has_prs else ("—" if not has_blueprint else "?")
+    p = "✓" if has_prs else "—"
+    ci = "✓" if merged and has_prs else ("—" if not has_prs else "?")
+
+    if outcome == "success":
+        d, h, t_ = "✓", "✓", ("✓" if attempt else "✗")
+    elif outcome == "deploy_never_started":
+        d, h, t_ = "✗", "—", "—"
     elif outcome in ("failed", "timeout"):
-        deploy = "✗"
+        d, h, t_ = "✗", "—", "—"
     else:
-        deploy = "?"
-    return f"| `{rid}` | {app} | {kick} | {deploy} | `{outcome}` |"
+        d, h, t_ = "?", "?", "?"
+
+    return (f"| `{rid}` | {app} | {k} | {b} | {bp} | {c} | {p} "
+            f"| {ci} | {d} | {h} | {t_} | `{outcome}` |")
 
 
 def section_3_pattern_library() -> str:

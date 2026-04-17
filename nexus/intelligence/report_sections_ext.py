@@ -46,9 +46,14 @@ def section_6_cost_economics() -> str:
     attempts = q.deploy_attempts(hours=24)
     bedrock = q.bedrock_24h_cost()
     cost = bedrock.get("cost_usd", 0.0)
+    mtd = bedrock.get("mtd_usd", 0.0)
+    burn = bedrock.get("burn_rate_per_day", 0.0)
 
     lines = ["## 6. Cost Economics (last 24h)", ""]
-    lines.append(f"**Bedrock cost:** ${cost:.2f}")
+    lines.append(f"**AWS spend today:** ${cost:.2f}")
+    if mtd:
+        lines.append(f"**Month-to-date:** ${mtd:.2f} "
+                     f"(${burn:.2f}/day burn rate)")
     lines.append(f"**Dogfood runs:** {len(runs)}")
     lines.append(f"**Successes:** {len(successes)}")
     lines.append(f"**Training records:** {len(attempts)}")
@@ -68,26 +73,47 @@ def section_6_cost_economics() -> str:
 
 
 def section_7_trajectory() -> str:
-    runs = q.recent_dogfood_runs(hours=168)
-    successes = [r for r in runs if r.get("status") == "success"]
+    from nexus.intelligence.learning_snapshot import get_snapshots
+    snapshots = get_snapshots(days=14)
 
     lines = ["## 7. Intelligence Trajectory", ""]
-    lines.append("_Cross-day trend requires daily snapshots (not yet "
-                  "captured). Current state shown as a single point._")
-    lines.append("")
-    daily = _by_day(successes)
-    if daily:
-        lines.append("**Successes by day (7d):**")
+    if not snapshots:
+        runs = q.recent_dogfood_runs(hours=168)
+        successes = [r for r in runs if r.get("status") == "success"]
+        lines.append("_No historical snapshots yet. First snapshot captures "
+                      "after the daily scheduler fires._")
         lines.append("")
-        mx = max(daily.values()) if daily else 1
-        for day in sorted(daily):
-            c = daily[day]
-            bar = "█" * int((c / mx) * 30) if mx else ""
-            lines.append(f"  {day}  {bar} {c}")
+        daily = _by_day(successes)
+        if daily:
+            lines.append("**Successes by day (from run data):**")
+            lines.append("")
+            mx = max(daily.values()) if daily else 1
+            for day in sorted(daily):
+                c = daily[day]
+                bar = "█" * int((c / mx) * 30) if mx else ""
+                lines.append(f"  {day}  {bar} {c}")
+        _, unique = q.pattern_fingerprint_counts()
+        lines.append(f"\n**Fingerprints:** {len(successes)} successes "
+                     f"→ {unique} unique fingerprints")
+        return "\n".join(lines)
+
+    lines.append(f"**{len(snapshots)} days of history:**")
     lines.append("")
-    _, unique = q.pattern_fingerprint_counts()
-    lines.append(f"**Fingerprint capture rate:** {len(successes)} successes "
-                 f"→ {unique} unique fingerprints")
+    lines.append("### Successes per day")
+    mx = max((int(s.get("successes") or 0) for s in snapshots), default=1) or 1
+    for s in snapshots:
+        date = s.get("date", "?")
+        n = int(s.get("successes") or 0)
+        bar = "█" * int((n / mx) * 30) if mx else ""
+        lines.append(f"  {date}  {bar} {n}")
+    lines.append("")
+    lines.append("### Pattern library growth")
+    mx2 = max((int(s.get("patterns") or 0) for s in snapshots), default=1) or 1
+    for s in snapshots:
+        date = s.get("date", "?")
+        n = int(s.get("patterns") or 0)
+        bar = "█" * int((n / mx2) * 30) if mx2 else ""
+        lines.append(f"  {date}  {bar} {n}")
     return "\n".join(lines)
 
 
@@ -107,8 +133,8 @@ def section_8_anomalies() -> str:
         from nexus import overwatch_graph
         batches = overwatch_graph.query(
             "MATCH (b:OverwatchDogfoodBatch) "
-            "RETURN b.batch_id AS id, b.completed AS completed, "
-            "b.requested AS requested LIMIT 20"
+            "RETURN b.batch_id AS id, b.completed AS completed "
+            "LIMIT 20"
         ) or []
         for b in batches:
             bid = b.get("id")
