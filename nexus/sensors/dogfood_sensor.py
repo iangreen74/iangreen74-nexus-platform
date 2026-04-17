@@ -48,6 +48,33 @@ def _parse_iso(ts: Any) -> datetime | None:
         return None
 
 
+def _maybe_auto_approve(tenant_id: str, project_id: str) -> None:
+    """If the tenant is at brief_pending_approval, call /approve-blueprint
+    to create tasks and advance the pipeline. Dogfood runs have no human
+    in the loop — the sensor acts as the approval authority."""
+    try:
+        status = forgewing_api.call_api(
+            "GET", f"/status/{tenant_id}?project_id={project_id}")
+        if not isinstance(status, dict):
+            return
+        mission_stage = (status.get("mission_stage") or "").lower()
+        if mission_stage != "brief_pending_approval":
+            return
+        result = forgewing_api.call_api(
+            "POST", f"/projects/{tenant_id}/{project_id}/approve-blueprint")
+        if isinstance(result, dict) and result.get("status") == "approved":
+            logger.info("dogfood: auto-approved blueprint for %s/%s (%s tasks)",
+                        tenant_id[:12], project_id[:7],
+                        result.get("tasks_created", "?"))
+        elif isinstance(result, dict) and result.get("status") == "no_blueprint":
+            pass  # synthesis hasn't finished yet — try again next cycle
+        else:
+            logger.debug("dogfood: approve-blueprint returned %s", result)
+    except Exception:
+        logger.debug("dogfood: auto-approve failed for %s", tenant_id[:12],
+                     exc_info=True)
+
+
 def check_dogfood_runs() -> dict[str, Any]:
     """Single pass: poll deploy-progress for every pending DogfoodRun."""
     pending = overwatch_graph.list_dogfood_runs(status="pending", limit=50)
@@ -101,17 +128,21 @@ def check_dogfood_runs() -> dict[str, Any]:
             )
             _decrement_if_batch(batch_id, success=False)
             failed += 1
-        elif stage == "not_started" and batch_id and age_seconds > STUCK_NOT_STARTED_MINUTES * 60:
-            msg = (f"Deploy stayed at not_started for {age_seconds / 60:.0f}m. "
-                   "Likely cause: AWS role missing or trust policy wrong.")
-            overwatch_graph.update_dogfood_run(
-                run_id, status="failed", completed_at=now.isoformat(),
-                outcome="deploy_never_started", failure_message=msg,
-            )
-            _decrement_if_batch(batch_id, success=False)
-            failed += 1
-            logger.info("dogfood: run %s failed — deploy never started (%.0fm)",
-                         run_id, age_seconds / 60)
+        elif stage == "not_started":
+            # Pipeline may be waiting for blueprint approval. Check tenant
+            # stage and auto-approve if brief is ready — dogfood has no
+            # human in the loop.
+            _maybe_auto_approve(tenant_id, project_id)
+            if batch_id and age_seconds > STUCK_NOT_STARTED_MINUTES * 60:
+                msg = (f"Deploy stayed at not_started for {age_seconds / 60:.0f}m.")
+                overwatch_graph.update_dogfood_run(
+                    run_id, status="failed", completed_at=now.isoformat(),
+                    outcome="deploy_never_started", failure_message=msg,
+                )
+                _decrement_if_batch(batch_id, success=False)
+                failed += 1
+                logger.info("dogfood: run %s failed — deploy never started (%.0fm)",
+                             run_id, age_seconds / 60)
 
     report = {
         "polled": len(pending),
