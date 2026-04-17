@@ -96,6 +96,11 @@ async def startup():
         start_ci_cycle()
     except Exception:
         logger.exception("ci_cycle scheduler failed to start")
+    try:
+        from nexus.capabilities.deploy_cycle import start_deploy_cycle
+        start_deploy_cycle()
+    except Exception:
+        logger.exception("deploy_cycle scheduler failed to start")
 
 
 @app.on_event("shutdown")

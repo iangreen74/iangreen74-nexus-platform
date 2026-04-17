@@ -534,6 +534,36 @@ async def dogfood_schedule_set(body: dict[str, Any] = Body(default_factory=dict)
     return result
 
 
+@router.post("/admin/advance-deploy/{tenant_id}")
+async def admin_advance_deploy(tenant_id: str) -> dict[str, Any]:
+    """
+    Operator manual override for stuck deploys. Checks the ECS runtime
+    directly and advances DeploymentProgress if the service is healthy.
+    """
+    from nexus.capabilities.forgewing_api import call_api
+
+    deploy = call_api("GET", f"/deploy-progress/{tenant_id}")
+    if deploy.get("error"):
+        return {"advanced": False, "error": f"Cannot read deploy state: {deploy.get('error')}"}
+
+    stage = (deploy.get("stage") or "").lower() if isinstance(deploy, dict) else ""
+    if stage == "live":
+        return {"advanced": False, "reason": "Already live", "stage": stage}
+
+    # Ask Forgewing to re-evaluate the deploy (it checks ECS + health)
+    result = call_api("POST", f"/deploy/{tenant_id}/advance",
+                       data={"force": True})
+    if result.get("error"):
+        return {"advanced": False, "error": result["error"][:300],
+                "previous_stage": stage}
+    return {
+        "advanced": True,
+        "previous_stage": stage,
+        "new_stage": result.get("stage") or "unknown",
+        "tenant_id": tenant_id,
+    }
+
+
 @router.post("/findings/classify")
 async def findings_classify(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """
