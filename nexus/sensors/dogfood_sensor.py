@@ -21,7 +21,7 @@ from nexus.capabilities import forgewing_api
 
 logger = logging.getLogger("nexus.sensors.dogfood")
 
-DEFAULT_MAX_WAIT_MINUTES = 20
+DEFAULT_MAX_WAIT_MINUTES = 90
 
 
 def _max_wait_minutes() -> int:

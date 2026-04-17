@@ -63,9 +63,9 @@ def _parse_iso(ts: Any) -> datetime | None:
 
 def _max_wait_minutes() -> int:
     try:
-        return int(os.environ.get("DOGFOOD_MAX_WAIT_MINUTES", "20"))
+        return int(os.environ.get("DOGFOOD_MAX_WAIT_MINUTES", "90"))
     except (TypeError, ValueError):
-        return 20
+        return 90
 
 
 def _delete_repo(repo: str, token: str) -> bool:
