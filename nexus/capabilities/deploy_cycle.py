@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("nexus.capabilities.deploy_cycle")
@@ -31,7 +31,11 @@ _scheduler_task: asyncio.Task[None] | None = None
 
 
 async def run_deploy_cycle() -> dict[str, Any]:
-    """One iteration of deploy-critical polling."""
+    """
+    One iteration of deploy-critical polling. Each step has its own
+    try/except so a failure in one never prevents others from running.
+    The outer loop also wraps this call — belt AND suspenders.
+    """
     results: dict[str, Any] = {}
 
     # 1. Poll pending dogfood runs
@@ -107,7 +111,7 @@ def _check_schedule() -> dict[str, Any]:
 
     # Set next_run to tomorrow midnight UTC
     tomorrow = (now.replace(hour=0, minute=0, second=0, microsecond=0)
-                + __import__("datetime").timedelta(days=1))
+                + timedelta(days=1))
     if MODE != "production":
         with overwatch_graph._lock:
             rows = overwatch_graph._local_store.get("OverwatchDogfoodSchedule", [])
@@ -148,8 +152,9 @@ async def _deploy_loop() -> None:
         try:
             await run_deploy_cycle()
         except Exception:
-            logger.exception("deploy_cycle iteration failed")
-        await asyncio.sleep(DEPLOY_CYCLE_INTERVAL_SEC)
+            logger.exception("deploy_cycle tick failed — loop continues")
+        finally:
+            await asyncio.sleep(DEPLOY_CYCLE_INTERVAL_SEC)
 
 
 def start_deploy_cycle() -> None:
