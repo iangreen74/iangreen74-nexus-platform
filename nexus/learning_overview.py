@@ -455,7 +455,7 @@ def cicd_metrics() -> dict[str, Any]:
         "MATCH (d:DeploymentProgress) WHERE d.stage = 'failed' "
         "AND d.updated_at > $cutoff "
         "RETURN d.tenant_id AS tid, "
-        "substring(coalesce(d.message,''),0,120) AS msg, "
+        "coalesce(d.message,'') AS msg, "
         "d.updated_at AS failed_at, "
         "d.diagnosis_json AS diag "
         "ORDER BY d.updated_at DESC LIMIT 20",
@@ -467,7 +467,7 @@ def cicd_metrics() -> dict[str, Any]:
             continue
         failures.append({
             "tenant_id": r.get("tid") or "",
-            "message": (r.get("msg") or "")[:120],
+            "message": (r.get("msg") or "")[:300],
             "failed_at": r.get("failed_at"),
             "has_diagnosis": bool(r.get("diag")),
         })
