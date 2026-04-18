@@ -94,7 +94,7 @@ def _delete_project(tenant_id: str, project_id: str) -> bool:
 def _clean_terminal_runs(token: str, now: datetime) -> int:
     cutoff = now - timedelta(minutes=CLEANUP_GRACE_MINUTES)
     cleaned = 0
-    for status in ("success", "failed", "timeout"):
+    for status in ("failed", "timeout"):
         for run in overwatch_graph.list_dogfood_runs(status=status, limit=100):
             if run.get("cleaned_up"):
                 continue

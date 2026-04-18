@@ -165,15 +165,25 @@ def test_sensor_timeouts_stale_pending(monkeypatch):
 
 
 # --- reconciler -----------------------------------------------------------
-def test_reconciler_marks_cleaned_for_old_terminal_runs():
+def test_reconciler_marks_cleaned_for_old_failed_runs():
+    dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
+    run = overwatch_graph._local_store["OverwatchDogfoodRun"][0]
+    past = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    run["status"] = "failed"
+    run["completed_at"] = past
+    report = dogfood_reconciler.reconcile_dogfood()
+    assert report["cleaned"] == 1
+    assert overwatch_graph.list_dogfood_runs()[0]["cleaned_up"]
+
+
+def test_reconciler_preserves_successful_runs():
     dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
     run = overwatch_graph._local_store["OverwatchDogfoodRun"][0]
     past = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     run["status"] = "success"
     run["completed_at"] = past
     report = dogfood_reconciler.reconcile_dogfood()
-    assert report["cleaned"] == 1
-    assert overwatch_graph.list_dogfood_runs()[0]["cleaned_up"]
+    assert report["cleaned"] == 0
 
 
 def test_reconciler_waits_for_grace_period():
