@@ -315,6 +315,14 @@ def run_batch(count: int) -> dict[str, Any]:
             "remaining": existing.get("remaining"),
         }
 
+    # Reset circuit breaker: mark old failed/timeout runs so they don't
+    # block the fresh batch. Without this, failures from a prior batch
+    # keep the breaker open and new batches never start.
+    old_runs = overwatch_graph.list_dogfood_runs(limit=30)
+    for r in old_runs:
+        if r.get("status") in ("failed", "timeout"):
+            overwatch_graph.update_dogfood_run(r.get("id", ""), status="reset")
+
     import uuid
     batch_id = f"batch-{uuid.uuid4().hex[:12]}"
     overwatch_graph.create_dogfood_batch(batch_id, count)
