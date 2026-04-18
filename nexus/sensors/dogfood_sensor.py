@@ -1,13 +1,7 @@
 """
-Dogfood Sensor — polls pending DogfoodRun nodes and marks terminal state.
-
-Runs every daemon cycle. For each pending DogfoodRun:
-  - GET /deploy-progress/{tenant_id}?project_id={pid}
-  - stage=live     → status=success
-  - stage=failed   → status=failed
-  - age > DOGFOOD_MAX_WAIT_MINUTES → status=timeout
-
-Does not block. Returns a small report dict.
+Dogfood Sensor — polls pending DogfoodRun nodes, marks terminal state,
+and auto-drives the Plan-screen flow (synthesize → approve → tasks)
+for batch runs so the pipeline reaches deploy without human clicks.
 """
 from __future__ import annotations
 
@@ -16,17 +10,16 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from nexus import overwatch_graph
+from nexus import neptune_client, overwatch_graph
 from nexus.capabilities import forgewing_api
 
 logger = logging.getLogger("nexus.sensors.dogfood")
 
 DEFAULT_MAX_WAIT_MINUTES = 90
-STUCK_NOT_STARTED_MINUTES = int(os.environ.get("DOGFOOD_STUCK_NOT_STARTED_MIN", "5"))
+STUCK_NOT_STARTED_MINUTES = int(os.environ.get("DOGFOOD_STUCK_NOT_STARTED_MIN", "30"))
 
 
 def _decrement_if_batch(batch_id: str, success: bool) -> None:
-    """Decrement the batch counter when a run reaches terminal state."""
     if not batch_id:
         return
     overwatch_graph.decrement_batch(batch_id, success)
@@ -48,10 +41,35 @@ def _parse_iso(ts: Any) -> datetime | None:
         return None
 
 
-def _maybe_auto_approve(tenant_id: str, project_id: str) -> None:
-    """If the tenant is at brief_pending_approval, call /approve-blueprint
-    to create tasks and advance the pipeline. Dogfood runs have no human
-    in the loop — the sensor acts as the approval authority."""
+def _has_blueprint(project_id: str) -> bool:
+    rows = neptune_client.query(
+        "MATCH (bp:ProductBlueprint {project_id: $pid}) RETURN count(bp) AS c",
+        {"pid": project_id},
+    )
+    return bool(rows and isinstance(rows[0], dict) and rows[0].get("c", 0) > 0)
+
+
+def _has_tasks(project_id: str) -> bool:
+    rows = neptune_client.query(
+        "MATCH (t:MissionTask {project_id: $pid}) RETURN count(t) AS c",
+        {"pid": project_id},
+    )
+    return bool(rows and isinstance(rows[0], dict) and rows[0].get("c", 0) > 0)
+
+
+def _maybe_auto_approve(tenant_id: str, project_id: str, run: dict) -> None:
+    """Simulate the customer Plan-screen click path for dogfood runs.
+
+    Real customer: sees brief → clicks 'looks good' → synthesis runs →
+    sees blueprint → clicks 'Start Building' → approval → tasks created.
+
+    Sensor: same sequence, one API call per cycle, idempotent.
+    Only fires for batch runs (batch_id set) — real tenants unaffected.
+    """
+    batch_id = run.get("batch_id") or ""
+    if not batch_id:
+        return
+
     try:
         status = forgewing_api.call_api(
             "GET", f"/status/{tenant_id}?project_id={project_id}")
@@ -60,19 +78,52 @@ def _maybe_auto_approve(tenant_id: str, project_id: str) -> None:
         mission_stage = (status.get("mission_stage") or "").lower()
         if mission_stage != "brief_pending_approval":
             return
+
+        if _has_tasks(project_id):
+            return
+
+        if _has_blueprint(project_id):
+            result = forgewing_api.call_api(
+                "POST", f"/projects/{tenant_id}/{project_id}/approve-blueprint")
+            if isinstance(result, dict) and result.get("status") == "approved":
+                logger.info("dogfood: auto-approved blueprint for %s/%s (%s tasks)",
+                            tenant_id[:12], project_id[:7],
+                            result.get("tasks_created", "?"))
+            else:
+                logger.debug("dogfood: approve-blueprint returned %s", result)
+            return
+
+        # No blueprint — trigger synthesis. Next cycle will approve.
+        vision = _get_product_vision(tenant_id) or "A simple web application"
         result = forgewing_api.call_api(
-            "POST", f"/projects/{tenant_id}/{project_id}/approve-blueprint")
-        if isinstance(result, dict) and result.get("status") == "approved":
-            logger.info("dogfood: auto-approved blueprint for %s/%s (%s tasks)",
-                        tenant_id[:12], project_id[:7],
-                        result.get("tasks_created", "?"))
-        elif isinstance(result, dict) and result.get("status") == "no_blueprint":
-            pass  # synthesis hasn't finished yet — try again next cycle
+            "POST", f"/projects/{tenant_id}/{project_id}/synthesize",
+            data={"product_vision": vision},
+        )
+        if isinstance(result, dict) and not result.get("error"):
+            logger.info("dogfood: synthesis triggered for %s/%s",
+                        tenant_id[:12], project_id[:7])
+            overwatch_graph.update_dogfood_run(
+                run.get("id", ""),
+                synthesis_triggered_at=datetime.now(timezone.utc).isoformat(),
+            )
         else:
-            logger.debug("dogfood: approve-blueprint returned %s", result)
+            logger.warning("dogfood: synthesis failed for %s/%s: %s",
+                           tenant_id[:12], project_id[:7], result)
+
     except Exception:
-        logger.debug("dogfood: auto-approve failed for %s", tenant_id[:12],
-                     exc_info=True)
+        logger.debug("dogfood: auto-approve/synthesize failed for %s",
+                     tenant_id[:12], exc_info=True)
+
+
+def _get_product_vision(tenant_id: str) -> str:
+    rows = neptune_client.query(
+        "MATCH (u:UserContext {tenant_id: $tid}) "
+        "RETURN u.product_vision AS v LIMIT 1",
+        {"tid": tenant_id},
+    )
+    if rows and isinstance(rows[0], dict):
+        return (rows[0].get("v") or "").strip()
+    return ""
 
 
 def check_dogfood_runs() -> dict[str, Any]:
@@ -96,12 +147,9 @@ def check_dogfood_runs() -> dict[str, Any]:
         age_seconds = (now - started).total_seconds() if started else 0
         batch_id = run.get("batch_id") or ""
 
-        # Timeout check — don't even bother polling if already over cap.
         if age_seconds > max_wait_seconds:
             overwatch_graph.update_dogfood_run(
-                run_id,
-                status="timeout",
-                completed_at=now.isoformat(),
+                run_id, status="timeout", completed_at=now.isoformat(),
             )
             _decrement_if_batch(batch_id, success=False)
             timed_out += 1
@@ -112,7 +160,7 @@ def check_dogfood_runs() -> dict[str, Any]:
             "GET", f"/deploy-progress/{tenant_id}?project_id={project_id}",
         )
         if not isinstance(progress, dict) or progress.get("error"):
-            continue  # Transient — try again next cycle.
+            continue
 
         stage = (progress.get("stage") or "").lower()
         if stage == "live":
@@ -129,12 +177,9 @@ def check_dogfood_runs() -> dict[str, Any]:
             _decrement_if_batch(batch_id, success=False)
             failed += 1
         elif stage == "not_started":
-            # Pipeline may be waiting for blueprint approval. Check tenant
-            # stage and auto-approve if brief is ready — dogfood has no
-            # human in the loop.
-            _maybe_auto_approve(tenant_id, project_id)
+            _maybe_auto_approve(tenant_id, project_id, run)
             if batch_id and age_seconds > STUCK_NOT_STARTED_MINUTES * 60:
-                msg = (f"Deploy stayed at not_started for {age_seconds / 60:.0f}m.")
+                msg = f"Deploy stayed at not_started for {age_seconds / 60:.0f}m."
                 overwatch_graph.update_dogfood_run(
                     run_id, status="failed", completed_at=now.isoformat(),
                     outcome="deploy_never_started", failure_message=msg,
@@ -142,7 +187,7 @@ def check_dogfood_runs() -> dict[str, Any]:
                 _decrement_if_batch(batch_id, success=False)
                 failed += 1
                 logger.info("dogfood: run %s failed — deploy never started (%.0fm)",
-                             run_id, age_seconds / 60)
+                            run_id, age_seconds / 60)
 
     report = {
         "polled": len(pending),
