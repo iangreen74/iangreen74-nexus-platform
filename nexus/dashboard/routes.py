@@ -2592,3 +2592,71 @@ async def close_stale_incidents(payload: dict[str, Any] = Body(default=None)) ->
             closed.append({"source": source, "type": inc.get("type", "?")})
     return {"closed": len(closed), "remaining_open": len(open_incidents) - len(closed),
             "details": closed}
+
+
+@router.get("/debug/neptune-write-probe")
+async def neptune_write_probe() -> dict[str, Any]:
+    """Diagnostic: test whether overwatch_graph.query() persists MERGE writes."""
+    from datetime import datetime, timezone
+    probe_id = f"probe-{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    results: dict[str, Any] = {"probe_id": probe_id}
+
+    try:
+        w = overwatch_graph.query(
+            "MERGE (u:UserContext {tenant_id: $tid}) "
+            "SET u.product_vision = 'nexus write probe', "
+            "u.probe_timestamp = $ts, u.source = 'debug-probe' "
+            "RETURN u.tenant_id AS tid, u.product_vision AS v",
+            {"tid": probe_id, "ts": probe_id},
+        )
+        results["write"] = w
+        results["write_len"] = len(w) if w else 0
+    except Exception as e:
+        results["write_error"] = f"{type(e).__name__}: {str(e)[:500]}"
+
+    try:
+        r = overwatch_graph.query(
+            "MATCH (u:UserContext {tenant_id: $tid}) "
+            "RETURN u.tenant_id AS tid, u.product_vision AS v",
+            {"tid": probe_id},
+        )
+        results["read"] = r
+        results["read_count"] = len(r) if r else 0
+    except Exception as e:
+        results["read_error"] = f"{type(e).__name__}: {str(e)[:500]}"
+
+    try:
+        df = overwatch_graph.query(
+            "MATCH (u:UserContext {tenant_id: 'forge-dogfood-runner'}) "
+            "RETURN u.product_vision AS v, u.product_name AS n, "
+            "u.source AS source, u.updated_at AS updated",
+        )
+        results["forge_dogfood"] = df
+        results["forge_dogfood_exists"] = bool(df)
+    except Exception as e:
+        results["forge_dogfood_error"] = f"{type(e).__name__}: {str(e)[:500]}"
+
+    try:
+        all_uc = overwatch_graph.query(
+            "MATCH (u:UserContext) "
+            "RETURN u.tenant_id AS tid, u.product_vision AS v LIMIT 20",
+        )
+        results["all_user_contexts"] = all_uc
+        results["total"] = len(all_uc) if all_uc else 0
+    except Exception as e:
+        results["all_uc_error"] = f"{type(e).__name__}: {str(e)[:500]}"
+
+    return results
+
+
+@router.post("/debug/neptune-write-probe/cleanup")
+async def neptune_write_probe_cleanup() -> dict[str, Any]:
+    """Delete probe-* UserContext nodes."""
+    try:
+        r = overwatch_graph.query(
+            "MATCH (u:UserContext) WHERE u.tenant_id STARTS WITH 'probe-' "
+            "DETACH DELETE u RETURN count(u) AS deleted",
+        )
+        return {"deleted": r[0].get("deleted", 0) if r else 0}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:500]}"}
