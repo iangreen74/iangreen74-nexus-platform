@@ -168,7 +168,7 @@ async def _synthesize(project, evidence) -> dict[str, Any]:
             client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
             resp = client.invoke_model(modelId=SONNET, body=json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 3000,
+                "max_tokens": 12000,
                 "messages": [{"role": "user", "content": prompt}]}))
             body = json.loads(resp["body"].read())
             for block in body.get("content", []):

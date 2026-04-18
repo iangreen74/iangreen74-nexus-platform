@@ -383,7 +383,7 @@ async def _synthesize(question: str, evidence: dict[str, Any]) -> dict[str, Any]
         "evidence_gaps": ["synthesis (JSON parse failed)"],
     }
     try:
-        text = await asyncio.to_thread(_invoke_bedrock, SYNTHESIZER_MODEL_ID, prompt, 2000)
+        text = await asyncio.to_thread(_invoke_bedrock, SYNTHESIZER_MODEL_ID, prompt, 12000)
         parsed = parse_bedrock_json(text, fallback=fallback)
         # parse_bedrock_json returns the fallback (with extra error/raw keys)
         # if it couldn't parse — that's fine, surface it as-is.
