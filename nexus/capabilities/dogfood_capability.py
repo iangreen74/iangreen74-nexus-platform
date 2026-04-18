@@ -104,26 +104,36 @@ def _is_enabled() -> bool:
     return os.environ.get("DOGFOOD_ENABLED", "").lower() in ("true", "1", "yes")
 
 
-def _ensure_user_context(tenant_id: str, app: dict[str, Any]) -> None:
-    """Write UserContext with product_vision before project creation.
+def _ensure_user_context(tenant_id: str, app: dict[str, Any],
+                         project_id: str = "") -> None:
+    """Write UserContext with product_vision so synthesis has context.
 
-    Mirrors what onboarding_chat does for real customers. Without this,
-    _kick_off_synthesis silently no-ops after brief completion and dogfood
-    runs never get blueprints.
+    Called AFTER project creation so the project_id can be included.
+    Without this, _kick_off_synthesis silently no-ops and dogfood runs
+    never get blueprints.
     """
     from datetime import datetime, timezone
+    vision = app.get("desc") or app.get("name", "")
+    name = app.get("name", "")
+    now = datetime.now(timezone.utc).isoformat()
     try:
-        overwatch_graph.query(
+        result = overwatch_graph.query(
             "MERGE (u:UserContext {tenant_id: $tid}) "
             "SET u.product_vision = $vision, u.product_name = $name, "
-            "u.target_users = 'dogfood training simulator', "
-            "u.source = 'dogfood', u.updated_at = $now",
+            "u.target_users = $target, "
+            "u.source = $source, u.updated_at = $now",
             {
                 "tid": tenant_id,
-                "vision": app.get("desc") or app.get("name", ""),
-                "name": app.get("name", ""),
-                "now": datetime.now(timezone.utc).isoformat(),
+                "vision": vision,
+                "name": name,
+                "target": "dogfood training simulator",
+                "source": "dogfood",
+                "now": now,
             },
+        )
+        logger.info(
+            "dogfood: UserContext written for %s (vision=%s, project=%s, result=%s)",
+            tenant_id[:12], vision[:40], project_id[:12], result,
         )
     except Exception as e:
         logger.warning("dogfood: UserContext write failed (continuing): %s", e)
@@ -183,8 +193,6 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     for path, content in app["files"].items():
         _push_file(repo_name, path, content, token)
 
-    _ensure_user_context(tenant_id, app)
-
     repo_url = f"https://github.com/{GITHUB_USER}/{repo_name}"
     proj = forgewing_api.call_api(
         "POST", f"/projects/{tenant_id}",
@@ -198,6 +206,8 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
         httpx.delete(f"{GITHUB_API}/repos/{GITHUB_USER}/{repo_name}",
                      headers=_gh_headers(token), timeout=10)
         return {"status": "failed", "reason": f"project_create_failed: {err}"}
+
+    _ensure_user_context(tenant_id, app, project_id=project_id)
 
     forgewing_api.call_api("POST", f"/deploy/{tenant_id}",
                             data={"project_id": project_id})
