@@ -2313,7 +2313,8 @@ async function loadAll() {
   // Wave 2 (1.5s) — main body
   setTimeout(() => {
     if (skip()) return;
-    Promise.all([loadOverview(), loadHealChains(), loadSRE(), loadTriageFeed()]);
+    loadOverview().then(loadTriageFeed);
+    Promise.all([loadHealChains(), loadSRE()]);
   }, 1500);
 
   // Wave 3 (4s) — context panels
