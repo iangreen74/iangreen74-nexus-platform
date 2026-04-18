@@ -547,6 +547,63 @@ async def learning_report_endpoint() -> Response:
             status_code=500, media_type="text/markdown")
 
 
+@router.post("/dogfood/batch")
+async def start_dogfood_batch(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Trigger a new dogfood batch. Works from outside the VPC."""
+    from nexus import learning_overview as lo
+    body = payload or {}
+    count = int(body.get("count", 10))
+    activated_by = body.get("activated_by", "operator-api")
+    try:
+        overwatch_graph.set_dogfood_config(enabled=True, activated_by=activated_by)
+        result = lo.run_batch(count)
+        return {"status": "started", "batch": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("dogfood batch start failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/dogfood/batch/cancel")
+async def cancel_dogfood_batch() -> dict[str, Any]:
+    """Cancel the currently-active batch, if any."""
+    b = overwatch_graph.get_active_batch()
+    if not b:
+        return {"status": "no_active_batch"}
+    bid = b.get("batch_id")
+    overwatch_graph.query(
+        "MATCH (b:OverwatchDogfoodBatch {batch_id: $bid}) "
+        "SET b.status = 'cancelled', b.cancelled_at = $now",
+        {"bid": bid, "now": datetime.now(timezone.utc).isoformat()},
+    )
+    return {"status": "cancelled", "batch_id": bid}
+
+
+@router.get("/dogfood/watch")
+async def dogfood_watch_snapshot() -> dict[str, Any]:
+    """Structured snapshot of the active batch — powers the operator CLI."""
+    from nexus.intelligence.dogfood_watch import snapshot_from_graph
+    snap = snapshot_from_graph()
+    return snap or {"status": "no_active_batch"}
+
+
+@router.get("/dogfood/config")
+async def get_dogfood_config_endpoint() -> dict[str, Any]:
+    """Read the current dogfood activation state."""
+    return overwatch_graph.get_dogfood_config() or {"enabled": False}
+
+
+@router.post("/dogfood/config")
+async def set_dogfood_config_endpoint(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Enable or disable dogfood runner."""
+    body = payload or {}
+    enabled = bool(body.get("enabled", False))
+    activated_by = body.get("activated_by", "operator-api")
+    overwatch_graph.set_dogfood_config(enabled=enabled, activated_by=activated_by)
+    return {"status": "updated", "enabled": enabled}
+
+
 @router.post("/admin/advance-deploy/{tenant_id}")
 async def admin_advance_deploy(tenant_id: str) -> dict[str, Any]:
     """

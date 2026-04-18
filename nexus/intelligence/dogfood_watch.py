@@ -1,24 +1,33 @@
-"""Simple live watch for active dogfood batch.
+"""Live watch for active dogfood batch — HTTP client + graph backend.
+
+CLI polls GET /api/dogfood/watch via HTTP so it works from any laptop.
+The server-side handler calls snapshot_from_graph() which talks to Neptune.
 
 Usage:
-    python3 -m nexus.intelligence.dogfood_watch              # 2-min interval
-    python3 -m nexus.intelligence.dogfood_watch --interval 30 # 30-sec interval
-    python3 -m nexus.intelligence.dogfood_watch --once        # single snapshot
+    python3 -m nexus.intelligence.dogfood_watch                        # 2-min
+    python3 -m nexus.intelligence.dogfood_watch --interval 30          # 30s
+    python3 -m nexus.intelligence.dogfood_watch --once                 # one shot
+    python3 -m nexus.intelligence.dogfood_watch --base-url https://...
 """
 from __future__ import annotations
 
 import argparse
+import json as _json
+import os
 import sys
 import time
+import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-from nexus import neptune_client, overwatch_graph
+DEFAULT_BASE_URL = "https://platform.vaultscaler.com"
 
 
-def snapshot() -> dict[str, Any] | None:
-    """Summarize the active batch's state. None if no batch."""
+def snapshot_from_graph() -> dict[str, Any] | None:
+    """Server-side: query Neptune directly. Called by GET /api/dogfood/watch."""
+    from nexus import neptune_client, overwatch_graph
+
     try:
         batch = overwatch_graph.get_active_batch()
     except Exception as e:
@@ -39,46 +48,52 @@ def snapshot() -> dict[str, Any] | None:
     except Exception as e:
         return {"error": f"run query failed: {e}", "batch_id": bid}
 
-    stages = _fetch_stage_info([r.get("pid") for r in runs if r.get("pid")])
+    pids = [r.get("pid") for r in runs if r.get("pid")]
+    stages: dict[str, dict[str, Any]] = {}
+    if pids:
+        try:
+            rows = neptune_client.query(
+                "MATCH (p:Project) WHERE p.project_id IN $pids "
+                "OPTIONAL MATCH (b:MissionBrief {project_id: p.project_id}) "
+                "OPTIONAL MATCH (bp:ProductBlueprint {project_id: p.project_id}) "
+                "OPTIONAL MATCH (t:MissionTask {project_id: p.project_id}) "
+                "RETURN p.project_id AS pid, "
+                "count(DISTINCT b) AS briefs, "
+                "count(DISTINCT bp) AS blueprints, "
+                "count(DISTINCT t) AS tasks, "
+                "count(DISTINCT CASE WHEN t.pr_url IS NOT NULL THEN t END) AS prs",
+                {"pids": pids},
+            ) or []
+            stages = {r.get("pid"): r for r in rows if isinstance(r, dict) and r.get("pid")}
+        except Exception:
+            pass
 
     completed = batch.get("completed") or 0
     successes = batch.get("successes") or 0
-    rate = round(successes / completed, 2) if completed else 0.0
-
     return {
         "batch_id": bid,
         "completed": completed,
         "remaining": batch.get("remaining"),
-        "success_rate": rate,
+        "success_rate": round(successes / completed, 2) if completed else 0.0,
         "runs": runs,
         "stages": stages,
     }
 
 
-def _fetch_stage_info(project_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Per-project brief/blueprint/task/PR counts from the Forgewing graph."""
-    if not project_ids:
-        return {}
+def _fetch_snapshot(base_url: str) -> dict[str, Any] | None:
+    """Client-side: poll the operator API over HTTP."""
+    url = f"{base_url.rstrip('/')}/api/dogfood/watch"
     try:
-        rows = neptune_client.query(
-            "MATCH (p:Project) WHERE p.project_id IN $pids "
-            "OPTIONAL MATCH (b:MissionBrief {project_id: p.project_id}) "
-            "OPTIONAL MATCH (bp:ProductBlueprint {project_id: p.project_id}) "
-            "OPTIONAL MATCH (t:MissionTask {project_id: p.project_id}) "
-            "RETURN p.project_id AS pid, "
-            "count(DISTINCT b) AS briefs, "
-            "count(DISTINCT bp) AS blueprints, "
-            "count(DISTINCT t) AS tasks, "
-            "count(DISTINCT CASE WHEN t.pr_url IS NOT NULL THEN t END) AS prs",
-            {"pids": project_ids},
-        ) or []
-        return {r.get("pid"): r for r in rows if isinstance(r, dict) and r.get("pid")}
-    except Exception:
-        return {}
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            data = _json.loads(resp.read().decode())
+            if data.get("status") == "no_active_batch":
+                return None
+            return data
+    except Exception as e:
+        return {"error": f"fetch failed: {e}"}
 
 
 def render(snap: dict[str, Any] | None) -> str:
-    """Compact human-readable output."""
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     if snap is None:
         return f"[{ts}] No active batch."
@@ -86,7 +101,7 @@ def render(snap: dict[str, Any] | None) -> str:
         return f"[{ts}] Error: {snap['error']}"
 
     runs = snap.get("runs", [])
-    stages = snap.get("stages", {})
+    stages = snap.get("stages", {}) if isinstance(snap.get("stages"), dict) else {}
     by_status = Counter(r.get("status", "?") for r in runs)
 
     lines = [
@@ -96,7 +111,7 @@ def render(snap: dict[str, Any] | None) -> str:
         f"       Status: {dict(by_status)}",
     ]
     for r in runs:
-        pid = r.get("pid") or ""
+        pid = r.get("pid") or r.get("project_id") or ""
         st = stages.get(pid, {})
         briefs = st.get("briefs", 0)
         bps = st.get("blueprints", 0)
@@ -113,12 +128,11 @@ def render(snap: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
-def run(interval: int = 120, once: bool = False) -> int:
-    """Main loop. Prints snapshots until Ctrl-C."""
-    print(f"# Dogfood live watch — interval {interval}s  (Ctrl-C to stop)\n")
+def run(base_url: str, interval: int = 120, once: bool = False) -> int:
+    print(f"# Dogfood live watch ({base_url}) — interval {interval}s  (Ctrl-C to stop)\n")
     try:
         while True:
-            snap = snapshot()
+            snap = _fetch_snapshot(base_url)
             print(render(snap))
             print()
             if once:
@@ -131,13 +145,13 @@ def run(interval: int = 120, once: bool = False) -> int:
 
 def _cli() -> int:
     parser = argparse.ArgumentParser(
-        description="Live watch for the active dogfood batch.")
-    parser.add_argument("--interval", type=int, default=120,
-                        help="Seconds between snapshots (default 120)")
-    parser.add_argument("--once", action="store_true",
-                        help="Print a single snapshot and exit")
+        description="Live watch for dogfood batches (HTTP client).")
+    parser.add_argument("--base-url", default=os.environ.get(
+        "NEXUS_CONSOLE_URL", DEFAULT_BASE_URL))
+    parser.add_argument("--interval", type=int, default=120)
+    parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
-    return run(interval=args.interval, once=args.once)
+    return run(base_url=args.base_url, interval=args.interval, once=args.once)
 
 
 if __name__ == "__main__":

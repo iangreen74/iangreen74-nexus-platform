@@ -1,11 +1,14 @@
-"""Tests for dogfood live watch CLI."""
+"""Tests for dogfood live watch — render + HTTP client."""
+import json
 import os
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("NEXUS_MODE", "local")
 
 from nexus.intelligence import dogfood_watch
 
 
+# --- render ---
 def test_render_handles_no_batch():
     out = dogfood_watch.render(None)
     assert "No active batch" in out
@@ -51,6 +54,37 @@ def test_render_blueprint_marker():
     assert "🎯" in out
 
 
-def test_snapshot_returns_none_on_empty():
-    snap = dogfood_watch.snapshot()
+# --- HTTP client ---
+def _mock_urlopen(payload):
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode()
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+def test_fetch_snapshot_handles_no_batch():
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen({"status": "no_active_batch"})):
+        result = dogfood_watch._fetch_snapshot("https://example.com")
+    assert result is None
+
+
+def test_fetch_snapshot_returns_data():
+    payload = {"batch_id": "batch-abc", "completed": 2, "remaining": 8,
+               "runs": [], "stages": {}}
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen(payload)):
+        result = dogfood_watch._fetch_snapshot("https://example.com")
+    assert result["batch_id"] == "batch-abc"
+
+
+def test_fetch_snapshot_handles_network_error():
+    with patch("urllib.request.urlopen", side_effect=OSError("dns failed")):
+        result = dogfood_watch._fetch_snapshot("https://example.com")
+    assert "error" in result
+    assert "dns failed" in result["error"]
+
+
+# --- graph-side snapshot ---
+def test_snapshot_from_graph_returns_none_on_empty():
+    snap = dogfood_watch.snapshot_from_graph()
     assert snap is None or isinstance(snap, dict)
