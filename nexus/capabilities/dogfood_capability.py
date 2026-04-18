@@ -104,6 +104,31 @@ def _is_enabled() -> bool:
     return os.environ.get("DOGFOOD_ENABLED", "").lower() in ("true", "1", "yes")
 
 
+def _ensure_user_context(tenant_id: str, app: dict[str, Any]) -> None:
+    """Write UserContext with product_vision before project creation.
+
+    Mirrors what onboarding_chat does for real customers. Without this,
+    _kick_off_synthesis silently no-ops after brief completion and dogfood
+    runs never get blueprints.
+    """
+    from datetime import datetime, timezone
+    try:
+        overwatch_graph.query(
+            "MERGE (u:UserContext {tenant_id: $tid}) "
+            "SET u.product_vision = $vision, u.product_name = $name, "
+            "u.target_users = 'dogfood training simulator', "
+            "u.source = 'dogfood', u.updated_at = $now",
+            {
+                "tid": tenant_id,
+                "vision": app.get("desc") or app.get("name", ""),
+                "name": app.get("name", ""),
+                "now": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.warning("dogfood: UserContext write failed (continuing): %s", e)
+
+
 def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
     """
     Kick off one dogfood deploy. Never blocks waiting for the deploy to
@@ -157,6 +182,8 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
 
     for path, content in app["files"].items():
         _push_file(repo_name, path, content, token)
+
+    _ensure_user_context(tenant_id, app)
 
     repo_url = f"https://github.com/{GITHUB_USER}/{repo_name}"
     proj = forgewing_api.call_api(
