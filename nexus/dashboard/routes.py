@@ -604,6 +604,38 @@ async def set_dogfood_config_endpoint(payload: dict[str, Any] | None = None) -> 
     return {"status": "updated", "enabled": enabled}
 
 
+@router.get("/debug/deploy-cycle/health")
+async def deploy_cycle_health() -> dict[str, Any]:
+    """Report deploy_cycle + watchdog task health."""
+    from nexus.capabilities.deploy_cycle import (
+        _respawn_count, _scheduler_task, _watchdog_task,
+    )
+    return {
+        "scheduler_running": bool(_scheduler_task and not _scheduler_task.done()),
+        "watchdog_running": bool(_watchdog_task and not _watchdog_task.done()),
+        "respawn_count": _respawn_count,
+    }
+
+
+@router.post("/debug/resolve-stuck-runs")
+async def resolve_stuck_runs(since_hours: int = 12) -> dict[str, Any]:
+    """Mark runs stuck at pending from the sensor-death window as timeout."""
+    cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=since_hours)).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows = overwatch_graph.query(
+        "MATCH (r:OverwatchDogfoodRun) "
+        "WHERE r.created_at >= $cutoff "
+        "AND NOT r.status IN ['success', 'failed', 'timeout', 'cancelled', 'reset'] "
+        "SET r.status = 'timeout', "
+        "r.outcome = 'sensor_died_during_polling', "
+        "r.completed_at = $now "
+        "RETURN count(r) AS resolved",
+        {"cutoff": cutoff, "now": now_iso},
+    )
+    resolved = int((rows[0].get("resolved") if rows and isinstance(rows[0], dict) else 0) or 0)
+    return {"resolved": resolved, "outcome_applied": "sensor_died_during_polling"}
+
+
 @router.post("/admin/advance-deploy/{tenant_id}")
 async def admin_advance_deploy(tenant_id: str) -> dict[str, Any]:
     """

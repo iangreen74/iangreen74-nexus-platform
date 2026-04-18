@@ -27,7 +27,10 @@ from typing import Any
 logger = logging.getLogger("nexus.capabilities.deploy_cycle")
 
 DEPLOY_CYCLE_INTERVAL_SEC = 60
+WATCHDOG_INTERVAL_SEC = 60
 _scheduler_task: asyncio.Task[None] | None = None
+_watchdog_task: asyncio.Task[None] | None = None
+_respawn_count = 0
 
 
 async def run_deploy_cycle() -> dict[str, Any]:
@@ -220,19 +223,48 @@ async def _deploy_loop() -> None:
     while True:
         try:
             await run_deploy_cycle()
+        except asyncio.CancelledError:
+            logger.info("_deploy_loop cancelled, exiting")
+            raise
         except Exception:
             logger.exception("deploy_cycle tick failed — loop continues")
-        finally:
-            await asyncio.sleep(DEPLOY_CYCLE_INTERVAL_SEC)
+        await asyncio.sleep(DEPLOY_CYCLE_INTERVAL_SEC)
+
+
+async def _deploy_loop_watchdog() -> None:
+    """Respawn _deploy_loop if it dies. Checks every WATCHDOG_INTERVAL_SEC."""
+    global _scheduler_task, _respawn_count
+    while True:
+        try:
+            await asyncio.sleep(WATCHDOG_INTERVAL_SEC)
+            if _scheduler_task is None or _scheduler_task.done():
+                exc = None
+                if _scheduler_task is not None and not _scheduler_task.cancelled():
+                    try:
+                        exc = _scheduler_task.exception()
+                    except Exception:
+                        pass
+                _respawn_count += 1
+                logger.error(
+                    "watchdog: _deploy_loop died (respawn #%d, reason=%s) — restarting",
+                    _respawn_count, exc)
+                _scheduler_task = asyncio.create_task(_deploy_loop())
+        except asyncio.CancelledError:
+            logger.info("watchdog cancelled, exiting")
+            raise
+        except Exception:
+            logger.exception("watchdog tick failed — watchdog continues")
 
 
 def start_deploy_cycle() -> None:
-    """Idempotent. No-op if no running event loop."""
-    global _scheduler_task
-    if _scheduler_task is not None and not _scheduler_task.done():
-        return
+    """Start both the deploy loop and its watchdog. Idempotent."""
+    global _scheduler_task, _watchdog_task
     try:
-        _scheduler_task = asyncio.create_task(_deploy_loop())
-        logger.info("deploy_cycle started (every %ds)", DEPLOY_CYCLE_INTERVAL_SEC)
+        if _scheduler_task is None or _scheduler_task.done():
+            _scheduler_task = asyncio.create_task(_deploy_loop())
+            logger.info("deploy_cycle started (every %ds)", DEPLOY_CYCLE_INTERVAL_SEC)
+        if _watchdog_task is None or _watchdog_task.done():
+            _watchdog_task = asyncio.create_task(_deploy_loop_watchdog())
+            logger.info("deploy_cycle watchdog started (every %ds)", WATCHDOG_INTERVAL_SEC)
     except RuntimeError:
         logger.debug("start_deploy_cycle: no running event loop, skipping")
