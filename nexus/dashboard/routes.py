@@ -604,6 +604,84 @@ async def set_dogfood_config_endpoint(payload: dict[str, Any] | None = None) -> 
     return {"status": "updated", "enabled": enabled}
 
 
+@router.get("/pr-reality-check")
+async def pr_reality_check(tenant_id: str = "forge-dogfood-runner", limit: int = 20) -> dict[str, Any]:
+    """Reconcile Neptune PR state vs live GitHub state."""
+    import re
+    import httpx as _httpx
+    from nexus.forge.aria_repo import _token
+
+    tasks = neptune_client.query(
+        "MATCH (m:MissionTask {tenant_id: $tid}) "
+        "WHERE m.pr_url IS NOT NULL "
+        "RETURN m.pr_url AS pr_url, m.pr_number AS pr_number, "
+        "m.status AS status, m.submitted_at AS submitted_at, "
+        "m.completed_at AS completed_at "
+        "ORDER BY m.submitted_at DESC LIMIT $lim",
+        {"tid": tenant_id, "lim": limit},
+    ) or []
+
+    token = _token()
+    gh_headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    } if token else {}
+
+    prs: list[dict[str, Any]] = []
+    for t in tasks:
+        if not isinstance(t, dict) or not t.get("pr_url"):
+            continue
+        pr_url = t["pr_url"]
+        neptune_state = {
+            "status": t.get("status") or "",
+            "submitted_at": t.get("submitted_at") or "",
+            "completed_at": t.get("completed_at") or "",
+        }
+        m = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_url)
+        gh_state: dict[str, Any] = {"status_code": 0}
+        mismatch = False
+        if m and token:
+            repo_slug, pr_num = m.group(1), m.group(2)
+            try:
+                resp = _httpx.get(
+                    f"https://api.github.com/repos/{repo_slug}/pulls/{pr_num}",
+                    headers=gh_headers, timeout=10,
+                )
+                gh_state["status_code"] = resp.status_code
+                if resp.status_code == 200:
+                    body = resp.json()
+                    gh_state["state"] = body.get("state")
+                    gh_state["merged"] = body.get("merged", False)
+                    gh_state["merged_at"] = body.get("merged_at")
+                elif resp.status_code == 404:
+                    gh_state["state"] = "not_found"
+            except Exception:
+                gh_state["state"] = "error"
+
+            nst = (neptune_state["status"] or "").lower()
+            gst = (gh_state.get("state") or "").lower()
+            if nst == "complete" and gst == "not_found":
+                mismatch = True
+            elif nst in ("in_review", "pending") and gst == "closed" and gh_state.get("merged"):
+                pass  # Neptune catching up
+            elif nst == "complete" and gst == "open":
+                mismatch = True
+
+        prs.append({
+            "pr_url": pr_url,
+            "neptune": neptune_state,
+            "github": gh_state,
+            "mismatch": mismatch,
+        })
+
+    return {
+        "prs": prs,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_tenant": tenant_id,
+        "mismatches": sum(1 for p in prs if p["mismatch"]),
+    }
+
+
 @router.get("/debug/deploy-cycle/health")
 async def deploy_cycle_health() -> dict[str, Any]:
     """Report deploy_cycle + watchdog task health."""

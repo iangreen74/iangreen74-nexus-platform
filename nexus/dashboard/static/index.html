@@ -593,6 +593,20 @@
     </div>
   </section>
 
+  <section>
+    <div class="section-head">
+      <h2>PR Reality Check</h2>
+      <span class="meta" id="pr-check-meta">Loading…</span>
+    </div>
+    <div class="section-sub">Neptune vs GitHub — highlights mismatches (stale state, deleted repos, stuck merges).</div>
+    <table id="pr-check-table">
+      <thead>
+        <tr><th>PR</th><th>Neptune</th><th>GitHub</th><th>Age</th><th></th></tr>
+      </thead>
+      <tbody id="pr-check-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
   </div>
 
   <div class="tab-panel" id="tab-system" role="tabpanel" aria-labelledby="tab-btn-system" hidden>
@@ -1863,6 +1877,39 @@ async function loadForge() {
   `).join('');
 }
 
+async function loadPrRealityCheck() {
+  const data = await fetchJSON(`${API}/pr-reality-check`);
+  const body = document.getElementById('pr-check-body');
+  const meta = document.getElementById('pr-check-meta');
+  if (!data || !data.prs) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">Failed to load</td></tr>';
+    meta.textContent = '';
+    return;
+  }
+  const prs = data.prs;
+  meta.textContent = `${prs.length} PR${prs.length !== 1 ? 's' : ''} · ${data.mismatches || 0} mismatch${data.mismatches !== 1 ? 'es' : ''}`;
+  if (!prs.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">No PRs with URLs in Neptune</td></tr>';
+    return;
+  }
+  body.innerHTML = prs.map(p => {
+    const shortUrl = (p.pr_url || '').replace('https://github.com/', '').replace(/\/pull\//, '#');
+    const nst = (p.neptune?.status || '—');
+    const gst = p.github?.state === 'not_found' ? '404' : (p.github?.merged ? 'merged' : (p.github?.state || '—'));
+    const age = p.neptune?.submitted_at ? fmtAge(p.neptune.submitted_at) : '—';
+    const indicator = p.mismatch ? '<span class="badge failed">⚠ mismatch</span>'
+      : (gst === 'merged' ? '<span class="badge success">✓</span>'
+      : (gst === '—' ? '' : '<span class="badge safe">⏳</span>'));
+    return `<tr>
+      <td><a href="${_escapeHTML(p.pr_url || '')}" target="_blank" style="color:var(--teal); font-size:12px;">${_escapeHTML(shortUrl)}</a></td>
+      <td>${_escapeHTML(nst)}</td>
+      <td>${_escapeHTML(gst)}</td>
+      <td>${_escapeHTML(age)}</td>
+      <td>${indicator}</td>
+    </tr>`;
+  }).join('');
+}
+
 async function proposeFixAgent(btn) {
   const summary = document.getElementById('fix-agent-summary').value.trim();
   const file = document.getElementById('fix-agent-file').value.trim();
@@ -2326,7 +2373,7 @@ async function loadAll() {
   // Wave 4 (7s) — patterns + forge
   setTimeout(() => {
     if (skip()) return;
-    Promise.all([loadPatterns(), loadCandidates(), loadForge()]);
+    Promise.all([loadPatterns(), loadCandidates(), loadForge(), loadPrRealityCheck()]);
   }, 7000);
 
   // Wave 5 (10s) — footer / reference panels
