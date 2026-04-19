@@ -660,7 +660,7 @@ async def pr_reality_check(tenant_id: str = "forge-dogfood-runner", limit: int =
 
             nst = (neptune_state["status"] or "").lower()
             gst = (gh_state.get("state") or "").lower()
-            if nst == "complete" and gst == "not_found":
+            if gst == "not_found" and nst in ("complete", "in_review", "pending"):
                 mismatch = True
             elif nst in ("in_review", "pending") and gst == "closed" and gh_state.get("merged"):
                 pass  # Neptune catching up
