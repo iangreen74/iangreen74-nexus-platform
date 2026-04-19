@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from nexus import overwatch_graph
+from nexus import neptune_client, overwatch_graph
 from nexus.capabilities import forgewing_api
 from nexus.config import GITHUB_SECRET_ID, MODE
 
@@ -83,12 +83,16 @@ def _delete_repo(repo: str, token: str) -> bool:
         return False
 
 
-def _delete_project(tenant_id: str, project_id: str) -> bool:
-    """Admin path is the only delete route exposed by Forgewing."""
-    result = forgewing_api.call_api(
-        "DELETE", f"/admin/projects/{tenant_id}/{project_id}",
-    )
-    return isinstance(result, dict) and not result.get("error")
+def _mark_project_cleaned(tenant_id: str, project_id: str, ts: str) -> None:
+    """Mark Neptune records as cleaned instead of deleting them."""
+    try:
+        neptune_client.query(
+            "MATCH (n {project_id: $pid, tenant_id: $tid}) "
+            "WHERE n:Project OR n:MissionTask OR n:DeploymentProgress "
+            "OR n:DeployAttempt SET n.cleaned_up_at = $ts",
+            {"pid": project_id, "tid": tenant_id, "ts": ts})
+    except Exception:
+        logger.debug("mark_project_cleaned failed for %s", project_id)
 
 
 def _clean_terminal_runs(token: str, now: datetime) -> int:
@@ -107,7 +111,7 @@ def _clean_terminal_runs(token: str, now: datetime) -> int:
             if repo:
                 _delete_repo(repo, token)
             if project_id and tenant_id:
-                _delete_project(tenant_id, project_id)
+                _mark_project_cleaned(tenant_id, project_id, now.isoformat())
             overwatch_graph.update_dogfood_run(run.get("id", ""), cleaned_up=now.isoformat())
             cleaned += 1
     return cleaned
