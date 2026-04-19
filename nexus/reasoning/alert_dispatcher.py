@@ -1,13 +1,15 @@
 """
-Alert Dispatcher — fire Telegram alerts on critical triage events with dedup.
+Alert Dispatcher — fire Telegram alerts on operator-actionable events.
 
-This is the bridge between Overwatch's reasoning layer and the operator's
-phone. The rules:
+Notification policy (Sprint 11 overhaul):
+  1. Trajectory events — level transitions, gated-autonomy decisions
+  2. Pipeline-blocking errors not auto-healing in 15 min
+  3. AWS account-level blockers (quota, cross-account role failures)
 
-- Only `critical` and high-confidence `escalate_*` decisions get alerted.
-- Identical alerts are deduplicated for ALERT_COOLDOWN_SECONDS so we don't
-  spam Ian when the dashboard re-polls every 30 seconds.
-- Failures are swallowed — alerting must never crash the control plane.
+Everything else goes to the dashboard, not the phone. Slack deprecated
+entirely (legacy secret naming only — no Slack integration exists).
+
+Alerts are deduped by key for ALERT_COOLDOWN_SECONDS.
 """
 from __future__ import annotations
 
@@ -21,15 +23,20 @@ from nexus.reasoning.triage import TriageDecision
 
 logger = logging.getLogger("nexus.alerts")
 
-# How long the same alert key is suppressed after firing. Long enough to
-# survive dashboard polling cadence but short enough that real ongoing
-# incidents re-fire eventually.
 ALERT_COOLDOWN_SECONDS = 60 * 60  # 1 hour
 
-# Triage actions that we consider escalation-worthy.
 _ESCALATION_ACTIONS = {
     "escalate_to_operator",
     "escalate_with_diagnosis",
+}
+
+# Sources that represent pipeline-blocking infrastructure events.
+# Tenant-level escalations (deploy_stuck, token expired, etc.) are handled
+# by heal chains and only escalate through _ESCALATION_ACTIONS if unhealed.
+_PIPELINE_BLOCKING_SOURCES = {
+    "daemon",
+    "infrastructure",
+    "neptune",
 }
 
 _lock = threading.Lock()
@@ -37,7 +44,6 @@ _last_fired: dict[str, float] = {}
 
 
 def _should_fire(key: str) -> bool:
-    """True if `key` hasn't been fired within the cooldown window."""
     now = time.monotonic()
     with _lock:
         last = _last_fired.get(key)
@@ -47,18 +53,39 @@ def _should_fire(key: str) -> bool:
         return True
 
 
-def _is_alert_worthy(decision: TriageDecision) -> bool:
-    """Only alert for things that genuinely need human action."""
-    if decision.action == "noop":
+def _is_alert_worthy(
+    decision: TriageDecision,
+    source: str = "",
+) -> bool:
+    """Only alert for events that genuinely need human action NOW.
+
+    Silenced (goes to dashboard only):
+      - noop, monitor, auto-heal successes
+      - tenant-level issues with active heal chains
+      - routine CI failures (heal chain handles retries)
+    """
+    if decision.action in ("noop", "monitor"):
         return False
-    if decision.action == "monitor":
-        return False  # monitoring is not actionable
-    if decision.action in _ESCALATION_ACTIONS:
-        # Only escalate if confidence is high enough to be meaningful
-        return decision.confidence >= 0.7
-    if decision.blast_radius == "dangerous":
+    # Escalations with high confidence are always alertable
+    if decision.action in _ESCALATION_ACTIONS and decision.confidence >= 0.7:
+        return True
+    # Dangerous blast radius on infrastructure sources
+    if decision.blast_radius == "dangerous" and source in _PIPELINE_BLOCKING_SOURCES:
         return True
     return False
+
+
+def send_trajectory_alert(level: int, name: str, detail: str) -> bool:
+    """Fire a Telegram alert for trajectory level transitions."""
+    key = f"trajectory:level{level}"
+    if not _should_fire(key):
+        return False
+    message = f"*⚡ Level {level} achieved — {name}*\n{detail}"
+    try:
+        registry.execute("send_telegram_alert", message=message, level="info")
+        return True
+    except (RateLimitExceeded, Exception):
+        return False
 
 
 def _format(source: str, decision: TriageDecision, context: dict[str, Any] | None) -> str:
@@ -98,9 +125,8 @@ def maybe_alert(
     Returns True if an alert was actually sent. Never raises.
     """
     try:
-        if not _is_alert_worthy(decision):
+        if not _is_alert_worthy(decision, source=source):
             return False
-        # Don't alert while a heal chain is still working the problem
         if context and context.get("heal_chain_active"):
             return False
         key = dedup_key or f"{source}:{decision.action}"
