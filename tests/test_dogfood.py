@@ -164,6 +164,54 @@ def test_sensor_timeouts_stale_pending(monkeypatch):
     assert overwatch_graph.list_dogfood_runs()[0]["status"] == "timeout"
 
 
+# --- inactivity classification -------------------------------------------
+def _seed_not_started_run(batch_id="batch-test", progress_ago_min=None, dispatch_ago_min=10):
+    """Create a pending dogfood run with optional last_progress_at."""
+    dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
+    run = overwatch_graph._local_store["OverwatchDogfoodRun"][0]
+    run["batch_id"] = batch_id
+    now = datetime.now(timezone.utc)
+    run["started_at"] = (now - timedelta(minutes=dispatch_ago_min)).isoformat()
+    if progress_ago_min is not None:
+        run["last_progress_at"] = (now - timedelta(minutes=progress_ago_min)).isoformat()
+    return run
+
+
+def test_sensor_not_stalled_with_recent_progress():
+    _seed_not_started_run(progress_ago_min=5, dispatch_ago_min=60)
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "not_started"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["failed"] == 0
+    assert overwatch_graph.list_dogfood_runs()[0]["status"] == "pending"
+
+
+def test_sensor_stalled_with_old_progress():
+    _seed_not_started_run(progress_ago_min=25, dispatch_ago_min=60)
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "not_started"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["failed"] == 1
+    assert overwatch_graph.list_dogfood_runs()[0]["status"] == "failed"
+
+
+def test_sensor_stalled_no_progress_old_dispatch():
+    _seed_not_started_run(progress_ago_min=None, dispatch_ago_min=25)
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "not_started"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["failed"] == 1
+
+
+def test_sensor_not_stalled_no_progress_recent_dispatch():
+    _seed_not_started_run(progress_ago_min=None, dispatch_ago_min=5)
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "not_started"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["failed"] == 0
+    assert overwatch_graph.list_dogfood_runs()[0]["status"] == "pending"
+
+
 # --- reconciler -----------------------------------------------------------
 def test_reconciler_marks_cleaned_for_old_failed_runs():
     dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")

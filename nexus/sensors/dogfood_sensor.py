@@ -1,8 +1,4 @@
-"""
-Dogfood Sensor — polls pending DogfoodRun nodes, marks terminal state,
-and auto-drives the Plan-screen flow (synthesize → approve → tasks)
-for batch runs so the pipeline reaches deploy without human clicks.
-"""
+"""Dogfood Sensor — polls pending DogfoodRun nodes for terminal state."""
 from __future__ import annotations
 
 import logging
@@ -16,7 +12,7 @@ from nexus.capabilities import forgewing_api
 logger = logging.getLogger("nexus.sensors.dogfood")
 
 DEFAULT_MAX_WAIT_MINUTES = 90
-STUCK_NOT_STARTED_MINUTES = int(os.environ.get("DOGFOOD_STUCK_NOT_STARTED_MIN", "30"))
+INACTIVITY_THRESHOLD_MINUTES = int(os.environ.get("DOGFOOD_INACTIVITY_MIN", "20"))
 
 
 def _decrement_if_batch(batch_id: str, success: bool) -> None:
@@ -57,30 +53,23 @@ def _has_tasks(project_id: str) -> bool:
     return bool(rows and isinstance(rows[0], dict) and rows[0].get("c", 0) > 0)
 
 
-def _maybe_auto_approve(tenant_id: str, project_id: str, run: dict) -> None:
-    """Simulate the customer Plan-screen click path for dogfood runs.
-
-    Real customer: sees brief → clicks 'looks good' → synthesis runs →
-    sees blueprint → clicks 'Start Building' → approval → tasks created.
-
-    Sensor: same sequence, one API call per cycle, idempotent.
-    Only fires for batch runs (batch_id set) — real tenants unaffected.
-    """
+def _maybe_auto_approve(tenant_id: str, project_id: str, run: dict) -> bool:
+    """Drive Plan-screen flow for batch runs. Returns True if action taken."""
     batch_id = run.get("batch_id") or ""
     if not batch_id:
-        return
+        return False
 
     try:
         status = forgewing_api.call_api(
             "GET", f"/status/{tenant_id}?project_id={project_id}")
         if not isinstance(status, dict):
-            return
+            return False
         mission_stage = (status.get("mission_stage") or "").lower()
         if mission_stage != "brief_pending_approval":
-            return
+            return False
 
         if _has_tasks(project_id):
-            return
+            return False
 
         if _has_blueprint(project_id):
             result = forgewing_api.call_api(
@@ -89,11 +78,10 @@ def _maybe_auto_approve(tenant_id: str, project_id: str, run: dict) -> None:
                 logger.info("dogfood: auto-approved blueprint for %s/%s (%s tasks)",
                             tenant_id[:12], project_id[:7],
                             result.get("tasks_created", "?"))
-            else:
-                logger.debug("dogfood: approve-blueprint returned %s", result)
-            return
+                return True
+            logger.debug("dogfood: approve-blueprint returned %s", result)
+            return False
 
-        # No blueprint — trigger synthesis. Next cycle will approve.
         vision = _get_product_vision(tenant_id) or "A simple web application"
         result = forgewing_api.call_api(
             "POST", f"/projects/{tenant_id}/{project_id}/synthesize",
@@ -106,24 +94,21 @@ def _maybe_auto_approve(tenant_id: str, project_id: str, run: dict) -> None:
                 run.get("id", ""),
                 synthesis_triggered_at=datetime.now(timezone.utc).isoformat(),
             )
-        else:
-            logger.warning("dogfood: synthesis failed for %s/%s: %s",
-                           tenant_id[:12], project_id[:7], result)
-
+            return True
+        logger.warning("dogfood: synthesis failed for %s/%s: %s",
+                       tenant_id[:12], project_id[:7], result)
+        return False
     except Exception:
         logger.debug("dogfood: auto-approve/synthesize failed for %s",
                      tenant_id[:12], exc_info=True)
+        return False
 
 
 def _get_product_vision(tenant_id: str) -> str:
     rows = neptune_client.query(
-        "MATCH (u:UserContext {tenant_id: $tid}) "
-        "RETURN u.product_vision AS v LIMIT 1",
-        {"tid": tenant_id},
-    )
-    if rows and isinstance(rows[0], dict):
-        return (rows[0].get("v") or "").strip()
-    return ""
+        "MATCH (u:UserContext {tenant_id: $tid}) RETURN u.product_vision AS v LIMIT 1",
+        {"tid": tenant_id})
+    return (rows[0].get("v") or "").strip() if rows and isinstance(rows[0], dict) else ""
 
 
 def check_dogfood_runs() -> dict[str, Any]:
@@ -163,6 +148,13 @@ def check_dogfood_runs() -> dict[str, Any]:
             continue
 
         stage = (progress.get("stage") or "").lower()
+        prev = run.get("last_observed_stage", "")
+        if stage and stage != prev:
+            updates = {"last_observed_stage": stage}
+            if prev:
+                updates["last_progress_at"] = now.isoformat()
+            overwatch_graph.update_dogfood_run(run_id, **updates)
+
         if stage == "live":
             overwatch_graph.update_dogfood_run(
                 run_id, status="success", completed_at=now.isoformat(),
@@ -177,17 +169,22 @@ def check_dogfood_runs() -> dict[str, Any]:
             _decrement_if_batch(batch_id, success=False)
             failed += 1
         elif stage == "not_started":
-            _maybe_auto_approve(tenant_id, project_id, run)
-            if batch_id and age_seconds > STUCK_NOT_STARTED_MINUTES * 60:
-                msg = f"Deploy stayed at not_started for {age_seconds / 60:.0f}m."
+            acted = _maybe_auto_approve(tenant_id, project_id, run)
+            if acted:
                 overwatch_graph.update_dogfood_run(
-                    run_id, status="failed", completed_at=now.isoformat(),
-                    outcome="deploy_never_started", failure_message=msg,
-                )
-                _decrement_if_batch(batch_id, success=False)
-                failed += 1
-                logger.info("dogfood: run %s failed — deploy never started (%.0fm)",
-                            run_id, age_seconds / 60)
+                    run_id, last_progress_at=now.isoformat())
+            elif batch_id:
+                last = _parse_iso(run.get("last_progress_at")) or started
+                inactive = (now - last).total_seconds()
+                if inactive > INACTIVITY_THRESHOLD_MINUTES * 60:
+                    msg = f"No progress for {inactive / 60:.0f}m."
+                    overwatch_graph.update_dogfood_run(
+                        run_id, status="failed", completed_at=now.isoformat(),
+                        outcome="stalled", failure_message=msg)
+                    _decrement_if_batch(batch_id, success=False)
+                    failed += 1
+                    logger.info("dogfood: run %s stalled (%.0fm inactive)",
+                                run_id, inactive / 60)
 
     report = {
         "polled": len(pending),
