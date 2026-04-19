@@ -469,6 +469,93 @@ async def learning_overview(force: bool = False) -> dict[str, Any]:
     return lo.get_overview(force=force)
 
 
+@router.get("/confidence-trajectory")
+async def confidence_trajectory() -> dict[str, Any]:
+    """Level 1→4 trajectory with gated-autonomy decision points."""
+    MVP_STACKS = ["python/fastapi", "python/flask", "node/express", "react/vite"]
+
+    rows = neptune_client.query(
+        "MATCH (d:DeployAttempt) WHERE d.ended_at IS NOT NULL "
+        "RETURN d.pat_type AS pat, d.deploy_success AS success "
+        "ORDER BY d.started_at DESC LIMIT 5000"
+    ) or []
+
+    total = len(rows)
+    by_stack: dict[str, dict[str, int]] = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        pat = r.get("pat") or "unknown"
+        by_stack.setdefault(pat, {"total": 0, "success": 0})
+        by_stack[pat]["total"] += 1
+        if r.get("success"):
+            by_stack[pat]["success"] += 1
+
+    # Level 1: ≥1 fingerprint
+    l1_status = "achieved" if total > 0 else "pending"
+
+    # Level 2: per-stack ≥10 fps + ≥70% success
+    per_stack = []
+    stacks_at_l2 = 0
+    for s in MVP_STACKS:
+        info = by_stack.get(s, {"total": 0, "success": 0})
+        t, w = info["total"], info["success"]
+        rate = round(w / t, 3) if t > 0 else 0.0
+        achieved = t >= 10 and rate >= 0.7
+        if achieved:
+            stacks_at_l2 += 1
+        per_stack.append({"stack": s, "fingerprints": t, "success_rate": rate if t else None, "achieved": achieved})
+    l2_status = "achieved" if stacks_at_l2 == len(MVP_STACKS) else ("active" if total > 0 else "pending")
+
+    # Level 3: all 4 MVP stacks at Level 2
+    l3_status = "achieved" if stacks_at_l2 == len(MVP_STACKS) else "pending"
+
+    # Level 4: ≥1500 total, ≥4 stacks, diversity ≥0.5
+    distinct = len(by_stack)
+    import math
+    diversity = 0.0
+    if total > 0 and distinct > 1:
+        probs = [by_stack[s]["total"] / total for s in by_stack]
+        entropy = -sum(p * math.log(p) for p in probs if p > 0)
+        max_entropy = math.log(distinct) if distinct > 1 else 1.0
+        diversity = round(entropy / max_entropy, 3) if max_entropy > 0 else 0.0
+    l4_status = "achieved" if (total >= 1500 and distinct >= 4 and diversity >= 0.5) else "pending"
+
+    # Active measurement
+    if l1_status == "pending":
+        active = "Level 1: awaiting first fingerprint"
+    elif l2_status != "achieved":
+        active = f"Level 2: {stacks_at_l2}/{len(MVP_STACKS)} stacks reliable"
+    elif l3_status == "pending":
+        active = f"Level 3: {stacks_at_l2}/{len(MVP_STACKS)} stacks at Level 2"
+    elif l4_status == "pending":
+        active = f"Level 4: {total}/1500 fingerprints, diversity {diversity}"
+    else:
+        active = "All levels achieved"
+
+    return {
+        "levels": [
+            {"level": 1, "name": "Path Exists", "status": l1_status,
+             "threshold": "≥1 fingerprint", "metric": {"fingerprints": total},
+             "next_action": "Run Level 2 reliability batch on the achieved stack"},
+            {"level": 2, "name": "Stack Reliable", "status": l2_status,
+             "threshold": "≥10 fps + ≥70% success per stack",
+             "per_stack": per_stack, "stacks_achieved": stacks_at_l2,
+             "next_action": "Onboard first design partner on achieved stack(s)"},
+            {"level": 3, "name": "MVP Matrix Complete", "status": l3_status,
+             "threshold": "Level 2 on all four MVP stacks",
+             "metric": {"stacks_at_level_2": stacks_at_l2, "required": len(MVP_STACKS)},
+             "next_action": "Send waitlist email to 20 companies"},
+            {"level": 4, "name": "Training Threshold", "status": l4_status,
+             "threshold": "≥1500 fps, ≥4 stacks, diversity ≥0.5",
+             "metric": {"total": total, "stacks": distinct, "diversity": diversity},
+             "next_action": "Provision Anvil v0.1 training infrastructure"},
+        ],
+        "active_measurement": active,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.post("/trigger-finetuning")
 async def trigger_finetuning() -> dict[str, Any]:
     from nexus import learning_overview as lo

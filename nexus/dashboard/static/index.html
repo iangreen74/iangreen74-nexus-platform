@@ -785,6 +785,18 @@
 
   <div class="tab-panel" id="tab-learning" role="tabpanel" aria-labelledby="tab-btn-learning" hidden>
 
+  <section id="confidence-trajectory-section">
+    <div class="section-head">
+      <h2>Confidence Trajectory</h2>
+      <span class="meta" id="trajectory-active">—</span>
+    </div>
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
+      <div id="trajectory-levels" style="display:flex; gap:12px; margin-bottom:14px;"></div>
+      <div id="trajectory-stacks" style="font-size:12px; color:var(--text);"></div>
+      <div id="trajectory-gate" style="margin-top:12px; display:none;"></div>
+    </div>
+  </section>
+
   <section>
     <div class="section-head">
       <h2>⚡ CI/CD Intelligence Score</h2>
@@ -2822,12 +2834,14 @@ async function sendOpsMessage() {
 let _learningTimer = null;
 
 async function loadLearningTab() {
-  const [data, scoreData, cicdData, batchData] = await Promise.all([
+  const [data, scoreData, cicdData, batchData, trajData] = await Promise.all([
     fetchJSON(`${API}/learning-overview`),
     fetchJSON(`${API}/intelligence-score`),
     fetchJSON(`${API}/cicd-metrics`),
     fetchJSON(`${API}/dogfood/batch-status`),
+    fetchJSON(`${API}/confidence-trajectory`),
   ]);
+  if (trajData && !trajData.error) renderTrajectory(trajData);
   if (!data || data.error) {
     const meta = document.getElementById('learning-meta');
     if (meta) meta.textContent = 'Failed to load';
@@ -2849,6 +2863,51 @@ async function loadLearningTab() {
     const active = document.querySelector('.tab-btn[aria-selected="true"]');
     if (active && active.dataset.tab === 'learning') loadLearningTab();
   }, 30000);
+}
+
+function renderTrajectory(d) {
+  const levels = d.levels || [];
+  const levelsEl = document.getElementById('trajectory-levels');
+  const stacksEl = document.getElementById('trajectory-stacks');
+  const gateEl = document.getElementById('trajectory-gate');
+  const activeEl = document.getElementById('trajectory-active');
+  if (activeEl) activeEl.textContent = d.active_measurement || '—';
+  const icons = {achieved: '✅', active: '🔵', pending: '⏳'};
+  levelsEl.innerHTML = levels.map(l => {
+    const icon = icons[l.status] || '⏳';
+    const metricText = l.level === 1 ? `${(l.metric||{}).fingerprints||0} fps`
+      : l.level === 2 ? `${l.stacks_achieved||0}/${(l.per_stack||[]).length} stacks`
+      : l.level === 3 ? `${(l.metric||{}).stacks_at_level_2||0}/${(l.metric||{}).required||4}`
+      : `${(l.metric||{}).total||0}/1500`;
+    return `<div style="flex:1; text-align:center; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+      <div style="font-size:18px;">${icon}</div>
+      <div style="font-size:11px; font-weight:700; margin:4px 0;">L${l.level}</div>
+      <div style="font-size:10px; color:var(--text-dim);">${_escapeHTML(l.name)}</div>
+      <div style="font-size:12px; font-weight:600; margin-top:4px;">${metricText}</div>
+    </div>`;
+  }).join('');
+  const l2 = levels.find(l => l.level === 2);
+  if (l2 && l2.per_stack) {
+    stacksEl.innerHTML = '<div class="label" style="margin-bottom:4px;">Per-Stack Level 2</div>' +
+      l2.per_stack.map(s => {
+        const badge = s.achieved ? '<span class="badge success">✓</span>'
+          : s.fingerprints > 0 ? '<span class="badge safe">⏳</span>' : '';
+        const rate = s.success_rate != null ? `${Math.round(s.success_rate * 100)}%` : 'n/a';
+        return `<div style="display:flex; justify-content:space-between; padding:2px 0;">
+          <span>${_escapeHTML(s.stack)}</span>
+          <span>${s.fingerprints} fps · ${rate} ${badge}</span></div>`;
+      }).join('');
+  }
+  const achieved = levels.filter(l => l.status === 'achieved');
+  if (achieved.length > 0) {
+    const latest = achieved[achieved.length - 1];
+    gateEl.style.display = 'block';
+    gateEl.innerHTML = `<div style="padding:10px 12px; background:var(--accent-green-dim, #e6f9f0); border:1px solid var(--accent-green); border-radius:6px;">
+      <strong>⚡ Level ${latest.level} achieved</strong>
+      <div style="font-size:12px; margin-top:4px;">Next action: ${_escapeHTML(latest.next_action || '—')}</div></div>`;
+  } else {
+    gateEl.style.display = 'none';
+  }
 }
 
 function updateTrainingProgress(t) {
