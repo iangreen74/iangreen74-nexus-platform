@@ -96,6 +96,17 @@ async def run_deploy_cycle() -> dict[str, Any]:
     except Exception:
         logger.exception("deploy_cycle: snapshot capture failed")
 
+    # 7. Pipeline event sensor (Phase C events from SQS)
+    try:
+        from nexus.sensors.pipeline_event_sensor import poll_pipeline_events
+        pe = await asyncio.wait_for(asyncio.to_thread(poll_pipeline_events), timeout=30)
+        results["pipeline_events"] = pe
+    except asyncio.TimeoutError:
+        results["pipeline_events"] = {"error": "timeout"}
+    except Exception:
+        logger.exception("deploy_cycle: pipeline_event_sensor failed")
+        results["pipeline_events"] = {"error": "exception"}
+
     kicked = results.get("dogfood_kick", {})
     if not kicked.get("skipped"):
         logger.info("deploy_cycle: tick done (kick=%s, sensor=%s, recon=%s)",
