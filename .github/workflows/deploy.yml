@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   ECR_REPO: 418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform
@@ -12,9 +16,75 @@ env:
   ECS_SERVICE: aria-console
   HEALTH_URL: https://platform.vaultscaler.com/health
 
+# Python files exempt from the 200-line invariant. These are established
+# operational modules that predate the invariant. Additions to this list
+# require explicit review — the goal is for this list to shrink over time,
+# not grow.
+#
+#   nexus/overwatch_graph.py  ~1000 lines; contains 20+ record_* wrappers
+#                             + MERGE helpers. Splitting would fragment
+#                             the canonical Neptune write API.
+
 jobs:
+  invariant-checks:
+    runs-on: [self-hosted, nexus-runner]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check region invariant
+        run: |
+          VIOLATIONS=$(grep -rn "us-west\|us-east-2\|eu-\|ap-\|region.*=.*[\"']us-" nexus/ --include="*.py" 2>/dev/null | grep -v "us-east-1" | grep -v "^#" || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "REGION INVARIANT VIOLATION:"
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "Region invariant: PASS"
+
+      - name: Check file size invariant (200-line limit with documented exemptions)
+        run: |
+          EXEMPT="nexus/overwatch_graph.py"
+          OVER=$(find nexus/ -name "*.py" -type f | while read f; do
+            case " $EXEMPT " in *" $f "*) continue ;; esac
+            lines=$(wc -l < "$f")
+            [ "$lines" -gt 200 ] && echo "$f: $lines lines"
+          done)
+          if [ -n "$OVER" ]; then
+            echo "FILE SIZE INVARIANT VIOLATION (non-exempt files over 200 lines):"
+            echo "$OVER"
+            echo ""
+            echo "Exempt list: $EXEMPT"
+            echo "To add a new exemption, document the rationale in deploy.yml comments."
+            exit 1
+          fi
+          echo "File size invariant: PASS"
+
+      - name: Check no hardcoded secrets
+        run: |
+          SECRETS=$(grep -rPn "AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}" nexus/ --include="*.py" 2>/dev/null || true)
+          if [ -n "$SECRETS" ]; then
+            echo "SECRET INVARIANT VIOLATION:"
+            echo "$SECRETS"
+            exit 1
+          fi
+          echo "Secret invariant: PASS"
+
+      - name: Critical modules import cleanly
+        run: |
+          python3 -c "
+          from nexus.overwatch_graph import record_event, record_pipeline_event, _create_node
+          from nexus.sensors.pipeline_event_sensor import poll_pipeline_events
+          from nexus.ontology import service, schema, routes, graph
+          from nexus.ontology.service import propose_object, update_object
+          from nexus.server import app
+          print('All critical imports OK')
+          "
+
   test:
     runs-on: [self-hosted, nexus-runner]
+    timeout-minutes: 10
+    needs: invariant-checks
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,6 +98,7 @@ jobs:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, nexus-runner]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -50,37 +121,48 @@ jobs:
           docker push $ECR_REPO:latest
           docker push $ECR_REPO:$GIT_SHA
 
-      - name: Deploy to ECS
+      - name: Deploy to ECS (progressive, circuit breaker enabled)
         run: |
-          aws ecs update-service \
+          python3 -c "
+          import boto3
+          ecs = boto3.client('ecs', region_name='us-east-1')
+          ecs.update_service(
+              cluster='$ECS_CLUSTER',
+              service='$ECS_SERVICE',
+              forceNewDeployment=True,
+              deploymentConfiguration={
+                  'deploymentCircuitBreaker': {'enable': True, 'rollback': True},
+                  'maximumPercent': 200,
+                  'minimumHealthyPercent': 100,
+              },
+          )
+          print(f'Progressive deploy started: $GIT_SHA to $ECS_SERVICE')
+          print('Circuit breaker enabled — auto-rollback on task failure')
+          "
+
+      - name: Wait for stable (REAL gate, not continue-on-error)
+        run: |
+          echo "Waiting for $ECS_SERVICE to reach stable state..."
+          aws ecs wait services-stable \
             --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --force-new-deployment \
-            --region $AWS_REGION > /dev/null
-          echo "Deployed $GIT_SHA to $ECS_SERVICE"
+            --services $ECS_SERVICE \
+            --region $AWS_REGION
+          echo "Service stable on $GIT_SHA"
 
-      - name: Wait for stable
-        continue-on-error: true
+      - name: Verify health (fails workflow on non-200)
         run: |
-          echo "Waiting for service to stabilize..."
-          timeout 300 bash -c 'while true; do
-            STATUS=$(aws ecs describe-services --cluster overwatch-platform --services aria-console --region us-east-1 \
-              --query "services[0].deployments[?status==\`PRIMARY\`].rolloutState" --output text 2>/dev/null)
-            echo "  Status: $STATUS"
-            if [ "$STATUS" = "COMPLETED" ]; then
-              echo "Deployment complete"
-              break
-            fi
-            sleep 10
-          done'
-
-      - name: Verify health
-        run: |
+          echo "Waiting for health endpoint..."
           sleep 10
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
-          BODY=$(curl -s "$HEALTH_URL" 2>/dev/null || echo "")
-          echo "Health check: HTTP $HTTP_CODE"
-          echo "Body: $BODY"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "WARNING: Health check returned $HTTP_CODE"
-          fi
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$HEALTH_URL" 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed after $((i*5+10))s"
+              BODY=$(curl -s --max-time 5 "$HEALTH_URL" 2>/dev/null || echo "")
+              echo "Body: $BODY"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS — waiting 5s"
+            sleep 5
+          done
+          echo "::error::Health check failed after 70s — circuit breaker should have rolled back"
+          exit 1
