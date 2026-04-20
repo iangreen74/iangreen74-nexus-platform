@@ -136,22 +136,16 @@ jobs:
 
       - name: Deploy to ECS (progressive, circuit breaker enabled)
         run: |
-          python3 -c "
-          import boto3
-          ecs = boto3.client('ecs', region_name='us-east-1')
-          ecs.update_service(
-              cluster='$ECS_CLUSTER',
-              service='$ECS_SERVICE',
-              forceNewDeployment=True,
-              deploymentConfiguration={
-                  'deploymentCircuitBreaker': {'enable': True, 'rollback': True},
-                  'maximumPercent': 200,
-                  'minimumHealthyPercent': 100,
-              },
-          )
-          print(f'Progressive deploy started: $GIT_SHA to $ECS_SERVICE')
-          print('Circuit breaker enabled — auto-rollback on task failure')
-          "
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --deployment-configuration "deploymentCircuitBreaker={enable=true,rollback=true},maximumPercent=200,minimumHealthyPercent=100" \
+            --region $AWS_REGION \
+            --query 'service.{service:serviceName,status:status}' \
+            --output json
+          echo "Progressive deploy started: $GIT_SHA to $ECS_SERVICE"
+          echo "Circuit breaker enabled — auto-rollback on task failure"
 
       - name: Wait for stable (REAL gate, not continue-on-error)
         run: |
