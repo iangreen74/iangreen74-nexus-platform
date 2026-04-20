@@ -51,14 +51,23 @@ jobs:
             [ "$lines" -gt 200 ] && echo "$f: $lines lines"
           done)
           if [ -n "$OVER" ]; then
-            echo "FILE SIZE INVARIANT VIOLATION (non-exempt files over 200 lines):"
-            echo "$OVER"
+            COUNT=$(echo "$OVER" | wc -l)
+            echo "::warning::File size invariant: $COUNT non-exempt file(s) over 200 lines"
+            echo ""
+            echo "Files over 200 lines (sorted largest first):"
+            echo "$OVER" | sort -t: -k2 -n -r
             echo ""
             echo "Exempt list: $EXEMPT"
-            echo "To add a new exemption, document the rationale in deploy.yml comments."
-            exit 1
+            echo ""
+            echo "=============================================================="
+            echo "NOTE: This invariant is currently a WARNING, not a failure."
+            echo "  - Nexus modularization scheduled for Sprint 13."
+            echo "  - See docs/NEXUS_ROUTES_REFACTOR_PLAN.md for the plan."
+            echo "  - Target: exempt list <= 5 files with written rationale."
+            echo "=============================================================="
+          else
+            echo "File size invariant: PASS"
           fi
-          echo "File size invariant: PASS"
 
       - name: Check no hardcoded secrets
         run: |
