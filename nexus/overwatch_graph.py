@@ -135,6 +135,38 @@ def record_event(
     )
 
 
+def record_pipeline_event(
+    event_id: str,
+    event_type: str,
+    correlation_id: str,
+    tenant_id: str,
+    project_id: str,
+    emitted_at: str,
+    payload: dict[str, Any] | None = None,
+    feature_id: str | None = None,
+) -> str:
+    """Record one aria-platform pipeline event to Overwatch Layer 1.
+
+    PipelineEvent is a shared-concept label (no Overwatch* prefix) —
+    these nodes describe external pipeline activity. MERGE-by-id for
+    at-least-once delivery idempotency. Events with the same
+    correlation_id assemble into a trace.
+    """
+    props: dict[str, Any] = {
+        "id": event_id,
+        "event_type": event_type,
+        "correlation_id": correlation_id,
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "emitted_at": emitted_at,
+        "payload_json": json.dumps(payload) if payload else "{}",
+        "recorded_at": _now_iso(),
+    }
+    if feature_id is not None:
+        props["feature_id"] = feature_id
+    return _create_node("PipelineEvent", props)
+
+
 def record_failure_pattern(
     name: str,
     signature: str,
