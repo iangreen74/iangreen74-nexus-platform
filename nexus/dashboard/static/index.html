@@ -973,6 +973,29 @@
       <div style="color:var(--text-dim); font-size:13px;">Loading ontology state…</div>
     </div>
     <div id="ontology-tenants"></div>
+
+  <section id="v2-executions-section">
+    <div class="section-head">
+      <h2>v2 Pipeline Executions</h2>
+      <span class="meta" id="v2-exec-meta">—</span>
+    </div>
+    <div class="section-sub">Step Functions executions of forgewing-deploy-v2. Empty until CFN wire-up completes.</div>
+    <div style="margin-bottom:10px; display:flex; gap:10px; align-items:center;">
+      <select id="v2-exec-status" style="background:var(--bg-row); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:4px; font-size:12px;">
+        <option value="">All</option>
+        <option value="RUNNING">RUNNING</option>
+        <option value="SUCCEEDED">SUCCEEDED</option>
+        <option value="FAILED">FAILED</option>
+        <option value="TIMED_OUT">TIMED_OUT</option>
+        <option value="ABORTED">ABORTED</option>
+      </select>
+      <button onclick="loadV2Executions()" style="background:var(--teal); color:var(--bg); border:none; padding:4px 12px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer;">Refresh</button>
+    </div>
+    <div id="v2-exec-list" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:14px 18px;">
+      <div style="color:var(--text-dim); font-size:13px;">Loading…</div>
+    </div>
+    <div id="v2-exec-detail" style="margin-top:12px;"></div>
+  </section>
   </section>
   </div>
 
@@ -3313,6 +3336,76 @@ async function loadPipelineEvents() {
 }
 document.querySelectorAll('[data-tab="learning"]').forEach(btn => {
   btn.addEventListener('click', () => setTimeout(loadPipelineEvents, 100));
+});
+
+// --- v2 Executions loader ---
+async function loadV2Executions() {
+  const listEl = document.getElementById('v2-exec-list');
+  const meta = document.getElementById('v2-exec-meta');
+  const detail = document.getElementById('v2-exec-detail');
+  const statusSel = document.getElementById('v2-exec-status');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--text-dim);">Loading…</div>';
+  if (detail) detail.innerHTML = '';
+  try {
+    const params = new URLSearchParams({limit: '25'});
+    if (statusSel && statusSel.value) params.set('status_filter', statusSel.value);
+    const r = await fetch(`${API}/v2-executions?${params}`);
+    const data = await r.json();
+    const execs = data.executions || [];
+    if (data.error) {
+      listEl.innerHTML = `<div style="color:var(--text-dim); font-size:13px;"><strong>${_escapeHTML(data.error)}</strong><br>${_escapeHTML(data.error_detail || '')}</div>`;
+      if (meta) meta.textContent = 'error';
+      return;
+    }
+    if (meta) meta.textContent = `${execs.length} execution(s)`;
+    if (!execs.length) {
+      listEl.innerHTML = '<div style="color:var(--text-dim); font-size:13px;"><strong>No v2 executions yet.</strong> First execution expected after CFN wire-up.</div>';
+      return;
+    }
+    let html = '<table style="width:100%; font-size:12px; border-collapse:collapse;"><thead><tr style="border-bottom:1px solid var(--border);">';
+    html += '<th style="text-align:left; padding:4px 6px;">Status</th><th style="padding:4px 6px;">Name</th><th style="padding:4px 6px;">Start</th><th style="padding:4px 6px;">Duration</th><th style="padding:4px 6px;"></th></tr></thead><tbody>';
+    execs.forEach(ex => {
+      const dur = ex.duration_ms ? (ex.duration_ms / 1000).toFixed(1) + 's' : '—';
+      const cls = ex.status === 'SUCCEEDED' ? 'color:var(--accent-green)' : ex.status === 'FAILED' ? 'color:var(--red-text)' : '';
+      html += `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:4px 6px; ${cls}; font-weight:600;">${_escapeHTML(ex.status || '')}</td>
+        <td style="padding:4px 6px; font-family:monospace; font-size:11px;">${_escapeHTML(ex.name || '')}</td>
+        <td style="padding:4px 6px; color:var(--text-dim);">${_escapeHTML((ex.start_date || '').slice(0, 19))}</td>
+        <td style="padding:4px 6px;">${dur}</td>
+        <td style="padding:4px 6px;"><button onclick="loadV2History('${_escapeHTML(ex.execution_arn || '')}')" style="background:var(--bg); border:1px solid var(--border); padding:2px 8px; border-radius:4px; font-size:10px; cursor:pointer;">history</button></td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    listEl.innerHTML = html;
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:var(--red-text);">Failed: ${e.message}</div>`;
+  }
+}
+async function loadV2History(arn) {
+  const detail = document.getElementById('v2-exec-detail');
+  if (!detail) return;
+  detail.innerHTML = '<div style="color:var(--text-dim);">Loading history…</div>';
+  try {
+    const r = await fetch(`${API}/v2-executions/${encodeURIComponent(arn)}/history`);
+    const data = await r.json();
+    if (data.error) { detail.innerHTML = `<div style="color:var(--red-text);">${_escapeHTML(data.error)}</div>`; return; }
+    const evts = data.events || [];
+    let html = `<details open style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:10px 14px;"><summary style="cursor:pointer; font-size:12px; font-weight:600;">${evts.length} events</summary>`;
+    html += '<table style="width:100%; font-size:11px; border-collapse:collapse; margin-top:6px;"><thead><tr style="border-bottom:1px solid var(--border);"><th style="padding:3px 6px;">#</th><th style="padding:3px 6px;">Time</th><th style="padding:3px 6px;">Type</th><th style="padding:3px 6px;">State</th><th style="padding:3px 6px;">Error</th></tr></thead><tbody>';
+    evts.forEach(ev => {
+      const st = ev.state_entered ? `→ ${ev.state_entered}` : (ev.state_exited ? `← ${ev.state_exited}` : '');
+      const err = ev.task_failed || ev.lambda_function_failed || '';
+      html += `<tr style="border-bottom:1px solid var(--border);"><td style="padding:3px 6px;">${ev.id}</td><td style="padding:3px 6px; color:var(--text-dim);">${_escapeHTML((ev.timestamp || '').slice(0, 19))}</td><td style="padding:3px 6px;"><code>${_escapeHTML(ev.type || '')}</code></td><td style="padding:3px 6px;">${_escapeHTML(st)}</td><td style="padding:3px 6px; color:var(--red-text);">${err ? '<code>' + _escapeHTML(err) + '</code>' : ''}</td></tr>`;
+    });
+    html += '</tbody></table></details>';
+    detail.innerHTML = html;
+  } catch (e) {
+    detail.innerHTML = `<div style="color:var(--red-text);">Failed: ${e.message}</div>`;
+  }
+}
+document.querySelectorAll('[data-tab="ontology"]').forEach(btn => {
+  btn.addEventListener('click', () => setTimeout(loadV2Executions, 100));
 });
 </script>
 </body>
