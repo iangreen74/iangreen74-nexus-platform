@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from nexus.config import CONSOLE_PORT, MODE
 from nexus.dashboard import routes as dashboard_routes
+from nexus.dashboard import pipeline_events_api
 from nexus.ontology import query_api as ontology_query_api
 from nexus.ontology import routes as ontology_routes
 
@@ -47,6 +48,7 @@ app.add_middleware(
 app.include_router(dashboard_routes.router, prefix="/api")
 app.include_router(ontology_routes.router, prefix="/api/ontology")
 app.include_router(ontology_query_api.router, prefix="/api/ontology")
+app.include_router(pipeline_events_api.router)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

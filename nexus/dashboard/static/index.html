@@ -942,6 +942,24 @@
     </div>
   </section>
 
+  <section id="pipeline-events-section">
+    <div class="section-head">
+      <h2>Pipeline Events (Loop 1)</h2>
+      <span class="meta" id="pipeline-events-meta">—</span>
+    </div>
+    <div class="section-sub">Live CI/CD telemetry from aria-platform via EventBridge. Each event is a PipelineEvent node in Neptune.</div>
+    <div style="margin-bottom:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <select id="pe-type-filter" style="background:var(--bg-row); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:4px; font-size:12px;">
+        <option value="">All types</option>
+      </select>
+      <input id="pe-tenant-filter" type="text" placeholder="tenant_id" style="background:var(--bg-row); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:4px; font-size:12px; width:180px;">
+      <button onclick="loadPipelineEvents()" style="background:var(--teal); color:var(--bg); border:none; padding:4px 12px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer;">Refresh</button>
+    </div>
+    <div id="pipeline-events-feed" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:14px 18px;">
+      <div style="color:var(--text-dim); font-size:13px;">Loading…</div>
+    </div>
+  </section>
+
   </div>
 
   <div class="tab-panel" id="tab-ontology" role="tabpanel" aria-labelledby="tab-btn-ontology" hidden>
@@ -3238,6 +3256,64 @@ async function loadOntology() {
     });
   }
 })();
+
+// --- Pipeline Events loader ---
+async function loadPipelineEvents() {
+  const feed = document.getElementById('pipeline-events-feed');
+  const meta = document.getElementById('pipeline-events-meta');
+  const typeFilter = document.getElementById('pe-type-filter');
+  const tenantFilter = document.getElementById('pe-tenant-filter');
+  if (!feed) return;
+  feed.innerHTML = '<div style="color:var(--text-dim);">Loading…</div>';
+  try {
+    const params = new URLSearchParams({limit: '100'});
+    if (typeFilter && typeFilter.value) params.set('event_type', typeFilter.value);
+    if (tenantFilter && tenantFilter.value) params.set('tenant_id', tenantFilter.value);
+    const r = await fetch(`${API}/pipeline-events?${params}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const events = data.events || [];
+    const tc = data.type_counts || {};
+    if (typeFilter && typeFilter.options.length <= 1 && data.known_event_types) {
+      data.known_event_types.forEach(t => {
+        const o = document.createElement('option'); o.value = t; o.textContent = t;
+        typeFilter.appendChild(o);
+      });
+    }
+    const tcParts = Object.entries(tc).map(([t,c]) => `${t}:${c}`).join(' · ');
+    if (meta) meta.textContent = `${events.length} events${tcParts ? ' (' + tcParts + ')' : ''}`;
+    if (!events.length) {
+      feed.innerHTML = '<div style="color:var(--text-dim); font-size:13px;"><strong>No PipelineEvents yet.</strong> Events appear after an aria-platform CI run completes with EventBridge emission enabled.</div>';
+      return;
+    }
+    const groups = {};
+    events.forEach(e => {
+      const cid = e.correlation_id || '(none)';
+      (groups[cid] = groups[cid] || []).push(e);
+    });
+    let html = '';
+    for (const [cid, evs] of Object.entries(groups)) {
+      html += `<details open style="margin-bottom:10px;"><summary style="cursor:pointer; font-size:12px; font-weight:600; color:var(--text);"><code>${_escapeHTML(cid)}</code> · ${evs.length} event(s)</summary>`;
+      html += '<table style="width:100%; font-size:11px; border-collapse:collapse; margin-top:4px;"><thead><tr style="border-bottom:1px solid var(--border);">';
+      html += '<th style="text-align:left; padding:3px 6px;">Time</th><th style="padding:3px 6px;">Type</th><th style="padding:3px 6px;">Tenant</th><th style="padding:3px 6px;">Project</th></tr></thead><tbody>';
+      evs.forEach(e => {
+        html += `<tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:3px 6px; color:var(--text-dim);">${_escapeHTML(e.emitted_at || '')}</td>
+          <td style="padding:3px 6px;"><code>${_escapeHTML(e.event_type || '')}</code></td>
+          <td style="padding:3px 6px; font-family:monospace; font-size:10px;">${_escapeHTML((e.tenant_id || '').slice(0, 20))}</td>
+          <td style="padding:3px 6px; font-family:monospace; font-size:10px;">${_escapeHTML((e.project_id || '').slice(0, 16))}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></details>';
+    }
+    feed.innerHTML = html;
+  } catch (e) {
+    feed.innerHTML = `<div style="color:var(--red-text);">Failed: ${e.message}</div>`;
+  }
+}
+document.querySelectorAll('[data-tab="learning"]').forEach(btn => {
+  btn.addEventListener('click', () => setTimeout(loadPipelineEvents, 100));
+});
 </script>
 </body>
 </html>
