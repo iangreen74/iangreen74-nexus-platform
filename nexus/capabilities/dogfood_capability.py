@@ -209,8 +209,15 @@ def run_dogfood_cycle(tenant_id: str = "", **_: Any) -> dict[str, Any]:
 
     _ensure_user_context(tenant_id, app, project_id=project_id)
 
-    forgewing_api.call_api("POST", f"/deploy/{tenant_id}",
-                            data={"project_id": project_id})
+    deploy_resp = forgewing_api.call_api(
+        "POST", "/api/v2/deploy",
+        data={"tenant_id": tenant_id, "project_id": project_id,
+              "trigger_source": "dogfood"},
+    )
+    exec_arn = (deploy_resp.get("execution_arn", "")
+                if isinstance(deploy_resp, dict) else "")
+    logger.info("dogfood: v2 deploy started, execution_arn=%s",
+                exec_arn[-50:] if exec_arn else "<none>")
 
     run_id = overwatch_graph.record_dogfood_run(
         app_name=app["name"],
