@@ -52,7 +52,7 @@ jobs:
           OVER=$(find nexus/ -name "*.py" -type f | while read f; do
             case " $EXEMPT " in *" $f "*) continue ;; esac
             lines=$(wc -l < "$f")
-            [ "$lines" -gt 200 ] && echo "$f: $lines lines"
+            if [ "$lines" -gt 200 ]; then echo "$f: $lines lines"; fi
           done)
           if [ -n "$OVER" ]; then
             COUNT=$(echo "$OVER" | wc -l)
