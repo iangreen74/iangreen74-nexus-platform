@@ -332,6 +332,7 @@
     <button type="button" class="tab-btn" role="tab" data-tab="investigate" aria-selected="false">Investigate</button>
     <button type="button" class="tab-btn" role="tab" data-tab="system" aria-selected="false">System</button>
     <button type="button" class="tab-btn" role="tab" data-tab="learning" aria-selected="false">Learning</button>
+    <button type="button" class="tab-btn" role="tab" data-tab="ontology" aria-selected="false">Ontology</button>
   </nav>
 
   <div class="tab-panel" id="tab-health" role="tabpanel" aria-labelledby="tab-btn-health">
@@ -943,6 +944,20 @@
 
   </div>
 
+  <div class="tab-panel" id="tab-ontology" role="tabpanel" aria-labelledby="tab-btn-ontology" hidden>
+  <section>
+    <div class="section-head">
+      <h2>Startup Ontology (Loom)</h2>
+      <span class="meta" id="ontology-meta">—</span>
+    </div>
+    <div class="section-sub">Founder decisions, hypotheses, and features captured as a typed, versioned graph. The compounding primitive.</div>
+    <div id="ontology-summary" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; padding:16px 20px; margin-bottom:16px;">
+      <div style="color:var(--text-dim); font-size:13px;">Loading ontology state…</div>
+    </div>
+    <div id="ontology-tenants"></div>
+  </section>
+  </div>
+
 
   <footer>OVERWATCH · Polls every 30s · Data refreshes automatically · Click Copy Report for a diagnostic snapshot · <span id="graph-stats">graph: —</span></footer>
 </div>
@@ -1011,7 +1026,7 @@
 // switching tabs is instant and shows fresh data immediately.
 (function initTabs() {
   const KEY = 'overwatch.activeTab';
-  const valid = new Set(['health', 'investigate', 'system', 'learning']);
+  const valid = new Set(['health', 'investigate', 'system', 'learning', 'ontology']);
   function activate(name) {
     if (!valid.has(name)) name = 'health';
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -3167,6 +3182,62 @@ async function saveSchedule() {
     st.textContent = rpd > 0 ? `Saved: ${rpd}/day (~$${data.cost_per_day_usd})` : 'Schedule off';
   } catch (e) { st.textContent = 'Network error'; }
 }
+
+// --- Ontology tab ---
+async function loadOntology() {
+  const summaryEl = document.getElementById('ontology-summary');
+  const tenantsEl = document.getElementById('ontology-tenants');
+  const metaEl = document.getElementById('ontology-meta');
+  if (!summaryEl) return;
+  summaryEl.innerHTML = '<div style="color:var(--text-dim);">Loading…</div>';
+  if (tenantsEl) tenantsEl.innerHTML = '';
+  try {
+    const r = await fetch(`${API}/ontology/summary`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const totals = data.totals || {objects: 0, links: 0};
+    const tenants = data.tenants || [];
+    const otypes = data.object_types || [];
+    const ltypes = data.link_types || [];
+    if (metaEl) metaEl.textContent = `${totals.objects} objects · ${totals.links} links · ${tenants.length} tenants`;
+    summaryEl.innerHTML = `
+      <div style="display:flex; gap:24px; margin-bottom:12px;">
+        <div style="text-align:center; flex:1;"><div style="font-size:24px; font-weight:700;">${totals.objects}</div><div style="font-size:11px; color:var(--text-dim);">Objects</div></div>
+        <div style="text-align:center; flex:1;"><div style="font-size:24px; font-weight:700;">${totals.links}</div><div style="font-size:11px; color:var(--text-dim);">Links</div></div>
+        <div style="text-align:center; flex:1;"><div style="font-size:24px; font-weight:700;">${tenants.length}</div><div style="font-size:11px; color:var(--text-dim);">Tenants</div></div>
+      </div>`;
+    if (!tenants.length) {
+      if (tenantsEl) tenantsEl.innerHTML = `<div style="padding:16px; background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; color:var(--text-dim); font-size:13px;">
+        <strong>No ontology objects yet.</strong> Loom is live — POST to <code>/api/ontology/propose_object</code> to create Feature, Decision, or Hypothesis nodes. Mechanism 1 (inline classifier) ships Sprint 13.</div>`;
+      return;
+    }
+    let html = '<table style="width:100%; font-size:12px; border-collapse:collapse;"><thead><tr style="border-bottom:1px solid var(--border);">';
+    html += '<th style="text-align:left; padding:6px;">Tenant</th>';
+    otypes.forEach(t => { html += `<th style="text-align:center; padding:6px;">${_escapeHTML(t)}</th>`; });
+    ltypes.forEach(t => { html += `<th style="text-align:center; padding:6px;">${_escapeHTML(t)}</th>`; });
+    html += '<th style="text-align:center; padding:6px;">Total</th></tr></thead><tbody>';
+    tenants.forEach(t => {
+      html += `<tr style="border-bottom:1px solid var(--border);"><td style="padding:6px; font-family:monospace; font-size:11px;">${_escapeHTML(t.tenant_id)}</td>`;
+      otypes.forEach(ot => { html += `<td style="text-align:center; padding:6px;">${t.objects[ot]||0}</td>`; });
+      ltypes.forEach(lt => { html += `<td style="text-align:center; padding:6px;">${t.links[lt]||0}</td>`; });
+      html += `<td style="text-align:center; padding:6px; font-weight:600;">${t.total_objects+t.total_links}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    if (tenantsEl) tenantsEl.innerHTML = html;
+  } catch (e) {
+    summaryEl.innerHTML = `<div style="color:var(--red-text);">Failed to load: ${e.message}</div>`;
+  }
+}
+(function() {
+  const orig = window._activateTab;
+  if (typeof orig === 'function') {
+    window._activateTab = function(name) { orig(name); if (name === 'ontology') loadOntology(); };
+  } else {
+    document.querySelectorAll('[data-tab="ontology"]').forEach(btn => {
+      btn.addEventListener('click', () => setTimeout(loadOntology, 50));
+    });
+  }
+})();
 </script>
 </body>
 </html>
