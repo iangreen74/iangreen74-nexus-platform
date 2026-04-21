@@ -294,7 +294,7 @@ def test_run_batch_stores_tenant_id_in_config():
     overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
     lo.run_batch(100)
     config = overwatch_graph.get_dogfood_config()
-    assert config.get("tenant_id") == lo.DOGFOOD_TENANT_ID
+    assert config.get("tenant_id") == lo.DOGFOOD_TENANT_ID_DEFAULT
     overwatch_graph._local_store.pop("OverwatchDogfoodBatch", None)
     overwatch_graph._local_store.pop("OverwatchDogfoodConfig", None)
 

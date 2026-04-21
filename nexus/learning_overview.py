@@ -28,9 +28,17 @@ _cache: tuple[dict[str, Any], float] = ({}, 0.0)
 # "ready to bypass Sonnet". Kept here so tests can reach them.
 FINETUNE_EXAMPLE_THRESHOLD = 1000
 BYPASS_MIN_USES = 5
-DOGFOOD_TENANT_ID = "forge-dogfood-runner"
+DOGFOOD_TENANT_ID_DEFAULT = "forge-dogfood-v2-fastapi-pilot"
 BYPASS_MIN_QUALITY = 0.9
 DOGFOOD_COST_PER_RUN_USD = 0.15
+
+
+def _resolve_dogfood_tenant_id(explicit: str | None = None) -> str:
+    """Resolve dogfood tenant_id: explicit arg > env var > module default."""
+    if explicit:
+        return explicit
+    env_val = os.environ.get("DOGFOOD_TENANT_ID", "").strip()
+    return env_val if env_val else DOGFOOD_TENANT_ID_DEFAULT
 
 
 def get_overview(force: bool = False) -> dict[str, Any]:
@@ -297,7 +305,7 @@ def clear_cache() -> None:
 VALID_BATCH_SIZES = (10, 100, 200, 500, 1000)
 
 
-def run_batch(count: int) -> dict[str, Any]:
+def run_batch(count: int, tenant_id: str | None = None) -> dict[str, Any]:
     """
     Queue a batch of dogfood runs. Creates a DogfoodBatch node that the
     daemon's run_dogfood_cycle reads each cycle.
@@ -328,7 +336,7 @@ def run_batch(count: int) -> dict[str, Any]:
     overwatch_graph.create_dogfood_batch(batch_id, count)
     overwatch_graph.set_dogfood_config(
         enabled=True, activated_by="batch",
-        tenant_id=DOGFOOD_TENANT_ID,
+        tenant_id=_resolve_dogfood_tenant_id(tenant_id),
     )
 
     cost = round(count * DOGFOOD_COST_PER_RUN_USD, 2)
