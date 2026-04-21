@@ -14,6 +14,9 @@ logger = logging.getLogger("nexus.sensors.dogfood")
 DEFAULT_MAX_WAIT_MINUTES = 90
 INACTIVITY_THRESHOLD_MINUTES = int(os.environ.get("DOGFOOD_INACTIVITY_MIN", "20"))
 
+# v1 writes 'live'; v2 writes 'deploy_complete' (terminal) or 'healthy'.
+V2_SUCCESS_STAGES = ("live", "deploy_complete", "healthy")
+
 
 def _decrement_if_batch(batch_id: str, success: bool) -> None:
     if not batch_id:
@@ -155,7 +158,7 @@ def check_dogfood_runs() -> dict[str, Any]:
                 updates["last_progress_at"] = now.isoformat()
             overwatch_graph.update_dogfood_run(run_id, **updates)
 
-        if stage == "live":
+        if stage in V2_SUCCESS_STAGES:
             overwatch_graph.update_dogfood_run(
                 run_id, status="success", completed_at=now.isoformat(),
             )

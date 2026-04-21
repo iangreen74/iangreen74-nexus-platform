@@ -89,12 +89,13 @@ def blueprints_for_projects(project_ids: list[str]) -> set[str]:
 
 
 def pattern_fingerprint_counts() -> tuple[int, int]:
+    """Count v2 deployment fingerprints (DeploymentFingerprint nodes)."""
     try:
         total = overwatch_graph.query(
-            "MATCH (p:PatternFingerprint) RETURN count(p) AS c"
+            "MATCH (p:DeploymentFingerprint) RETURN count(p) AS c"
         )
         unique = overwatch_graph.query(
-            "MATCH (p:PatternFingerprint) "
+            "MATCH (p:DeploymentFingerprint) "
             "RETURN count(DISTINCT p.fingerprint) AS c"
         )
         return (

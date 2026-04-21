@@ -243,3 +243,42 @@ def test_reconciler_waits_for_grace_period():
     report = dogfood_reconciler.reconcile_dogfood()
     assert report["cleaned"] == 0
     assert not overwatch_graph.list_dogfood_runs()[0]["cleaned_up"]
+
+
+# --- v2 stage recognition (2026-04-21 regression guard) ---
+
+def test_sensor_recognizes_v2_deploy_complete_as_success():
+    dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "deploy_complete"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["completed"] == 1
+    assert overwatch_graph.list_dogfood_runs()[0]["status"] == "success"
+
+
+def test_sensor_recognizes_v2_healthy_as_success():
+    dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "healthy"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["completed"] == 1
+    assert overwatch_graph.list_dogfood_runs()[0]["status"] == "success"
+
+
+def test_sensor_still_recognizes_v1_live():
+    dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
+    with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                      return_value={"stage": "live"}):
+        report = dogfood_sensor.check_dogfood_runs()
+    assert report["completed"] == 1
+
+
+def test_sensor_intermediate_stages_not_success():
+    for stage in ("initialized", "stack_creating", "building", "deploying"):
+        overwatch_graph._local_store["OverwatchDogfoodRun"] = []
+        overwatch_graph._local_store["OverwatchDogfoodCursor"] = []
+        dogfood_capability.run_dogfood_cycle(tenant_id="forge-test")
+        with patch.object(dogfood_sensor.forgewing_api, "call_api",
+                          return_value={"stage": stage}):
+            report = dogfood_sensor.check_dogfood_runs()
+        assert report["completed"] == 0, f"stage={stage} should not complete"
