@@ -1,0 +1,22 @@
+{
+  "Comment": "Reusable state fragment for AskCustomer. Drop into any state machine that needs to pause for founder input.",
+  "WaitForCustomerAnswer": {
+    "Type": "Task",
+    "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+    "Parameters": {
+      "FunctionName": "arn:aws:lambda:us-east-1:418295677815:function:askcustomer-enqueue",
+      "Payload": {
+        "tenant_id.$": "$.tenant_id",
+        "project_id.$": "$.project_id",
+        "question.$": "$.question",
+        "options.$": "$.options",
+        "context.$": "$.context",
+        "task_token.$": "$$.Task.Token",
+        "state_machine_execution_arn.$": "$$.Execution.Id"
+      }
+    },
+    "ResultPath": "$.customer_answer",
+    "TimeoutSeconds": 86400,
+    "Next": "ContinueAfterAnswer"
+  }
+}
