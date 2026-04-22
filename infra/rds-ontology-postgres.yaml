@@ -51,7 +51,7 @@ Resources:
   DbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Ontology Postgres — ingress from nexus-platform ECS only
+      GroupDescription: Ontology Postgres - ingress from nexus-platform ECS only
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -67,7 +67,7 @@ Resources:
       DBInstanceIdentifier: nexus-ontology-postgres
       DBName: !Ref DbName
       Engine: postgres
-      EngineVersion: "16.3"
+      EngineVersion: "16.13"
       DBInstanceClass: db.t4g.micro
       AllocatedStorage: "20"
       StorageType: gp3
