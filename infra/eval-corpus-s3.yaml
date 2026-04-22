@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Forgewing eval corpus - S3 bucket for append-only ActionEvent records
+  (Layer 3 of the three-layer data plane). Sprint 13 Day 2 B6.
+
+Resources:
+  EvalCorpusBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: forgewing-eval-corpus-418295677815
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Purpose
+          Value: eval-corpus
+        - Key: Layer
+          Value: layer-3
+
+  EvalCorpusWritePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: forgewing-eval-corpus-write
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt EvalCorpusBucket.Arn
+              - !Sub "${EvalCorpusBucket.Arn}/*"
+          - Effect: Deny
+            Action:
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+            Resource:
+              - !Sub "${EvalCorpusBucket.Arn}/*"
+
+Outputs:
+  BucketName:
+    Value: !Ref EvalCorpusBucket
+    Export:
+      Name: ForgewingEvalCorpusBucket
+  BucketArn:
+    Value: !GetAtt EvalCorpusBucket.Arn
+    Export:
+      Name: ForgewingEvalCorpusArn
+  WritePolicyArn:
+    Value: !Ref EvalCorpusWritePolicy
+    Export:
+      Name: ForgewingEvalCorpusWritePolicy

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 from nexus.ontology import graph
+from nexus.ontology.eval_corpus import write_action_event
 from nexus.ontology.exceptions import SchemaValidationError
 from nexus.ontology.postgres import PostgresNotConfiguredError, write_version
 from nexus.ontology.schema import object_class_for
@@ -83,12 +84,22 @@ def propose_object(
     )
 
     result = graph.merge_object(obj)
+
+    # Layer 3: eval corpus (append-only, never blocks the mutation)
+    action_event_id = write_action_event(
+        tenant_id=tenant_id, project_id=project_id,
+        ontology_id=object_id, version_id=pg_version_id,
+        object_type=object_type, mutation_kind="propose",
+        caller=actor, proposed_via=f"propose:{actor}",
+        old_state=None, new_state=obj.to_neptune_props(),
+    ) or str(uuid.uuid4())
+
     log.info("Loom propose_object: type=%s tenant=%s id=%s actor=%s",
              object_type, tenant_id, object_id, actor)
     return {
         "object_id": result["id"],
         "version_id": result["version_id"],
-        "action_event_id": str(uuid.uuid4()),
+        "action_event_id": action_event_id,
         "pg_version_id": pg_version_id,
     }
 
@@ -126,11 +137,20 @@ def update_object(
     )
 
     result = graph.merge_object(new_obj)
+
+    action_event_id = write_action_event(
+        tenant_id=tenant_id, project_id=merged.get("project_id"),
+        ontology_id=object_id, version_id=pg_version_id,
+        object_type=object_type, mutation_kind="update",
+        caller=actor, proposed_via=f"update:{actor}:{change_reason[:50]}",
+        old_state=current, new_state=new_obj.to_neptune_props(),
+    ) or str(uuid.uuid4())
+
     log.info("Loom update_object: type=%s tenant=%s id=%s v=%s actor=%s reason=%s",
              object_type, tenant_id, object_id, result["version_id"], actor, change_reason)
     return {
         "object_id": result["id"],
         "version_id": result["version_id"],
-        "action_event_id": str(uuid.uuid4()),
+        "action_event_id": action_event_id,
         "pg_version_id": pg_version_id,
     }
