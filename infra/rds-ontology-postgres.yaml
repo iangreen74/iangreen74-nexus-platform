@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RDS Postgres t4g.micro for Layer 2 ontology version history.
+  Single-AZ, private subnets, encrypted, 7-day backups.
+  Sprint 13 Day 1 B5-prov.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC hosting the nexus-platform ECS cluster
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet in AZ-a
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet in AZ-b
+  EcsSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group of the nexus-platform ECS service
+  DbMasterUsername:
+    Type: String
+    Default: ontology_admin
+    NoEcho: false
+  DbName:
+    Type: String
+    Default: ontology
+
+Resources:
+  DbMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: nexus/ontology/postgres/connection
+      Description: RDS Postgres connection URL for ontology versioning
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${DbMasterUsername}"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'''
+      Tags:
+        - Key: Purpose
+          Value: ontology-versioning
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for ontology Postgres
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Ontology Postgres - ingress from nexus-platform ECS only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EcsSecurityGroupId
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: nexus-ontology-postgres
+      DBName: !Ref DbName
+      Engine: postgres
+      EngineVersion: "16.13"
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Sub '{{resolve:secretsmanager:${DbMasterSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DbMasterSecret}:SecretString:password}}'
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DbSecurityGroup.GroupId
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "07:00-08:00"
+      PreferredMaintenanceWindow: "sun:08:00-sun:09:00"
+      PubliclyAccessible: false
+      MultiAZ: false
+      EnablePerformanceInsights: false
+      DeletionProtection: true
+
+  DbConnectionUrlSecret:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DbMasterSecret
+      TargetId: !Ref DbInstance
+      TargetType: AWS::RDS::DBInstance
+
+Outputs:
+  DbEndpoint:
+    Value: !GetAtt DbInstance.Endpoint.Address
+    Export:
+      Name: OntologyPostgresEndpoint
+  DbPort:
+    Value: !GetAtt DbInstance.Endpoint.Port
+    Export:
+      Name: OntologyPostgresPort
+  DbSecretArn:
+    Value: !Ref DbMasterSecret
+    Export:
+      Name: OntologyPostgresSecretArn
+  DbSecurityGroupId:
+    Value: !GetAtt DbSecurityGroup.GroupId
+    Export:
+      Name: OntologyPostgresSecurityGroupId

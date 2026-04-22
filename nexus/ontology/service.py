@@ -21,6 +21,7 @@ from typing import Any, Mapping, Optional
 
 from nexus.ontology import graph
 from nexus.ontology.exceptions import SchemaValidationError
+from nexus.ontology.postgres import PostgresNotConfiguredError, write_version
 from nexus.ontology.schema import object_class_for
 from nexus.ontology.types import ObjectType
 
@@ -29,6 +30,16 @@ log = logging.getLogger(__name__)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _try_postgres_write(**kwargs) -> str | None:
+    """Write Postgres version row if DATABASE_URL is configured.
+    Returns version_id on success, None if Postgres not provisioned."""
+    try:
+        return write_version(**kwargs)
+    except PostgresNotConfiguredError:
+        log.debug("Postgres not configured — skipping version write")
+        return None
 
 
 def _filter_fields(cls, props: Mapping[str, Any]) -> dict:
@@ -64,6 +75,13 @@ def propose_object(
     )
     obj = cls(**_filter_fields(cls, seed))
 
+    # Postgres first — version history must never be irrecoverably lost.
+    pg_version_id = _try_postgres_write(
+        ontology_id=object_id, tenant_id=tenant_id, project_id=project_id,
+        object_type=object_type, object_data=obj.to_neptune_props(),
+        proposed_via=f"propose:{actor}",
+    )
+
     result = graph.merge_object(obj)
     log.info("Loom propose_object: type=%s tenant=%s id=%s actor=%s",
              object_type, tenant_id, object_id, actor)
@@ -71,6 +89,7 @@ def propose_object(
         "object_id": result["id"],
         "version_id": result["version_id"],
         "action_event_id": str(uuid.uuid4()),
+        "pg_version_id": pg_version_id,
     }
 
 
@@ -99,6 +118,13 @@ def update_object(
 
     new_obj = cls(**_filter_fields(cls, merged))
 
+    pg_version_id = _try_postgres_write(
+        ontology_id=object_id, tenant_id=tenant_id,
+        project_id=merged.get("project_id"),
+        object_type=object_type, object_data=new_obj.to_neptune_props(),
+        proposed_via=f"update:{actor}:{change_reason[:50]}",
+    )
+
     result = graph.merge_object(new_obj)
     log.info("Loom update_object: type=%s tenant=%s id=%s v=%s actor=%s reason=%s",
              object_type, tenant_id, object_id, result["version_id"], actor, change_reason)
@@ -106,4 +132,5 @@ def update_object(
         "object_id": result["id"],
         "version_id": result["version_id"],
         "action_event_id": str(uuid.uuid4()),
+        "pg_version_id": pg_version_id,
     }
