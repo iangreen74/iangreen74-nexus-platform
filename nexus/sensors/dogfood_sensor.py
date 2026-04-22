@@ -21,7 +21,7 @@ V2_SUCCESS_STAGES = ("live", "deploy_complete", "healthy")
 def _decrement_if_batch(batch_id: str, success: bool) -> None:
     if not batch_id:
         return
-    overwatch_graph.decrement_batch(batch_id, success)
+    overwatch_graph.record_batch_completion(batch_id, success)
 
 
 def _max_wait_minutes() -> int:

@@ -427,6 +427,49 @@ def decrement_batch(batch_id: str, success: bool) -> None:
     )
 
 
+def reserve_batch_slot(batch_id: str) -> bool:
+    """Decrement remaining at KICKOFF time. Returns False if no slots left."""
+    if MODE != "production":
+        with _lock:
+            for row in _local_store.get("OverwatchDogfoodBatch", []):
+                if row.get("batch_id") == batch_id:
+                    current = int(row.get("remaining") or 0)
+                    if current <= 0:
+                        return False
+                    row["remaining"] = current - 1
+                    return True
+        return False
+    rows = query(
+        "MATCH (b:OverwatchDogfoodBatch {batch_id: $bid}) "
+        "WHERE b.remaining > 0 "
+        "SET b.remaining = b.remaining - 1 "
+        "RETURN b.remaining AS remaining",
+        {"bid": batch_id},
+    )
+    return bool(rows)
+
+
+def record_batch_completion(batch_id: str, success: bool) -> None:
+    """Increment completed/successes/failures at TERMINAL time only."""
+    if MODE != "production":
+        with _lock:
+            for row in _local_store.get("OverwatchDogfoodBatch", []):
+                if row.get("batch_id") == batch_id:
+                    row["completed"] = int(row.get("completed") or 0) + 1
+                    if success:
+                        row["successes"] = int(row.get("successes") or 0) + 1
+                    else:
+                        row["failures"] = int(row.get("failures") or 0) + 1
+                    return
+        return
+    key = "successes" if success else "failures"
+    query(
+        "MATCH (b:OverwatchDogfoodBatch {batch_id: $bid}) "
+        f"SET b.completed = b.completed + 1, b.{key} = b.{key} + 1",
+        {"bid": batch_id},
+    )
+
+
 def get_dogfood_config() -> dict[str, Any]:
     """Read the DogfoodConfig singleton — activation state set by the UI."""
     if MODE != "production":

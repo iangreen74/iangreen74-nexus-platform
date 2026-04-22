@@ -282,3 +282,35 @@ def test_sensor_intermediate_stages_not_success():
                           return_value={"stage": stage}):
             report = dogfood_sensor.check_dogfood_runs()
         assert report["completed"] == 0, f"stage={stage} should not complete"
+
+
+# --- batch-size enforcement (2026-04-21 regression guard) ---
+
+def test_reserve_batch_slot_decrements_remaining():
+    overwatch_graph._local_store["OverwatchDogfoodBatch"] = []
+    overwatch_graph.create_dogfood_batch("test-b1", 3)
+    assert overwatch_graph.get_active_batch()["remaining"] == 3
+    assert overwatch_graph.reserve_batch_slot("test-b1") is True
+    assert overwatch_graph.get_active_batch()["remaining"] == 2
+    overwatch_graph.reserve_batch_slot("test-b1")
+    overwatch_graph.reserve_batch_slot("test-b1")
+    assert overwatch_graph.get_active_batch() is None
+
+
+def test_record_batch_completion_does_not_touch_remaining():
+    overwatch_graph._local_store["OverwatchDogfoodBatch"] = []
+    overwatch_graph.create_dogfood_batch("test-b2", 3)
+    overwatch_graph.reserve_batch_slot("test-b2")  # 3 -> 2
+    overwatch_graph.reserve_batch_slot("test-b2")  # 2 -> 1
+    overwatch_graph.record_batch_completion("test-b2", success=True)
+    batch = overwatch_graph.get_active_batch()
+    assert batch["remaining"] == 1
+    assert batch.get("completed") == 1
+    assert batch.get("successes") == 1
+
+
+def test_reserve_returns_false_when_exhausted():
+    overwatch_graph._local_store["OverwatchDogfoodBatch"] = []
+    overwatch_graph.create_dogfood_batch("test-b3", 1)
+    assert overwatch_graph.reserve_batch_slot("test-b3") is True
+    assert overwatch_graph.reserve_batch_slot("test-b3") is False

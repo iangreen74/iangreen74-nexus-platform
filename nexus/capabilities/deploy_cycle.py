@@ -129,15 +129,22 @@ def _kick_dogfood_if_needed() -> dict[str, Any]:
     if not _is_enabled() and not batch:
         return {"skipped": True, "reason": "not enabled, no batch"}
 
+    # Reserve a batch slot BEFORE creating the run so concurrent cycles
+    # don't over-fire. If reservation fails, batch is exhausted.
+    batch_id = ""
+    if batch:
+        batch_id = batch.get("batch_id") or ""
+        if not overwatch_graph.reserve_batch_slot(batch_id):
+            return {"skipped": True, "reason": "batch_exhausted"}
+
     result = run_dogfood_cycle()
     status = result.get("status") or result.get("reason") or "unknown"
     logger.info("deploy_cycle: dogfood kick → %s (app=%s)",
                 status, result.get("app", "—"))
 
-    # Stamp batch_id on the DogfoodRun so the sensor can decrement
-    # the correct batch when the run reaches terminal state.
-    if batch and not result.get("skipped") and result.get("run_id"):
-        batch_id = batch.get("batch_id") or ""
+    # Stamp batch_id on the DogfoodRun so the sensor can record
+    # completion counters when the run reaches terminal state.
+    if batch_id and not result.get("skipped") and result.get("run_id"):
         overwatch_graph.update_dogfood_run(result["run_id"], batch_id=batch_id)
         logger.info("deploy_cycle: stamped batch_id=%s on run %s",
                      batch_id, result["run_id"])
