@@ -117,17 +117,16 @@ async def run_deploy_cycle() -> dict[str, Any]:
 
 
 def _kick_dogfood_if_needed() -> dict[str, Any]:
-    """
-    If the runner is enabled or a batch is active, kick off one dogfood
-    deploy per cycle. This is the bridge between "batch queued in Neptune"
-    and "repos actually being created + deployed."
-    """
+    """Kick off one dogfood deploy per cycle if enabled AND work exists."""
     from nexus import overwatch_graph
     from nexus.capabilities.dogfood_capability import _is_enabled, run_dogfood_cycle
 
+    if not _is_enabled():
+        return {"skipped": True, "reason": "not enabled"}
+
     batch = overwatch_graph.get_active_batch()
-    if not _is_enabled() and not batch:
-        return {"skipped": True, "reason": "not enabled, no batch"}
+    if not batch:
+        return {"skipped": True, "reason": "no batch"}
 
     # Reserve a batch slot BEFORE creating the run so concurrent cycles
     # don't over-fire. If reservation fails, batch is exhausted.
