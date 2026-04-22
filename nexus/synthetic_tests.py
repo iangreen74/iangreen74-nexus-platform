@@ -119,31 +119,74 @@ def journey_project_list() -> dict[str, Any]:
 
 
 def journey_project_separation() -> dict[str, Any]:
-    """Verify different project_ids return different data."""
-    resp, _ = _timed_call("GET", f"/projects/{TEST_TENANT}")
-    projects = resp.get("projects", []) if isinstance(resp, dict) else resp
-    if not isinstance(projects, list) or len(projects) < 2:
-        return {"name": "project_separation", "status": "skip", "error": "Need 2+ projects"}
+    """Verify brief isolation: data written to project A must not appear
+    in project B's brief.
 
-    p1, p2 = projects[0], projects[1]
-    pid1 = p1.get("project_id", "") if isinstance(p1, dict) else ""
-    pid2 = p2.get("project_id", "") if isinstance(p2, dict) else ""
-    if not pid1 or not pid2:
-        return {"name": "project_separation", "status": "skip", "error": "No project_id"}
+    Seeds distinct marker content into two disposable projects on a
+    synthetic tenant, then reads briefs scoped to each project and
+    asserts no cross-project leak. Tears down via Neptune DELETE.
 
-    r1, _ = _timed_call("GET", f"/brief/{TEST_TENANT}?project_id={pid1}")
-    r2, ms = _timed_call("GET", f"/brief/{TEST_TENANT}?project_id={pid2}")
+    Unlike other synthetics (which are read-only against TEST_TENANT),
+    this one writes+deletes to a disposable synthetic tenant so it
+    tests the real scoping invariant rather than depending on whatever
+    live state exists.
+    """
+    import uuid
+    from nexus import neptune_client
 
-    if r1.get("error") or r2.get("error"):
-        return {"name": "project_separation", "status": "fail", "duration_ms": ms,
-                "error": "Brief fetch failed"}
+    if MODE != "production":
+        return {"name": "project_separation", "status": "skip",
+                "error": "Requires production Neptune"}
 
-    if r1 == r2 and len(str(r1)) > 50:
-        return {"name": "project_separation", "status": "fail", "duration_ms": ms,
-                "error": "Identical brief for different projects — separation broken"}
+    synth_tenant = f"synth-sep-{uuid.uuid4().hex[:10]}"
+    pid_a = f"proj-a-{uuid.uuid4().hex[:8]}"
+    pid_b = f"proj-b-{uuid.uuid4().hex[:8]}"
+    marker_a = f"SYNTH_A_{uuid.uuid4().hex[:8]}"
+    marker_b = f"SYNTH_B_{uuid.uuid4().hex[:8]}"
 
-    return {"name": "project_separation", "status": "pass", "duration_ms": ms,
-            "details": f"Projects {pid1[:12]} and {pid2[:12]} return different data"}
+    try:
+        # Seed: write one BriefEntry per project with distinct markers
+        for pid, marker in [(pid_a, marker_a), (pid_b, marker_b)]:
+            neptune_client.query(
+                "MERGE (b:BriefEntry {tenant_id: $tid, entry_id: $eid}) "
+                "SET b.project_id = $pid, b.content = $content, "
+                "b.entry_type = 'synth_test', b.created_at = $now",
+                {"tid": synth_tenant, "eid": f"synth-{pid[:8]}",
+                 "pid": pid, "content": marker,
+                 "now": datetime.now(timezone.utc).isoformat()},
+            )
+
+        # Read: fetch briefs scoped to each project
+        r_a, _ = _timed_call("GET", f"/brief/{synth_tenant}?project_id={pid_a}")
+        r_b, ms = _timed_call("GET", f"/brief/{synth_tenant}?project_id={pid_b}")
+
+        str_a, str_b = str(r_a), str(r_b)
+
+        if marker_b in str_a:
+            return {"name": "project_separation", "status": "fail",
+                    "duration_ms": ms,
+                    "error": f"Project A brief contains B's marker — leak"}
+        if marker_a in str_b:
+            return {"name": "project_separation", "status": "fail",
+                    "duration_ms": ms,
+                    "error": f"Project B brief contains A's marker — leak"}
+
+        return {"name": "project_separation", "status": "pass",
+                "duration_ms": ms,
+                "details": f"No cross-project leak between {pid_a[:12]} and {pid_b[:12]}"}
+
+    except Exception as e:
+        return {"name": "project_separation", "status": "fail",
+                "error": f"Synthetic error: {e}"}
+    finally:
+        # Teardown: delete all nodes for this synthetic tenant
+        try:
+            neptune_client.query(
+                "MATCH (n {tenant_id: $tid}) DETACH DELETE n",
+                {"tid": synth_tenant},
+            )
+        except Exception:
+            pass
 
 
 def journey_conversation_scoping() -> dict[str, Any]:
