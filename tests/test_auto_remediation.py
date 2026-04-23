@@ -102,7 +102,7 @@ def test_run_and_remediate_returns_summary():
     assert "failed" in result
     assert "remediated" in result
     assert "remediations" in result
-    assert result["total"] == 30  # + 4 Day 7 regression guards
+    assert result["total"] == 31  # + orphan_zero_invariant
 
 
 def test_run_and_remediate_records_to_graph():
