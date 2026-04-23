@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Mechanism 2 — deploy event classifier Lambda.
+  Subscribes to forgewing-deploy-events bus, classifies events via Haiku,
+  writes ontology proposals to classifier_proposals Postgres table.
+
+Parameters:
+  VpcSubnets:
+    Type: CommaDelimitedList
+    Default: subnet-0797dba8499525215,subnet-0636e59cf68ff3844
+  VpcSecurityGroup:
+    Type: String
+    Default: sg-075797efad9ec368d
+  Psycopg2LayerArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:418295677815:layer:psycopg2-python312:1
+  DbSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:us-east-1:418295677815:secret:nexus/ontology/postgres/connection-XlBoLD
+  EventBusName:
+    Type: String
+    Default: forgewing-deploy-events
+
+Resources:
+  ClassifierRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: mechanism2-deploy-classifier-lambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: bedrock-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: '*'
+        - PolicyName: secrets-read
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DbSecretArn
+
+  ClassifierFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: mechanism2-deploy-event-classifier
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt ClassifierRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Layers:
+        - !Ref Psycopg2LayerArn
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnets
+        SecurityGroupIds:
+          - !Ref VpcSecurityGroup
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecretArn
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: mechanism2-deploy-classifier-trigger
+      EventBusName: !Ref EventBusName
+      EventPattern:
+        detail-type:
+          - deploy_event
+          - deploy_succeeded
+          - deploy_failed
+          - deploy_timeout
+          - deploy_rolled_back
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ClassifierFunction.Arn
+          Id: mechanism2-classifier
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ClassifierFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventRule.Arn
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt ClassifierFunction.Arn
+  RuleArn:
+    Value: !GetAtt EventRule.Arn
