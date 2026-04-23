@@ -1,11 +1,8 @@
 """Prompt assembly — the central ARIA pipeline.
 
-Every conversation turn flows through assemble_aria_prompt(). Returns the
-complete system prompt combining persona, founder context, ontology,
-tone markers, rolling summaries, and conversation history.
-
-Token budget: 10k total, 2k persona (never trimmed), 8k context (trimmed
-in priority order if overflow — history first, persona never).
+Every turn flows through assemble_aria_prompt(). Combines persona, founder
+context, ontology, tone, summaries, Socratic prompts, and history.
+Token budget: 10k total, 2k persona never-trimmed, 8k context trimmed.
 """
 from __future__ import annotations
 
@@ -21,6 +18,7 @@ from nexus.aria.ontology_reader import (
     read_rolling_summaries,
 )
 from nexus.aria.persona import load_persona
+from nexus.aria.socratic_reader import build_socratic_section, read_pending_socratic_prompts
 
 MAX_TOTAL_TOKENS = 10_000
 PERSONA_BUDGET = 2_000
@@ -49,12 +47,14 @@ def assemble_aria_prompt(
     tone_markers = read_recent_tone_markers(tenant_id)
     summaries = read_rolling_summaries(tenant_id)
 
+    socratic = read_pending_socratic_prompts(tenant_id)
     sections = [
         _section_persona(persona),
         _section_founder(founder),
         _section_rolling_memory(summaries),
         _section_tone_context(tone_markers),
         _section_active_ontology(ontology, active_pills),
+        build_socratic_section(socratic),
         _section_conversation_history(turn_history),
     ]
     return _compose_with_budget(sections)

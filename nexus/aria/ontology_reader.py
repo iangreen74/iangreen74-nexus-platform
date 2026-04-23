@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from nexus.aria.socratic_reader import read_pending_socratic_prompts  # noqa: F401
+
 log = logging.getLogger(__name__)
 
 
