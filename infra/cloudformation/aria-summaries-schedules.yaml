@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ARIA rolling summaries - scheduled Lambdas for daily/weekly/monthly
+  memory compression. Phase 6 of v6.1 plan.
+
+Parameters:
+  PsycopgLayerArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:418295677815:layer:psycopg2-python312:1
+  SubnetIds:
+    Type: CommaDelimitedList
+    Default: subnet-0797dba8499525215,subnet-0636e59cf68ff3844
+  SecurityGroupId:
+    Type: String
+    Default: sg-075797efad9ec368d
+
+Resources:
+  SummaryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aria-summaries-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: BedrockInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: '*'
+        - PolicyName: SecretsRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:nexus/*
+
+  DailyDigestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aria-daily-digest
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt SummaryLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Layers:
+        - !Ref PsycopgLayerArn
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+
+  DailyDigestSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aria-daily-digest-schedule
+      ScheduleExpression: cron(0 2 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt DailyDigestFunction.Arn
+          Id: daily-digest
+
+  DailyDigestPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DailyDigestFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyDigestSchedule.Arn
+
+  WeeklyRollupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aria-weekly-rollup
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt SummaryLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Layers:
+        - !Ref PsycopgLayerArn
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+
+  WeeklyRollupSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aria-weekly-rollup-schedule
+      ScheduleExpression: cron(0 2 ? * MON *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt WeeklyRollupFunction.Arn
+          Id: weekly-rollup
+
+  WeeklyRollupPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WeeklyRollupFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklyRollupSchedule.Arn
+
+  MonthlyArcFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aria-monthly-arc
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt SummaryLambdaRole.Arn
+      Timeout: 180
+      MemorySize: 512
+      Layers:
+        - !Ref PsycopgLayerArn
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+
+  MonthlyArcSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aria-monthly-arc-schedule
+      ScheduleExpression: cron(0 2 1 * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt MonthlyArcFunction.Arn
+          Id: monthly-arc
+
+  MonthlyArcPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MonthlyArcFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MonthlyArcSchedule.Arn
