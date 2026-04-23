@@ -74,6 +74,8 @@ def run_all_journeys(force: bool = False) -> list[dict[str, Any]]:
         journey_deploy_consistency,
         journey_version_drift,
         journey_merge_key_audit,
+        # Zero-orphan invariant — locks in clean Neptune state
+        journey_orphan_zero_invariant,
     ]
     results: list[dict[str, Any]] = []
     for fn in journeys:
@@ -1134,6 +1136,93 @@ def journey_merge_key_audit() -> dict[str, Any]:
     return {"name": "merge_key_audit", "status": "pass",
             "duration_ms": ms,
             "details": f"All project-scoped types clean across {len(tenant_ids)} multi-project tenant(s)"}
+
+
+# ---------------------------------------------------------------------------
+# Orphan-zero invariant — locks in post-purge clean Neptune state
+# ---------------------------------------------------------------------------
+# After purging 9,388 orphan nodes on 2026-04-14, this synthetic ensures
+# zero orphans remain. Unlike project_isolation_audit (which warns on age),
+# this is a hard zero: ANY null-project_id on a scoped label, or ANY
+# referential orphan (child → missing parent), is an immediate fail.
+
+_REFERENTIAL_CHECKS: list[dict[str, str]] = [
+    {
+        "name": "MissionTask→MissionBrief",
+        "query": (
+            "MATCH (t:MissionTask) "
+            "WHERE t.brief_id IS NOT NULL "
+            "AND NOT EXISTS { MATCH (b:MissionBrief) WHERE b.id = t.brief_id } "
+            "RETURN count(t) AS cnt"
+        ),
+    },
+    {
+        "name": "BriefEntry→MissionBrief",
+        "query": (
+            "MATCH (e:BriefEntry) "
+            "WHERE e.brief_id IS NOT NULL "
+            "AND NOT EXISTS { MATCH (b:MissionBrief) WHERE b.id = e.brief_id } "
+            "RETURN count(e) AS cnt"
+        ),
+    },
+    {
+        "name": "ConversationMessage→MissionTask",
+        "query": (
+            "MATCH (m:ConversationMessage) "
+            "WHERE m.task_id IS NOT NULL "
+            "AND NOT EXISTS { MATCH (t:MissionTask) WHERE t.id = m.task_id } "
+            "RETURN count(m) AS cnt"
+        ),
+    },
+]
+
+
+def journey_orphan_zero_invariant() -> dict[str, Any]:
+    """Zero-orphan invariant: fail if ANY orphan nodes exist in production.
+
+    Two classes of orphan:
+    1. NULL project_id on any of the 10 project-scoped labels
+    2. Referential orphans — child nodes whose parent no longer exists
+    """
+    if MODE != "production":
+        return {"name": "orphan_zero_invariant", "status": "skip",
+                "error": "Requires production Neptune access"}
+    try:
+        from nexus import neptune_client
+        start = time.time()
+
+        violations: list[str] = []
+
+        # Check 1: NULL project_id across all project-scoped labels
+        for label in _PROJECT_SCOPED_LABELS:
+            rows = neptune_client.query(
+                f"MATCH (n:{label}) WHERE n.project_id IS NULL "
+                "RETURN count(n) AS cnt"
+            ) or []
+            cnt = (rows[0].get("cnt") if rows and isinstance(rows[0], dict) else 0) or 0
+            if cnt:
+                violations.append(f"{label}:null_project={cnt}")
+
+        # Check 2: referential orphans (child → missing parent)
+        for check in _REFERENTIAL_CHECKS:
+            rows = neptune_client.query(check["query"]) or []
+            cnt = (rows[0].get("cnt") if rows and isinstance(rows[0], dict) else 0) or 0
+            if cnt:
+                violations.append(f"{check['name']}:ref_orphan={cnt}")
+
+        ms = int((time.time() - start) * 1000)
+    except Exception as exc:
+        return {"name": "orphan_zero_invariant", "status": "error",
+                "error": str(exc)[:200]}
+
+    if violations:
+        summary = "; ".join(violations[:8])
+        return {"name": "orphan_zero_invariant", "status": "fail",
+                "duration_ms": ms,
+                "error": f"Orphans detected: {summary}"}
+    return {"name": "orphan_zero_invariant", "status": "pass",
+            "duration_ms": ms,
+            "details": f"Zero orphans across {len(_PROJECT_SCOPED_LABELS)} labels + {len(_REFERENTIAL_CHECKS)} ref checks"}
 
 
 def get_summary() -> dict[str, Any]:

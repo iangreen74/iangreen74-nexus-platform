@@ -86,7 +86,7 @@ def test_run_all_journeys_returns_all():
     _clear_cache()
     results = run_all_journeys(force=True)
     assert isinstance(results, list)
-    assert len(results) == 30
+    assert len(results) == 31
     names = {r["name"] for r in results}
     assert "health" in names
     assert "brief_exists" in names
@@ -95,6 +95,7 @@ def test_run_all_journeys_returns_all():
     assert "action_banner_freshness" in names
     assert "sfs_project_creation" in names
     assert "project_delete_cleanup" in names
+    assert "orphan_zero_invariant" in names
 
 
 def test_run_all_journeys_cached():
@@ -113,7 +114,7 @@ def test_run_all_journeys_force_bypasses_cache():
     import nexus.synthetic_tests as st
     st._cache = ([{"name": "fake", "status": "pass"}], st._cache[1])
     results = run_all_journeys(force=True)
-    assert len(results) == 30  # re-ran, not the fake cache
+    assert len(results) == 31  # re-ran, not the fake cache
 
 
 # --- get_summary --------------------------------------------------------------
@@ -127,7 +128,7 @@ def test_get_summary():
     assert "failed" in summary
     assert "score_pct" in summary
     assert "results" in summary
-    assert summary["total"] == 30
+    assert summary["total"] == 31
 
 
 # --- Day 7 regression guards --------------------------------------------------
@@ -159,6 +160,62 @@ def test_journey_merge_key_audit_local():
     r = journey_merge_key_audit()
     assert r["name"] == "merge_key_audit"
     assert r["status"] == "skip"
+
+
+# --- Orphan-zero invariant ----------------------------------------------------
+
+
+def test_orphan_zero_invariant_skip_local():
+    """Local mode → skip (no Neptune access)."""
+    from nexus.synthetic_tests import journey_orphan_zero_invariant
+    r = journey_orphan_zero_invariant()
+    assert r["name"] == "orphan_zero_invariant"
+    assert r["status"] == "skip"
+
+
+def test_orphan_zero_invariant_pass_on_zero(monkeypatch):
+    """Pass when every count query returns 0."""
+    monkeypatch.setattr("nexus.synthetic_tests.MODE", "production")
+    import nexus.neptune_client as nc
+    monkeypatch.setattr(nc, "query", lambda q, params=None: [{"cnt": 0}])
+    from nexus.synthetic_tests import journey_orphan_zero_invariant
+    r = journey_orphan_zero_invariant()
+    assert r["status"] == "pass"
+    assert "Zero orphans" in r["details"]
+
+
+def test_orphan_zero_invariant_fail_on_null_project(monkeypatch):
+    """Fail when a project-scoped label has NULL project_id nodes."""
+    monkeypatch.setattr("nexus.synthetic_tests.MODE", "production")
+    import nexus.neptune_client as nc
+
+    def _fake(q, params=None):
+        if "MissionTask" in q and "project_id IS NULL" in q:
+            return [{"cnt": 3}]
+        return [{"cnt": 0}]
+
+    monkeypatch.setattr(nc, "query", _fake)
+    from nexus.synthetic_tests import journey_orphan_zero_invariant
+    r = journey_orphan_zero_invariant()
+    assert r["status"] == "fail"
+    assert "MissionTask" in r["error"]
+
+
+def test_orphan_zero_invariant_fail_on_referential_orphan(monkeypatch):
+    """Fail when referential check finds dangling children."""
+    monkeypatch.setattr("nexus.synthetic_tests.MODE", "production")
+    import nexus.neptune_client as nc
+
+    def _fake(q, params=None):
+        if "NOT EXISTS" in q and "MissionBrief" in q and "MissionTask" in q:
+            return [{"cnt": 5}]
+        return [{"cnt": 0}]
+
+    monkeypatch.setattr(nc, "query", _fake)
+    from nexus.synthetic_tests import journey_orphan_zero_invariant
+    r = journey_orphan_zero_invariant()
+    assert r["status"] == "fail"
+    assert "ref_orphan" in r["error"]
 
 
 def test_run_all_journeys_includes_day7_guards():
