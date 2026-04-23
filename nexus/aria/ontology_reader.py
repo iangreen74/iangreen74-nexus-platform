@@ -170,6 +170,13 @@ def read_recent_tone_markers(
 def read_rolling_summaries(tenant_id: str) -> dict[str, str | None]:
     """Read the current daily/weekly/monthly summaries for this founder.
 
-    STUB: Phase 6 populates.
+    Returns {daily: str|None, weekly: str|None, monthly: str|None}
+    with the most recent summary per horizon. Falls back to all-None
+    on any error — prompt_assembly handles it cleanly.
     """
-    return {"daily": None, "weekly": None, "monthly": None}
+    try:
+        from nexus.summaries.store import read_summaries
+        return read_summaries(tenant_id)
+    except Exception as e:
+        log.warning("read_rolling_summaries fell back to None: %s", e)
+        return {"daily": None, "weekly": None, "monthly": None}
