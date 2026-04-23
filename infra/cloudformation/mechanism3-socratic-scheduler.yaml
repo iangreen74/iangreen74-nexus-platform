@@ -44,6 +44,16 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref DbSecretArn
+        - PolicyName: NeptuneGraphAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - neptune-graph:ReadDataViaQuery
+                  - neptune-graph:WriteDataViaQuery
+                  - neptune-graph:DeleteDataViaQuery
+                Resource: arn:aws:neptune-graph:us-east-1:418295677815:graph/g-1xwjj34141
 
   SchedulerFunction:
     Type: AWS::Lambda::Function
