@@ -93,9 +93,26 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.warning("Failed to enqueue %s: %s",
                            getattr(candidate, "candidate_id", "?"), e)
 
+    # Tone classification — fire-and-forget, never blocks
+    tone_result = None
+    try:
+        from nexus.mechanism1.tone import classify_tone
+        from nexus.mechanism1.tone_store import save_marker
+        marker = classify_tone(
+            message=message, tenant_id=tenant_id, turn_id=turn_id,
+        )
+        if marker:
+            save_marker(marker)
+            tone_result = marker.tone
+            logger.info("tone captured: %s (conf=%.2f)",
+                        marker.tone, marker.confidence)
+    except Exception as e:
+        logger.warning("tone capture failed (non-blocking): %s", e)
+
     return {
         "statusCode": 200,
         "enqueued": enqueued,
         "failed": failed,
+        "tone": tone_result,
         "tenant_id": tenant_id,
     }

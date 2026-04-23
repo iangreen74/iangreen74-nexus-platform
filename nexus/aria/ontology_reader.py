@@ -76,14 +76,18 @@ def read_active_ontology(
 def read_recent_tone_markers(
     tenant_id: str, limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Read the last N tone markers from ActionEvents.
+    """Read the last N tone markers from Postgres tone_markers table.
 
-    Each tone marker: {turn_id, timestamp, tone, urgency, seeking}.
-    Returned in reverse chronological order (most recent first).
+    Each marker: {tenant_id, turn_id, tone, urgency, seeking, mentions,
+    confidence, created_at}. Reverse chronological (most recent first).
 
-    STUB: Phase 5 populates the ActionEvent stream with tone data.
+    Returns empty list on any error — prompt_assembly handles gracefully.
     """
-    return []
+    try:
+        from nexus.mechanism1.tone_store import read_markers
+        return read_markers(tenant_id, limit=limit)
+    except Exception:
+        return []
 
 
 def read_rolling_summaries(tenant_id: str) -> dict[str, str | None]:
