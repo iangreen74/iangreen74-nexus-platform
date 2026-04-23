@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Mechanism 3 — Socratic proactive prompt scheduler.
+
+Parameters:
+  VpcSubnets:
+    Type: CommaDelimitedList
+    Default: subnet-0797dba8499525215,subnet-0636e59cf68ff3844
+  VpcSecurityGroup:
+    Type: String
+    Default: sg-075797efad9ec368d
+  Psycopg2LayerArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:418295677815:layer:psycopg2-python312:1
+  DbSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:us-east-1:418295677815:secret:nexus/ontology/postgres/connection-XlBoLD
+  CodeBucket:
+    Type: String
+    Default: nexus-platform-lambda-deploys-418295677815
+  CodeKey:
+    Type: String
+    Default: lambdas/mechanism3_socratic_scheduler.zip
+
+Resources:
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: mechanism3-socratic-scheduler-lambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: secrets-read
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DbSecretArn
+
+  SchedulerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: mechanism3-socratic-scheduler
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt SchedulerRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Timeout: 180
+      MemorySize: 512
+      Layers:
+        - !Ref Psycopg2LayerArn
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnets
+        SecurityGroupIds:
+          - !Ref VpcSecurityGroup
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecretArn
+
+  HourlySchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: mechanism3-socratic-scheduler-hourly
+      ScheduleExpression: cron(0 * * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SchedulerFunction.Arn
+          Id: mechanism3-scheduler
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SchedulerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HourlySchedule.Arn
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt SchedulerFunction.Arn
