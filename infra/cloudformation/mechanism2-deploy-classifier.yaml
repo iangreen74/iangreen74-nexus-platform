@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Mechanism 2 — deploy event classifier Lambda. Documents live
+  CLI-managed resources. Subscribes to forgewing-deploy-events bus,
+  classifies deploy events via Haiku, writes ontology proposals.
+
+Parameters:
+  S3Bucket:
+    Type: String
+    Default: nexus-platform-lambda-deploys-418295677815
+  S3Key:
+    Type: String
+    Default: lambdas/mechanism2_deploy_classifier.zip
+  VpcSubnets:
+    Type: CommaDelimitedList
+    Default: subnet-0797dba8499525215,subnet-0636e59cf68ff3844
+  VpcSecurityGroup:
+    Type: String
+    Default: sg-075797efad9ec368d
+  Psycopg2LayerArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:418295677815:layer:psycopg2-python312:1
+  DbSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:us-east-1:418295677815:secret:nexus/ontology/postgres/connection-XlBoLD
+  EventBusName:
+    Type: String
+    Default: forgewing-deploy-events
+  LambdaRoleArn:
+    Type: String
+    Default: arn:aws:iam::418295677815:role/ontology-events-lambda-role
+
+Resources:
+  ClassifierFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: mechanism2-deploy-event-classifier
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 30
+      MemorySize: 512
+      Layers:
+        - !Ref Psycopg2LayerArn
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnets
+        SecurityGroupIds:
+          - !Ref VpcSecurityGroup
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !Ref DbSecretArn
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: mechanism2-deploy-classifier-trigger
+      EventBusName: !Ref EventBusName
+      EventPattern:
+        detail-type:
+          - deploy_event
+          - deploy_succeeded
+          - deploy_failed
+          - deploy_timeout
+          - deploy_rolled_back
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ClassifierFunction.Arn
+          Id: mechanism2-classifier
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ClassifierFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventRule.Arn
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt ClassifierFunction.Arn
+  RuleArn:
+    Value: !GetAtt EventRule.Arn
