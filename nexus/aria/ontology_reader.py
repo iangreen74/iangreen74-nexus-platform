@@ -7,8 +7,11 @@ This module does NOT format text. That's prompt_assembly's job.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,13 +21,13 @@ class FounderContext:
     founder_name: str | None = None
     company_name: str | None = None
     stated_vision: str | None = None
-    stage: str | None = None  # e.g. "early-idea", "building-mvp"
+    stage: str | None = None
 
 
 @dataclass
 class OntologyObject:
     """A node from the active ontology subgraph."""
-    object_type: str  # Feature / Decision / Hypothesis / Bug
+    object_type: str
     title: str
     status: str | None = None
     created_at: str | None = None
@@ -41,16 +44,82 @@ class OntologySubgraph:
     bugs: list[OntologyObject] = field(default_factory=list)
 
 
+def _graph_query(cypher: str, params: dict | None = None) -> list[dict]:
+    """Query Neptune via overwatch_graph. Returns [] on any error."""
+    try:
+        from nexus.overwatch_graph import query
+        return query(cypher, params or {}) or []
+    except Exception as e:
+        log.warning("graph query failed: %s", e)
+        return []
+
+
 def read_founder_context(tenant_id: str) -> FounderContext:
-    """Read the UserContext node for this tenant.
+    """Read the UserContext node for this tenant from Neptune.
 
-    Returns FounderContext with name/company/vision/stage. If no UserContext
-    exists (new tenant), returns context with all None fields — ARIA
-    gracefully handles missing data.
-
-    STUB: Phase 4b wires to Neptune. Returns empty context for now.
+    Returns FounderContext populated from graph properties. If no node
+    exists or Neptune is unreachable, returns empty context — ARIA
+    shows "listen and learn" guidance for unknown founders.
     """
-    return FounderContext(tenant_id=tenant_id)
+    try:
+        rows = _graph_query(
+            "MATCH (u:UserContext {tenant_id: $tid}) "
+            "RETURN u.product_name AS name, u.product_vision AS vision, "
+            "u.target_users AS target, u.source AS source "
+            "LIMIT 1",
+            {"tid": tenant_id},
+        )
+        if not rows or not isinstance(rows[0], dict):
+            return FounderContext(tenant_id=tenant_id)
+        r = rows[0]
+        return FounderContext(
+            tenant_id=tenant_id,
+            company_name=r.get("name"),
+            stated_vision=r.get("vision"),
+        )
+    except Exception as e:
+        log.warning("read_founder_context failed: %s", e)
+        return FounderContext(tenant_id=tenant_id)
+
+
+def _query_ontology_type(
+    tenant_id: str,
+    project_id: str | None,
+    label: str,
+    title_field: str,
+    pills: list[str],
+    limit: int = 10,
+) -> list[OntologyObject]:
+    """Query one ontology type, returning OntologyObject list."""
+    where = "n.tenant_id = $tid"
+    params: dict[str, Any] = {"tid": tenant_id, "lim": limit}
+    if project_id:
+        where += " AND n.project_id = $pid"
+        params["pid"] = project_id
+    if pills:
+        # Simple pill matching: filter by title containing any pill term
+        pill_clauses = []
+        for i, pill in enumerate(pills[:5]):
+            key = f"pill{i}"
+            pill_clauses.append(f"toLower(n.{title_field}) CONTAINS toLower(${key})")
+            params[key] = pill
+        where += f" AND ({' OR '.join(pill_clauses)})"
+    rows = _graph_query(
+        f"MATCH (n:{label}) WHERE {where} "
+        f"RETURN n.{title_field} AS title, n.status AS status, "
+        f"n.created_at AS created_at, n.id AS id "
+        f"ORDER BY n.created_at DESC LIMIT $lim",
+        params,
+    )
+    return [
+        OntologyObject(
+            object_type=label,
+            title=r.get("title") or "(untitled)",
+            status=r.get("status"),
+            created_at=r.get("created_at"),
+        )
+        for r in rows if isinstance(r, dict) and r.get("title")
+    ]
 
 
 def read_active_ontology(
@@ -60,17 +129,25 @@ def read_active_ontology(
 ) -> OntologySubgraph:
     """Read the ontology subgraph scoped to the active pills.
 
-    A pill is a scoping hint: "the plan", "PR #42", "the auth feature".
-    Each pill maps to ontology node IDs. Given the pill set, return the
-    subgraph of connected Features, Decisions, Hypotheses, Bugs — up to
-    a size cap to prevent context explosion.
+    Queries Feature/Decision/Hypothesis nodes for this tenant+project.
+    If active_pills is non-empty, filters by title match. Otherwise
+    returns top-N most recent per type.
 
-    If active_pills is empty, returns the top-N most recent ontology
-    objects for this tenant+project as default context.
-
-    STUB: Phase 4b wires to Neptune. Returns empty subgraph for now.
+    Returns empty subgraph on any error — prompt_assembly handles it.
     """
-    return OntologySubgraph()
+    try:
+        pills = list(active_pills or [])
+        return OntologySubgraph(
+            features=_query_ontology_type(
+                tenant_id, project_id, "Feature", "name", pills),
+            decisions=_query_ontology_type(
+                tenant_id, project_id, "Decision", "name", pills),
+            hypotheses=_query_ontology_type(
+                tenant_id, project_id, "Hypothesis", "statement", pills),
+        )
+    except Exception as e:
+        log.warning("read_active_ontology failed: %s", e)
+        return OntologySubgraph()
 
 
 def read_recent_tone_markers(
@@ -92,9 +169,6 @@ def read_recent_tone_markers(
 
 def read_rolling_summaries(tenant_id: str) -> dict[str, str | None]:
     """Read the current daily/weekly/monthly summaries for this founder.
-
-    Returns dict with keys 'daily', 'weekly', 'monthly' — each either
-    a string summary or None if not yet generated.
 
     STUB: Phase 6 populates.
     """
