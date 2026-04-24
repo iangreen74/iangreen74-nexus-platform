@@ -865,7 +865,8 @@ def journey_healer_operational_wrap() -> dict[str, Any]:
 _PROJECT_SCOPED_LABELS = (
     "MissionTask", "MissionBrief", "BriefEntry", "AnalysisReport",
     "ConversationMessage", "RepoFile", "DeploymentProgress",
-    "PredictedTask", "OmniscientInsight",
+    "PredictedTask", "OmniscientInsight", "TrajectoryInsight",
+    "IntentSnapshot",
 )
 
 _SHOULD_BE_SCOPED_LABELS = (
