@@ -15,6 +15,26 @@ from typing import Any
 
 from nexus.config import MODE
 
+# ── 6h in-memory TTL cache on Cost Explorer calls ──────────────────────
+# Cost Explorer bills $0.01/request. AWS updates cost data hourly at best,
+# so synthetic-test-driven calls every ~30s burn ~$86/day for stale data.
+# Cache is process-local: each ECS task warms independently, and restarts
+# are fine because the first call repopulates.
+import os as _os
+import time as _time
+_CACHE_TTL_SECONDS = int(_os.environ.get("COST_CACHE_TTL_SECONDS", "21600"))  # 6h
+_cost_cache: dict = {}
+
+def _cache_get(key):
+    entry = _cost_cache.get(key)
+    if entry and _time.time() - entry[0] < _CACHE_TTL_SECONDS:
+        return entry[1]
+    return None
+
+def _cache_set(key, value):
+    _cost_cache[key] = (_time.time(), value)
+
+
 logger = logging.getLogger("nexus.capabilities.cost_monitor")
 
 # Pure placeholder: there's no API for "credits remaining". Operator can
@@ -92,6 +112,11 @@ def _mock_summary() -> dict[str, Any]:
 
 def get_daily_spend() -> dict[str, Any]:
     """Daily/MTD/projection snapshot. Never raises — errors surface structured."""
+    # 6h TTL cache — see _CACHE_TTL_SECONDS above
+    _k = "get_daily_spend"
+    _cached = _cache_get(_k)
+    if _cached is not None:
+        return _cached
     if MODE != "production":
         return _mock_summary()
     try:
@@ -117,7 +142,7 @@ def get_daily_spend() -> dict[str, Any]:
     credits = DEFAULT_CREDITS_REMAINING
     runway_days = int(credits / burn_rate) if burn_rate > 0 else None
 
-    return {
+    _result = {
         "today": today_spend,
         "yesterday": yesterday_spend,
         "month_to_date": mtd,
@@ -128,6 +153,8 @@ def get_daily_spend() -> dict[str, Any]:
         "top_services": top_services,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
+    _cache_set(_k, _result)
+    return _result
 
 
 def format_for_report(summary: dict[str, Any] | None = None) -> str:
