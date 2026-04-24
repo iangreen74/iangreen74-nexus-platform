@@ -130,3 +130,7 @@ def create_default_project(
     return OperatorActionResult(
         project_id=tenant_id, created=True, audit_id=audit_id,
     )
+
+
+# Re-export from operator_repair for backward compatibility
+from nexus.operator_repair import PROJECT_SCOPED_LABELS, repair_orphan_nodes  # noqa: E402,F401
