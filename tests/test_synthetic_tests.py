@@ -207,7 +207,7 @@ def test_orphan_zero_invariant_fail_on_referential_orphan(monkeypatch):
     import nexus.neptune_client as nc
 
     def _fake(q, params=None):
-        if "NOT EXISTS" in q and "MissionBrief" in q and "MissionTask" in q:
+        if "OPTIONAL MATCH" in q and "MissionBrief" in q and "MissionTask" in q:
             return [{"cnt": 5}]
         return [{"cnt": 0}]
 

@@ -1150,27 +1150,27 @@ _REFERENTIAL_CHECKS: list[dict[str, str]] = [
     {
         "name": "MissionTask→MissionBrief",
         "query": (
-            "MATCH (t:MissionTask) "
-            "WHERE t.brief_id IS NOT NULL "
-            "AND NOT EXISTS { MATCH (b:MissionBrief) WHERE b.id = t.brief_id } "
+            "MATCH (t:MissionTask) WHERE t.brief_id IS NOT NULL "
+            "OPTIONAL MATCH (b:MissionBrief {id: t.brief_id}) "
+            "WITH t, b WHERE b IS NULL "
             "RETURN count(t) AS cnt"
         ),
     },
     {
         "name": "BriefEntry→MissionBrief",
         "query": (
-            "MATCH (e:BriefEntry) "
-            "WHERE e.brief_id IS NOT NULL "
-            "AND NOT EXISTS { MATCH (b:MissionBrief) WHERE b.id = e.brief_id } "
+            "MATCH (e:BriefEntry) WHERE e.brief_id IS NOT NULL "
+            "OPTIONAL MATCH (b:MissionBrief {id: e.brief_id}) "
+            "WITH e, b WHERE b IS NULL "
             "RETURN count(e) AS cnt"
         ),
     },
     {
         "name": "ConversationMessage→MissionTask",
         "query": (
-            "MATCH (m:ConversationMessage) "
-            "WHERE m.task_id IS NOT NULL "
-            "AND NOT EXISTS { MATCH (t:MissionTask) WHERE t.id = m.task_id } "
+            "MATCH (m:ConversationMessage) WHERE m.task_id IS NOT NULL "
+            "OPTIONAL MATCH (t:MissionTask {id: m.task_id}) "
+            "WITH m, t WHERE t IS NULL "
             "RETURN count(m) AS cnt"
         ),
     },
