@@ -26,6 +26,7 @@ from nexus.askcustomer import api as askcustomer_api
 from nexus.mechanism1 import api as classifier_api
 from nexus.ontology import query_api as ontology_query_api
 from nexus.ontology import routes as ontology_routes
+from nexus.routes.operator_routes import router as operator_router
 
 STATIC_DIR = Path(__file__).parent / "dashboard" / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
@@ -57,6 +58,7 @@ app.include_router(v2_executions_api.router)
 app.include_router(dogfood_report_api.router)
 app.include_router(askcustomer_api.router)
 app.include_router(classifier_api.router)
+app.include_router(operator_router, prefix="/api/operator", tags=["operator"])
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
