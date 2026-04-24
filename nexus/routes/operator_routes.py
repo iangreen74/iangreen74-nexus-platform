@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import Any
 
 from nexus.operator_actions import create_default_project, repair_orphan_nodes
+from nexus.operator_purge import purge_orphan_nodes
 from nexus.operator_reingest import RateLimitError, reingest_tenant
 
 router = APIRouter()
@@ -72,6 +73,40 @@ async def endpoint_repair_orphan_nodes(
         )
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
+
+
+class PurgeOrphanRequest(BaseModel):
+    labels_to_purge: list[str]
+    dry_run: bool = True
+
+
+@router.post("/tenants/{tenant_id}/purge-orphan-nodes")
+async def endpoint_purge_orphan_nodes(
+    tenant_id: str,
+    body: PurgeOrphanRequest,
+    x_operator_password: str | None = Header(None),
+) -> dict[str, Any]:
+    """DETACH DELETE orphan nodes for explicit labels. Dry-run by default.
+
+    labels_to_purge is REQUIRED and must be non-empty — no default-to-all.
+    """
+    operator_id = _verify_operator(x_operator_password)
+    if not body.labels_to_purge:
+        raise HTTPException(
+            400, detail="labels_to_purge is required and must be non-empty"
+        )
+    try:
+        return purge_orphan_nodes(
+            tenant_id=tenant_id,
+            labels_to_purge=body.labels_to_purge,
+            dry_run=body.dry_run,
+            operator_id=operator_id,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if "required" in msg or "non-empty" in msg:
+            raise HTTPException(400, detail=msg)
+        raise HTTPException(404, detail=msg)
 
 
 class ReingestRequest(BaseModel):
