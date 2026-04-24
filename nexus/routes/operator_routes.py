@@ -9,7 +9,11 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException
 
-from nexus.operator_actions import create_default_project
+from pydantic import BaseModel
+from typing import Any
+
+from nexus.operator_actions import create_default_project, repair_orphan_nodes
+from nexus.operator_reingest import RateLimitError, reingest_tenant
 
 router = APIRouter()
 
@@ -40,5 +44,63 @@ async def endpoint_create_default_project(
             "created": result.created,
             "audit_id": result.audit_id,
         }
+    except ValueError as e:
+        raise HTTPException(404, detail=str(e))
+
+
+class RepairOrphanRequest(BaseModel):
+    target_project_id: str
+    labels_to_repair: list[str] | None = None
+    dry_run: bool = True
+
+
+@router.post("/tenants/{tenant_id}/repair-orphan-nodes")
+async def endpoint_repair_orphan_nodes(
+    tenant_id: str,
+    body: RepairOrphanRequest,
+    x_operator_password: str | None = Header(None),
+) -> dict[str, Any]:
+    """Relabel orphan nodes to target project. Dry-run by default."""
+    operator_id = _verify_operator(x_operator_password)
+    try:
+        return repair_orphan_nodes(
+            tenant_id=tenant_id,
+            target_project_id=body.target_project_id,
+            labels_to_repair=body.labels_to_repair,
+            dry_run=body.dry_run,
+            operator_id=operator_id,
+        )
+    except ValueError as e:
+        raise HTTPException(404, detail=str(e))
+
+
+class ReingestRequest(BaseModel):
+    project_id: str | None = None
+    force: bool = False
+
+
+@router.post("/tenants/{tenant_id}/reingest")
+async def endpoint_reingest_tenant(
+    tenant_id: str,
+    body: ReingestRequest = ReingestRequest(),
+    x_operator_password: str | None = Header(None),
+) -> dict[str, Any]:
+    """Queue a reingest for a tenant. Returns 202 on success."""
+    operator_id = _verify_operator(x_operator_password)
+    try:
+        result = reingest_tenant(
+            tenant_id=tenant_id,
+            project_id=body.project_id,
+            force=body.force,
+            operator_id=operator_id,
+        )
+        return {
+            "audit_id": result.audit_id,
+            "ingest_run_id": result.ingest_run_id,
+            "status": result.status,
+            "project_id": result.project_id,
+        }
+    except RateLimitError as e:
+        raise HTTPException(429, detail=str(e))
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
