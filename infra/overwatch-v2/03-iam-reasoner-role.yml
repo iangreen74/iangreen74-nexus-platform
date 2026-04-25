@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 — IAM reasoner role. Read-only AWS access scoped to
+  services the reasoner observes. Assumable only by ECS tasks in the
+  overwatch-platform cluster. Mutations go through the separate
+  overwatch-v2-mutation-role (template 04). Spec ref §9.2.
+
+Resources:
+
+  ReasonerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: overwatch-v2-reasoner-role
+      Description: Read-only role for the Overwatch V2 reasoner running on ECS.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: "418295677815"
+              ArnLike:
+                aws:SourceArn: "arn:aws:ecs:us-east-1:418295677815:task/overwatch-platform/*"
+      Policies:
+        - PolicyName: OverwatchV2ReasonerReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+
+              # Compute and container observability
+              - Sid: EcsRead
+                Effect: Allow
+                Action:
+                  - ecs:Describe*
+                  - ecs:List*
+                Resource: "*"
+              - Sid: EcrRead
+                Effect: Allow
+                Action:
+                  - ecr:Describe*
+                  - ecr:List*
+                  - ecr:GetRepositoryPolicy
+                  - ecr:GetLifecyclePolicy
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: "*"
+              - Sid: Ec2Read
+                Effect: Allow
+                Action:
+                  - ec2:Describe*
+                Resource: "*"
+
+              # Database and infra describe
+              - Sid: RdsRead
+                Effect: Allow
+                Action:
+                  - rds:Describe*
+                  - rds:ListTagsForResource
+                Resource: "*"
+              - Sid: CloudFormationRead
+                Effect: Allow
+                Action:
+                  - cloudformation:Describe*
+                  - cloudformation:List*
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource: "*"
+              - Sid: StepFunctionsRead
+                Effect: Allow
+                Action:
+                  - states:Describe*
+                  - states:List*
+                  - states:GetExecutionHistory
+                Resource: "*"
+              - Sid: LambdaRead
+                Effect: Allow
+                Action:
+                  - lambda:Get*
+                  - lambda:List*
+                Resource: "*"
+              - Sid: ElbRead
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:Describe*
+                Resource: "*"
+
+              # Logs and quotas
+              - Sid: LogsRead
+                Effect: Allow
+                Action:
+                  - logs:Describe*
+                  - logs:Get*
+                  - logs:FilterLogEvents
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                Resource: "*"
+              - Sid: ServiceQuotasRead
+                Effect: Allow
+                Action:
+                  - servicequotas:Get*
+                  - servicequotas:List*
+                Resource: "*"
+
+              # Secrets Manager — overwatch-v2/* namespace only
+              - Sid: SecretsReadOverwatchNamespaceOnly
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/*"
+
+              # Neptune Analytics — read-only on overwatch-graph and the existing aria-platform graph
+              - Sid: NeptuneAnalyticsReadOwnAndAriaGraph
+                Effect: Allow
+                Action:
+                  - neptune-graph:GetGraph
+                  - neptune-graph:ListGraphs
+                  - neptune-graph:ListTagsForResource
+                  - neptune-graph:ReadDataViaQuery
+                  - neptune-graph:GetGraphSummary
+                  - neptune-graph:ListGraphSnapshots
+                  - neptune-graph:GetQueryStatus
+                Resource: "*"
+
+              # KMS — verify on the approval-token key only (key ARN unknown until template 05 deploys; scoped by alias usage)
+              - Sid: KmsVerifyApprovalToken
+                Effect: Allow
+                Action:
+                  - kms:Verify
+                  - kms:DescribeKey
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ResourceAliases: "alias/overwatch-v2-approval-token"
+
+              # CloudTrail — read for audit
+              - Sid: CloudTrailRead
+                Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                  - cloudtrail:Describe*
+                  - cloudtrail:Get*
+                  - cloudtrail:List*
+                Resource: "*"
+
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-reasoner
+        - Key: Stack
+          Value: overwatch-v2-iam-reasoner
+
+Outputs:
+  ReasonerRoleArn:
+    Value: !GetAtt ReasonerRole.Arn
+    Export:
+      Name: OverwatchV2ReasonerRoleArn
+  ReasonerRoleName:
+    Value: !Ref ReasonerRole
+    Export:
+      Name: OverwatchV2ReasonerRoleName

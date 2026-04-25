@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 — KMS HMAC key for signing approval-token JWTs (HS256).
+  kms:Sign restricted to the reasoner role; kms:Verify restricted to the
+  mutation role. Root account retains administrative authority.
+  Spec ref §9.3.
+
+Resources:
+
+  ApprovalTokenKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: HMAC HS256 key for Overwatch V2 approval-token signing/verification.
+      KeySpec: HMAC_256
+      KeyUsage: GENERATE_VERIFY_MAC
+      MultiRegion: false
+      EnableKeyRotation: false  # AWS rotation not supported for HMAC keys
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: overwatch-v2-approval-token-key-policy
+        Statement:
+
+          - Sid: RootAccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: "arn:aws:iam::418295677815:root"
+            Action: "kms:*"
+            Resource: "*"
+
+          - Sid: ReasonerRoleSign
+            Effect: Allow
+            Principal:
+              AWS: "arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role"
+            Action:
+              - kms:GenerateMac
+              - kms:DescribeKey
+            Resource: "*"
+
+          - Sid: MutationRoleVerify
+            Effect: Allow
+            Principal:
+              AWS: "arn:aws:iam::418295677815:role/overwatch-v2-mutation-role"
+            Action:
+              - kms:VerifyMac
+              - kms:DescribeKey
+            Resource: "*"
+
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-approval-token
+        - Key: Stack
+          Value: overwatch-v2-kms-approval
+
+  ApprovalTokenKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/overwatch-v2-approval-token
+      TargetKeyId: !Ref ApprovalTokenKey
+
+Outputs:
+  KeyArn:
+    Value: !GetAtt ApprovalTokenKey.Arn
+    Export:
+      Name: OverwatchV2ApprovalTokenKeyArn
+  KeyId:
+    Value: !Ref ApprovalTokenKey
+    Export:
+      Name: OverwatchV2ApprovalTokenKeyId
+  KeyAlias:
+    Value: !Ref ApprovalTokenKeyAlias
+    Export:
+      Name: OverwatchV2ApprovalTokenKeyAlias
