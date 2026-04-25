@@ -67,6 +67,20 @@ app.include_router(echo_routes.router)
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# overwatch-web (operator-facing /engineering UI). Mounted AFTER API
+# routers so they take precedence. html=True makes StaticFiles serve
+# index.html for unmatched paths under /engineering (SPA mode).
+_OVERWATCH_WEB_DIST = Path(__file__).parent.parent / "overwatch-web" / "dist"
+if _OVERWATCH_WEB_DIST.exists():
+    app.mount(
+        "/engineering",
+        StaticFiles(directory=str(_OVERWATCH_WEB_DIST), html=True),
+        name="overwatch_web",
+    )
+    logger.info("overwatch-web mounted at /engineering")
+else:
+    logger.warning("overwatch-web/dist/ missing; /engineering route disabled")
+
 
 @app.get("/health")
 async def health():
