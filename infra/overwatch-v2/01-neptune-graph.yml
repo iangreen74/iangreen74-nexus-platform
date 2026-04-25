@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 — Neptune Analytics graph "overwatch-graph".
+  16 m-NCU, single AZ (replica count 0), public connectivity disabled,
+  vector search disabled (V2 does not need it). Separate graph from
+  the existing g-1xwjj34141 (aria-platform-prod). Spec ref §6.2.
+
+Resources:
+
+  OverwatchGraph:
+    Type: AWS::NeptuneGraph::Graph
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GraphName: overwatch-graph
+      ProvisionedMemory: 16
+      ReplicaCount: 0
+      PublicConnectivity: false
+      DeletionProtection: true
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-memory
+        - Key: Stack
+          Value: overwatch-v2-neptune-graph
+
+Outputs:
+  GraphId:
+    Value: !GetAtt OverwatchGraph.GraphId
+    Export:
+      Name: OverwatchV2GraphId
+  GraphArn:
+    Value: !GetAtt OverwatchGraph.GraphArn
+    Export:
+      Name: OverwatchV2GraphArn
+  Endpoint:
+    Value: !GetAtt OverwatchGraph.Endpoint
+    Export:
+      Name: OverwatchV2GraphEndpoint

@@ -1,0 +1,33 @@
+{
+  "overwatch-v2-secrets": {
+    "PostgresMasterSecretArn": "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/postgres-master-e16PNJ",
+    "GitHubPatSecretArn": "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/github-pat-9B1gJv",
+    "AnthropicFallbackSecretArn": "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/anthropic-fallback-xcjzni"
+  },
+  "overwatch-v2-neptune-graph": {
+    "Endpoint": "g-279kpnulx0.us-east-1.neptune-graph.amazonaws.com",
+    "GraphArn": "arn:aws:neptune-graph:us-east-1:418295677815:graph/g-279kpnulx0",
+    "GraphId": "g-279kpnulx0"
+  },
+  "overwatch-v2-iam-reasoner": {
+    "ReasonerRoleName": "overwatch-v2-reasoner-role",
+    "ReasonerRoleArn": "arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role"
+  },
+  "overwatch-v2-iam-mutation": {
+    "MutationRoleName": "overwatch-v2-mutation-role",
+    "MutationRoleArn": "arn:aws:iam::418295677815:role/overwatch-v2-mutation-role"
+  },
+  "overwatch-v2-kms-approval": {
+    "KeyId": "87628058-cf4a-447f-af1b-7a37a3a5592e",
+    "KeyArn": "arn:aws:kms:us-east-1:418295677815:key/87628058-cf4a-447f-af1b-7a37a3a5592e",
+    "KeyAlias": "alias/overwatch-v2-approval-token"
+  },
+  "overwatch-v2-rds-postgres": {
+    "DBInstanceEndpoint": "overwatch-postgres.cj0quk64skxf.us-east-1.rds.amazonaws.com:5432",
+    "DBInstanceArn": "arn:aws:rds:us-east-1:418295677815:db:overwatch-postgres",
+    "DBInstanceHost": "overwatch-postgres.cj0quk64skxf.us-east-1.rds.amazonaws.com",
+    "DBInstancePort": "5432",
+    "DBSecurityGroupId": "sg-02bdc29d2ff79e216",
+    "DBSubnetGroupName": "overwatch-v2-rds-postgres-dbsubnetgroup-ebtz0kpvejpa"
+  }
+}

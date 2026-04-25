@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 — RDS Postgres "overwatch-postgres". db.t4g.medium,
+  50 GB gp3 (autoscaling to 200), single-AZ, private subnets,
+  encrypted, 7-day backups, deletion protection on.
+  Reuses aria-platform-vpc and the same private subnets as
+  nexus-ontology-postgres (existing pattern). Spec ref §6.2.
+
+Parameters:
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-048ee32658b49e0a0
+    Description: aria-platform-vpc (hosts the overwatch-platform ECS cluster).
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0797dba8499525215
+    Description: aria-platform-private-1a.
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0636e59cf68ff3844
+    Description: aria-platform-private-1b.
+
+  EcsSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Default: sg-075797efad9ec368d
+    Description: Security group of the aria-console ECS service in the overwatch-platform cluster.
+
+  PostgresMasterSecretArn:
+    Type: String
+    Description: ARN of overwatch-v2/postgres-master from the overwatch-v2-secrets stack.
+    AllowedPattern: "^arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/postgres-master.*$"
+
+  DbName:
+    Type: String
+    Default: overwatch
+    Description: Default database name.
+
+Resources:
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for overwatch-postgres.
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-postgres
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: overwatch-postgres - ingress 5432 from overwatch-platform ECS only.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EcsSecurityGroupId
+          Description: Postgres from aria-console ECS service.
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-postgres
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: overwatch-postgres
+      DBName: !Ref DbName
+      Engine: postgres
+      EngineVersion: "16.13"
+      DBInstanceClass: db.t4g.medium
+      AllocatedStorage: "50"
+      MaxAllocatedStorage: 200
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Sub "{{resolve:secretsmanager:${PostgresMasterSecretArn}:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${PostgresMasterSecretArn}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DbSecurityGroup.GroupId
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "07:00-08:00"
+      PreferredMaintenanceWindow: "sun:08:00-sun:09:00"
+      PubliclyAccessible: false
+      MultiAZ: false
+      EnablePerformanceInsights: false
+      DeletionProtection: true
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-postgres
+        - Key: Stack
+          Value: overwatch-v2-rds-postgres
+
+  PostgresSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref PostgresMasterSecretArn
+      TargetId: !Ref DbInstance
+      TargetType: AWS::RDS::DBInstance
+
+Outputs:
+  DBInstanceArn:
+    Value: !Sub "arn:aws:rds:us-east-1:418295677815:db:${DbInstance}"
+    Export:
+      Name: OverwatchV2PostgresInstanceArn
+  DBInstanceEndpoint:
+    Value: !Sub "${DbInstance.Endpoint.Address}:${DbInstance.Endpoint.Port}"
+    Export:
+      Name: OverwatchV2PostgresEndpoint
+  DBInstanceHost:
+    Value: !GetAtt DbInstance.Endpoint.Address
+    Export:
+      Name: OverwatchV2PostgresHost
+  DBInstancePort:
+    Value: !GetAtt DbInstance.Endpoint.Port
+    Export:
+      Name: OverwatchV2PostgresPort
+  DBSecurityGroupId:
+    Value: !GetAtt DbSecurityGroup.GroupId
+    Export:
+      Name: OverwatchV2PostgresSecurityGroupId
+  DBSubnetGroupName:
+    Value: !Ref DbSubnetGroup
+    Export:
+      Name: OverwatchV2PostgresSubnetGroupName

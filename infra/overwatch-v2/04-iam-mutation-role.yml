@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 — IAM mutation role. Assumable ONLY by the reasoner role
+  (overwatch-v2-reasoner-role) AND only when a UUID-shaped sts:ExternalId
+  (the approval-token id) is presented. Hard limits: us-east-1 only,
+  no IAM user creation, no self-modification, no CloudTrail disable,
+  no deletion of OverwatchGraph or OverwatchPostgres. Spec ref §9.2, §9.5.
+
+Resources:
+
+  MutationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: overwatch-v2-mutation-role
+      Description: Mutation role for Overwatch V2 - assumable only by the reasoner role with an approval-token id as ExternalId.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: "arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role"
+            Action: sts:AssumeRole
+            Condition:
+              # ExternalId must be present and shaped like a UUID (the approval-token id).
+              # Cryptographic validation of the token happens at app layer; this is the IAM-layer ergonomic gate.
+              StringLike:
+                sts:ExternalId: "????????-????-????-????-????????????"
+      Policies:
+
+        - PolicyName: OverwatchV2MutationWriteAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+
+              # ECS — service updates only
+              - Sid: EcsUpdateService
+                Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DeregisterTaskDefinition
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+              # CloudFormation — write only on the patterns Overwatch is responsible for
+              - Sid: CloudFormationWriteScopedPatterns
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:CancelUpdateStack
+                Resource:
+                  - "arn:aws:cloudformation:us-east-1:418295677815:stack/forge-*/*"
+                  - "arn:aws:cloudformation:us-east-1:418295677815:stack/forgewing-*/*"
+                  - "arn:aws:cloudformation:us-east-1:418295677815:stack/overwatch-v2-*/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+              # ECR — image push to specific repos only
+              - Sid: EcrPutImage
+                Effect: Allow
+                Action:
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:BatchCheckLayerAvailability
+                Resource:
+                  - "arn:aws:ecr:us-east-1:418295677815:repository/overwatch-v2*"
+                  - "arn:aws:ecr:us-east-1:418295677815:repository/forgewing/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+              # Lambda — code updates only (no role/config changes from this role)
+              - Sid: LambdaUpdateCode
+                Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                  - lambda:PublishVersion
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+              # S3 — Overwatch V2 buckets only
+              - Sid: S3PutOverwatchBucketsOnly
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - "arn:aws:s3:::overwatch-v2-*/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+              # Secrets Manager — update only within the overwatch-v2/ namespace
+              - Sid: SecretsUpdateOverwatchNamespaceOnly
+                Effect: Allow
+                Action:
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:PutSecretValue
+                Resource:
+                  - "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+        - PolicyName: OverwatchV2HardLimits
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+
+              # Cross-region operations are denied
+              - Sid: DenyOutsideUsEast1
+                Effect: Deny
+                Action: "*"
+                Resource: "*"
+                Condition:
+                  StringNotEquals:
+                    aws:RequestedRegion: us-east-1
+
+              # No IAM user creation or modification of users/policies/roles
+              - Sid: DenyIamUserOrPrincipalChanges
+                Effect: Deny
+                Action:
+                  - iam:CreateUser
+                  - iam:CreateAccessKey
+                  - iam:DeleteUser
+                  - iam:UpdateUser
+                  - iam:CreateLoginProfile
+                  - iam:UpdateLoginProfile
+                Resource: "*"
+
+              # Cannot self-modify the mutation role or the reasoner role
+              - Sid: DenySelfModification
+                Effect: Deny
+                Action:
+                  - iam:UpdateRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                Resource:
+                  - "arn:aws:iam::418295677815:role/overwatch-v2-mutation-role"
+                  - "arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role"
+
+              # CloudTrail must remain on
+              - Sid: DenyCloudTrailDisable
+                Effect: Deny
+                Action:
+                  - cloudtrail:StopLogging
+                  - cloudtrail:DeleteTrail
+                  - cloudtrail:PutEventSelectors
+                  - cloudtrail:UpdateTrail
+                Resource: "*"
+
+              # Cannot delete the V2 memory layer
+              - Sid: DenyOverwatchPersistenceDeletion
+                Effect: Deny
+                Action:
+                  - neptune-graph:DeleteGraph
+                  - rds:DeleteDBInstance
+                  - rds:DeleteDBCluster
+                Resource:
+                  - "arn:aws:neptune-graph:us-east-1:418295677815:graph/*"
+                  - "arn:aws:rds:us-east-1:418295677815:db:overwatch-postgres"
+                  - "arn:aws:rds:us-east-1:418295677815:cluster:overwatch-postgres*"
+
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-mutation
+        - Key: Stack
+          Value: overwatch-v2-iam-mutation
+
+Outputs:
+  MutationRoleArn:
+    Value: !GetAtt MutationRole.Arn
+    Export:
+      Name: OverwatchV2MutationRoleArn
+  MutationRoleName:
+    Value: !Ref MutationRole
+    Export:
+      Name: OverwatchV2MutationRoleName
