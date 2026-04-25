@@ -1,16 +1,18 @@
-"""Register all six V2 read tools with the global tool registry.
+"""Register V2 read tools with the global tool registry.
 
 Imported once at chat-backend startup (Day 6). Idempotent — Track F's
 register() overwrites a same-name spec rather than duplicating.
+
+Track Q added list_aws_resources (catalog enumeration) — 7 tools total.
 """
 from __future__ import annotations
 
 
 def register_all_read_tools() -> None:
-    """Call all six tool modules' register_tool() functions."""
+    """Call every tool module's register_tool() function."""
     from nexus.overwatch_v2.tools.read_tools import (
         aws_resource, cloudwatch_logs, engineering_ontology,
-        github, overwatch_metrics, pipeline_truth,
+        github, list_aws_resources, overwatch_metrics, pipeline_truth,
     )
     aws_resource.register_tool()
     cloudwatch_logs.register_tool()
@@ -18,6 +20,7 @@ def register_all_read_tools() -> None:
     pipeline_truth.register_tool()
     engineering_ontology.register_tool()
     overwatch_metrics.register_tool()
+    list_aws_resources.register_tool()
 
 
 if __name__ == "__main__":

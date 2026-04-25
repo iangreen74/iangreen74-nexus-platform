@@ -697,17 +697,18 @@ class TestRegistration:
             mod = sys.modules[mod_name]
             assert "registry" not in dir(mod)
 
-    def test_register_all_six_tools(self):
+    def test_register_all_seven_tools(self):
+        # Track Q added list_aws_resources alongside the original 6.
         fake = _fake_registry_module()
         with patch.dict(sys.modules, {"nexus.overwatch_v2.tools.registry": fake}):
             from nexus.overwatch_v2.tools.read_tools._registration import register_all_read_tools
             register_all_read_tools()
-        assert fake.register.call_count == 6
+        assert fake.register.call_count == 7
         names = {call.args[0].name for call in fake.register.call_args_list}
         assert names == {
             "read_aws_resource", "read_cloudwatch_logs", "read_github",
             "query_pipeline_truth", "query_engineering_ontology",
-            "read_overwatch_metrics",
+            "read_overwatch_metrics", "list_aws_resources",
         }
 
     def test_all_tools_marked_read_only(self):

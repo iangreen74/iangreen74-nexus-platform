@@ -1,8 +1,9 @@
 """V2 ontology schema — public surface.
 
 Re-exports node dataclasses, edge validation, and the type registry.
-Class definitions are split across schema_objects.py (7 types) and
-schema_outcomes.py (6 types) to respect the 200-line per-file ceiling.
+Class definitions are split across schema_objects.py (7 engineering),
+schema_outcomes.py (6 outcomes/conversations), and schema_aws.py
+(8 AWS-catalog) to respect the 200-line per-file ceiling.
 """
 from __future__ import annotations
 
@@ -17,6 +18,10 @@ from nexus.overwatch_v2.ontology.schema_objects import (
 )
 from nexus.overwatch_v2.ontology.schema_outcomes import (
     CapabilityState, Conversation, ConversationTurn, Failure, Pattern, Success,
+)
+from nexus.overwatch_v2.ontology.schema_aws import (
+    Database, DataStore, Deployment, DeploymentTarget, Infrastructure,
+    Runner, Service, WorkerNode,
 )
 from nexus.overwatch_v2.ontology.types import EdgeType, NodeType, TENANT_ID
 
@@ -35,6 +40,15 @@ OBJECT_TYPE_REGISTRY = {
     NodeType.CAPABILITY_STATE.value: CapabilityState,
     NodeType.CONVERSATION.value: Conversation,
     NodeType.CONVERSATION_TURN.value: ConversationTurn,
+    # Track Q AWS catalog types
+    NodeType.SERVICE.value: Service,
+    NodeType.DATABASE.value: Database,
+    NodeType.DATA_STORE.value: DataStore,
+    NodeType.INFRASTRUCTURE.value: Infrastructure,
+    NodeType.RUNNER.value: Runner,
+    NodeType.WORKER_NODE.value: WorkerNode,
+    NodeType.DEPLOYMENT.value: Deployment,
+    NodeType.DEPLOYMENT_TARGET.value: DeploymentTarget,
 }
 
 
@@ -56,4 +70,6 @@ __all__ = [
     "CapabilityState", "Conversation", "ConversationTurn", "Decision",
     "DeployEvent", "EngineeringTask", "Evidence", "Failure", "FixAttempt",
     "Hypothesis", "Investigation", "Pattern", "Success",
+    "Database", "DataStore", "Deployment", "DeploymentTarget",
+    "Infrastructure", "Runner", "Service", "WorkerNode",
 ]

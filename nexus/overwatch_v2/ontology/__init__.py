@@ -1,7 +1,8 @@
 """Overwatch V2 ontology — engineering-object schema, dual-write service layer.
 
 Single canonical write path for V2's OverwatchGraph + OverwatchPostgres.
-13 node types, 15 edge types per docs/OVERWATCH_V2_SPECIFICATION.md §6.3.
+21 node types (13 from §6.3 + 8 from Track Q AWS-catalog expansion),
+15 edge types.
 """
 from nexus.overwatch_v2.ontology.exceptions import (
     V2EdgeValidationError, V2GraphWriteError, V2ObjectNotFoundError,
@@ -13,6 +14,8 @@ from nexus.overwatch_v2.ontology.schema import (
     CapabilityState, Conversation, ConversationTurn, Decision, DeployEvent,
     EngineeringTask, Evidence, Failure, FixAttempt, Hypothesis,
     Investigation, Pattern, Success,
+    Database, DataStore, Deployment, DeploymentTarget, Infrastructure,
+    Runner, Service, WorkerNode,
 )
 from nexus.overwatch_v2.ontology.service import (
     create_link, get_object, list_objects_by_type, propose_object,
@@ -28,6 +31,8 @@ __all__ = [
     "CapabilityState", "Conversation", "ConversationTurn", "Decision",
     "DeployEvent", "EngineeringTask", "Evidence", "Failure", "FixAttempt",
     "Hypothesis", "Investigation", "Pattern", "Success",
+    "Database", "DataStore", "Deployment", "DeploymentTarget",
+    "Infrastructure", "Runner", "Service", "WorkerNode",
     "propose_object", "update_object", "create_link",
     "get_object", "list_objects_by_type", "query",
 ]
