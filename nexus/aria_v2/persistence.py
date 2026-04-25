@@ -31,7 +31,7 @@ def _is_production() -> bool:
 
 
 def _db_url() -> str | None:
-    return os.environ.get("OVERWATCH_V2_DATABASE_URL", "").strip() or None
+    from nexus.aria_v2.db import database_url; return database_url()
 
 
 @contextmanager
