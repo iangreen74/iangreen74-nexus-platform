@@ -173,6 +173,26 @@ Resources:
                   - cloudwatch:ListMetrics
                 Resource: "*"
 
+        # Cross-namespace dependency: the daemon's pipeline-polling loop
+        # in nexus.capabilities.forgewing_api reads forgescaler/api to
+        # authenticate against api.forgescaler.com. This is intentional
+        # cross-namespace coupling (Forgewing API auth from the
+        # Overwatch reasoner role), so it lives as its own named policy
+        # rather than expanding the overwatch-v2/* wildcard. Methodology
+        # L24: cross-namespace IAM dependencies are explicit, not buried.
+        - PolicyName: SecretsReadForgescalerApi
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadForgescalerApiSecret
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                # Trailing * because Secrets Manager appends a 6-char
+                # disambiguator suffix (e.g. forgescaler/api-waftLx).
+                Resource: "arn:aws:secretsmanager:us-east-1:418295677815:secret:forgescaler/api*"
+
       Tags:
         - Key: Purpose
           Value: overwatch-v2-reasoner
