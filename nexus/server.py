@@ -121,6 +121,12 @@ async def startup():
         start_deploy_cycle()
     except Exception:
         logger.exception("deploy_cycle scheduler failed to start")
+    try:
+        from nexus.overwatch_v2.tools.read_tools._registration import register_all_read_tools
+        register_all_read_tools()
+        logger.info("V2 read tools registered at startup")
+    except Exception:
+        logger.exception("V2 read tool registration failed; Echo will run toolless")
 
 
 @app.on_event("shutdown")
