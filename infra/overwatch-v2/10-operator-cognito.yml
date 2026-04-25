@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 — Operator Cognito User Pool for platform.vaultscaler.com.
+  Dedicated to Overwatch operators (Ian + future). NOT shared with the
+  Forgewing customer Cognito pool (forgescaler/cognito) — operator auth
+  identity is independent of customer auth per the architectural
+  separation principle. Spec ref: Track P. Wired to ALB
+  authenticate-cognito action via the listener default rule.
+
+Parameters:
+  CallbackBaseUrl:
+    Type: String
+    Default: https://platform.vaultscaler.com
+    Description: Base URL used to construct the OAuth callback (must match the host served by the ALB default rule).
+
+Resources:
+
+  OperatorUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: overwatch-operators
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: "ON"
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 14
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      UserPoolTags:
+        System: overwatch
+        Purpose: operator-auth
+        Stack: overwatch-v2-operator-cognito
+
+  OperatorUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref OperatorUserPool
+      ClientName: overwatch-operator-console
+      GenerateSecret: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        - !Sub ${CallbackBaseUrl}/oauth2/idpresponse
+      LogoutURLs:
+        - !Ref CallbackBaseUrl
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 12
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: hours
+
+  OperatorUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub overwatch-vaultscaler-${AWS::AccountId}
+      UserPoolId: !Ref OperatorUserPool
+
+Outputs:
+  UserPoolId:
+    Value: !Ref OperatorUserPool
+    Export:
+      Name: OverwatchV2OperatorUserPoolId
+  UserPoolArn:
+    Value: !GetAtt OperatorUserPool.Arn
+    Export:
+      Name: OverwatchV2OperatorUserPoolArn
+  UserPoolClientId:
+    Value: !Ref OperatorUserPoolClient
+    Export:
+      Name: OverwatchV2OperatorUserPoolClientId
+  UserPoolDomain:
+    Value: !Ref OperatorUserPoolDomain
+    Export:
+      Name: OverwatchV2OperatorUserPoolDomain
+  HostedUiBaseUrl:
+    Value: !Sub https://overwatch-vaultscaler-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com
+    Export:
+      Name: OverwatchV2OperatorHostedUiBaseUrl
