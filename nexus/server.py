@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from nexus.config import CONSOLE_PORT, MODE
@@ -31,7 +31,6 @@ from nexus.ontology import routes as ontology_routes
 from nexus.routes.operator_routes import router as operator_router
 
 STATIC_DIR = Path(__file__).parent / "dashboard" / "static"
-INDEX_FILE = STATIC_DIR / "index.html"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -139,18 +138,7 @@ async def health():
 
 @app.get("/")
 async def root():
-    """Serve the operator dashboard SPA, or a JSON pointer if it's missing."""
-    if INDEX_FILE.exists():
-        return FileResponse(str(INDEX_FILE))
-    return JSONResponse(
-        {
-            "system": "overwatch",
-            "mode": MODE,
-            "docs": "/docs",
-            "health": "/health",
-            "api": "/api/status",
-        }
-    )
+    return RedirectResponse(url="/engineering", status_code=302)
 
 
 @app.on_event("startup")
