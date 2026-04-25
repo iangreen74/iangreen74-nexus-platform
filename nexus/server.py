@@ -22,6 +22,7 @@ from nexus.dashboard import routes as dashboard_routes
 from nexus.dashboard import pipeline_events_api
 from nexus.dashboard import dogfood_report_api
 from nexus.dashboard import v2_executions_api
+from nexus.dashboard import echo_routes
 from nexus.askcustomer import api as askcustomer_api
 from nexus.mechanism1 import api as classifier_api
 from nexus.ontology import query_api as ontology_query_api
@@ -59,6 +60,7 @@ app.include_router(dogfood_report_api.router)
 app.include_router(askcustomer_api.router)
 app.include_router(classifier_api.router)
 app.include_router(operator_router, prefix="/api/operator", tags=["operator"])
+app.include_router(echo_routes.router)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
