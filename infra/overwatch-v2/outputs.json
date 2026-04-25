@@ -1,7 +1,6 @@
 {
   "overwatch-v2-secrets": {
     "PostgresMasterSecretArn": "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/postgres-master-e16PNJ",
-    "GitHubPatSecretArn": "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/github-pat-9B1gJv",
     "AnthropicFallbackSecretArn": "arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/anthropic-fallback-xcjzni"
   },
   "overwatch-v2-neptune-graph": {
