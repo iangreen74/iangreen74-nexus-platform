@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from nexus.config import CONSOLE_PORT, MODE
@@ -80,6 +80,48 @@ if _OVERWATCH_WEB_DIST.exists():
     logger.info("overwatch-web mounted at /engineering")
 else:
     logger.warning("overwatch-web/dist/ missing; /engineering route disabled")
+
+
+_COGNITO_DOMAIN = "overwatch-vaultscaler-418295677815.auth.us-east-1.amazoncognito.com"
+_COGNITO_CLIENT_ID = "4ceqt9ed8esoqqnu3mao482223"
+_LOGOUT_URI = "https://platform.vaultscaler.com/"
+
+# ALB session cookies: default name is AWSELBAuthSessionCookie, sharded
+# by index when value exceeds one cookie. Clearing -0..-3 covers the
+# common 1-4 shard range.
+_ALB_AUTH_COOKIE_NAMES = (
+    "AWSELBAuthSessionCookie-0",
+    "AWSELBAuthSessionCookie-1",
+    "AWSELBAuthSessionCookie-2",
+    "AWSELBAuthSessionCookie-3",
+)
+
+
+@app.get("/oauth2/sign-out")
+async def sign_out() -> RedirectResponse:
+    """End the operator's Cognito session and rebound through ALB to sign-in.
+
+    Browser flow:
+      1. Backend returns 302 to Cognito /logout with Set-Cookie headers
+         that expire the ALB session cookies in the browser.
+      2. Cognito invalidates the IdP session and redirects to logout_uri
+         (root of platform.vaultscaler.com).
+      3. ALB sees no valid session cookie (we cleared them) and the
+         authenticate-cognito action redirects to Cognito sign-in.
+    """
+    cognito_logout = (
+        f"https://{_COGNITO_DOMAIN}/logout"
+        f"?client_id={_COGNITO_CLIENT_ID}"
+        f"&logout_uri={_LOGOUT_URI}"
+    )
+    response = RedirectResponse(url=cognito_logout, status_code=302)
+    for name in _ALB_AUTH_COOKIE_NAMES:
+        # Match ALB cookie attributes: path=/, host-only (no Domain),
+        # Secure + HttpOnly. delete_cookie sets Max-Age=0.
+        response.delete_cookie(
+            key=name, path="/", secure=True, httponly=True, samesite="lax",
+        )
+    return response
 
 
 @app.get("/health")
