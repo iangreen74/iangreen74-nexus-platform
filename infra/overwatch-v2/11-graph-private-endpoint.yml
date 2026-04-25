@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Private graph endpoint for V2 Neptune Analytics graph g-279kpnulx0
+  in vpc-048ee32658b49e0a0.
+
+  Creating a PrivateGraphEndpoint causes Neptune Analytics to provision
+  the per-graph endpoint AND auto-create the service-owned Route 53
+  private hosted zone for in-VPC hostname resolution. Without this,
+  in-VPC code paths fail with socket.gaierror and V2GraphWriteError on
+  every Neptune call against the per-graph hostname.
+
+  Mirrors the legacy graph g-1xwjj34141's endpoint configuration in
+  the same VPC and subnets, including the explicit SecurityGroupIds
+  attachment. Without an explicit SG, Neptune Analytics attaches the
+  VPC default SG, which does not allow tcp/443 inbound from the
+  daemon's SG — the V2 data-plane connections then time out at TCP
+  layer (DNS resolves; connection drops). The legacy aria-neptune-vpce
+  SG is reused so V1 and V2 share the same allow-list (daemon SG +
+  CI runner CIDRs).
+
+Parameters:
+  GraphId:
+    Type: String
+    Default: g-279kpnulx0
+    Description: V2 Neptune Analytics graph identifier.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-048ee32658b49e0a0
+    Description: VPC where the daemon and aria-console run.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Default: subnet-0636e59cf68ff3844,subnet-0797dba8499525215
+    Description: Subnets where the per-graph ENIs are placed.
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Default: sg-0808369912057705f
+    Description: SGs to attach to the per-graph VPCE. Default is the
+                 existing aria-neptune-vpce SG used by the legacy V1
+                 endpoint.
+
+Resources:
+
+  V2GraphPrivateEndpoint:
+    Type: AWS::NeptuneGraph::PrivateGraphEndpoint
+    Properties:
+      GraphIdentifier: !Ref GraphId
+      VpcId: !Ref VpcId
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: !Ref SecurityGroupIds
+
+Outputs:
+  PrivateGraphEndpointIdentifier:
+    Value: !GetAtt V2GraphPrivateEndpoint.PrivateGraphEndpointIdentifier
+    Description: Composite identifier <GraphId>_<VpcId>.
+    Export:
+      Name: OverwatchV2GraphPrivateEndpointIdentifier
+  VpcEndpointId:
+    Value: !GetAtt V2GraphPrivateEndpoint.VpcEndpointId
+    Description: Underlying VPC endpoint provisioned/attached for this graph.
+    Export:
+      Name: OverwatchV2GraphVpcEndpointId
