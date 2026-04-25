@@ -26,6 +26,15 @@ class NodeType(_ValuesMixin, str, Enum):
     CAPABILITY_STATE = "CapabilityState"
     CONVERSATION = "Conversation"
     CONVERSATION_TURN = "ConversationTurn"
+    # Track Q — AWS-catalog types for "list all X" / "how many X" queries.
+    SERVICE = "Service"
+    DATABASE = "Database"
+    DATA_STORE = "DataStore"
+    INFRASTRUCTURE = "Infrastructure"
+    RUNNER = "Runner"
+    WORKER_NODE = "WorkerNode"
+    DEPLOYMENT = "Deployment"
+    DEPLOYMENT_TARGET = "DeploymentTarget"
 
 
 class EdgeType(_ValuesMixin, str, Enum):

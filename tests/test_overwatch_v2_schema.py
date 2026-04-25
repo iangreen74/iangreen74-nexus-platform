@@ -28,12 +28,13 @@ def _common_kwargs(node_type: str) -> dict:
 
 # --- Registry & enum coverage ------------------------------------------------
 
-def test_registry_has_13_entries():
-    assert len(OBJECT_TYPE_REGISTRY) == 13
+def test_registry_has_21_entries():
+    # 13 from §6.3 + 8 from Track Q AWS-catalog expansion
+    assert len(OBJECT_TYPE_REGISTRY) == 21
 
 
-def test_node_type_enum_has_13_members():
-    assert len(NodeType.values()) == 13
+def test_node_type_enum_has_21_members():
+    assert len(NodeType.values()) == 21
 
 
 def test_edge_type_enum_has_15_members():
