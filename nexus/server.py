@@ -84,7 +84,7 @@ else:
 
 _COGNITO_DOMAIN = "overwatch-vaultscaler-418295677815.auth.us-east-1.amazoncognito.com"
 _COGNITO_CLIENT_ID = "4ceqt9ed8esoqqnu3mao482223"
-_LOGOUT_URI = "https://platform.vaultscaler.com/"
+_LOGOUT_URI = "https://platform.vaultscaler.com"
 
 # ALB session cookies: default name is AWSELBAuthSessionCookie, sharded
 # by index when value exceeds one cookie. Clearing -0..-3 covers the
