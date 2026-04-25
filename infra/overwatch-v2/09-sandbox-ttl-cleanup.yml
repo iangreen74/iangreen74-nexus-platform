@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 sandbox TTL cleanup. EventBridge hourly rule fires a
+  Lambda that terminates any EC2 instance tagged SandboxOnly=true with
+  LaunchTime older than 24 hours. Lambda permissions: describe all,
+  terminate only sandbox-tagged instances. Spec: V2 Day 4 substrate.
+
+Parameters:
+
+  TtlHours:
+    Type: Number
+    Default: 24
+    MinValue: 1
+    MaxValue: 168
+    Description: Maximum age before a sandbox-tagged instance is terminated.
+
+Resources:
+
+  TtlLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: overwatch-v2-sandbox-ttl-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SandboxTtlEc2
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DescribeAll
+                Effect: Allow
+                Action: ec2:DescribeInstances
+                Resource: "*"
+              - Sid: TerminateSandboxOnly
+                Effect: Allow
+                Action: ec2:TerminateInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:ResourceTag/SandboxOnly": "true"
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-sandbox
+
+  TtlLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: overwatch-v2-sandbox-ttl-cleanup
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TtlLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          TTL_HOURS: !Ref TtlHours
+      Code:
+        ZipFile: |
+          import os
+          from datetime import datetime, timedelta, timezone
+          import boto3
+
+          TTL_HOURS = int(os.environ.get("TTL_HOURS", "24"))
+          ec2 = boto3.client("ec2")
+
+          def handler(event, context):
+              cutoff = datetime.now(timezone.utc) - timedelta(hours=TTL_HOURS)
+              resp = ec2.describe_instances(Filters=[
+                  {"Name": "tag:SandboxOnly", "Values": ["true"]},
+                  {"Name": "instance-state-name", "Values": ["running", "stopped"]},
+              ])
+              to_terminate = []
+              for reservation in resp.get("Reservations", []):
+                  for inst in reservation.get("Instances", []):
+                      if inst["LaunchTime"] < cutoff:
+                          to_terminate.append(inst["InstanceId"])
+              if to_terminate:
+                  ec2.terminate_instances(InstanceIds=to_terminate)
+              return {"terminated": to_terminate, "cutoff": cutoff.isoformat()}
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-sandbox
+
+  HourlyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: overwatch-v2-sandbox-ttl-hourly
+      Description: Hourly trigger for the sandbox TTL Lambda.
+      ScheduleExpression: rate(1 hour)
+      State: ENABLED
+      Targets:
+        - Id: TtlLambda
+          Arn: !GetAtt TtlLambda.Arn
+
+  HourlyRuleInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TtlLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HourlyRule.Arn
+
+Outputs:
+
+  TtlLambdaArn:
+    Value: !GetAtt TtlLambda.Arn
+    Export:
+      Name: OverwatchV2SandboxTtlLambdaArn
+
+  HourlyRuleArn:
+    Value: !GetAtt HourlyRule.Arn
+    Export:
+      Name: OverwatchV2SandboxTtlRuleArn

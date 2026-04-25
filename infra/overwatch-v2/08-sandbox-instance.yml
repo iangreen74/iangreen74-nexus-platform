@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 sandbox EC2 instance. t3.medium Amazon Linux 2023 in
+  the sandbox VPC's private subnet A. IAM profile grants ReadOnlyAccess
+  + SSM Session Manager + write to single ephemeral S3 bucket + ECR
+  auth-token. Explicit deny on IAM mutation and Secrets Manager.
+  SSM-only access (no SSH key, no public IP, no inbound 22).
+  Bootstrap mirrors infra/overwatch-v2/sandbox-bootstrap.sh.
+
+Parameters:
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Sandbox VPC ID (from overwatch-v2-sandbox-vpc stack output VpcId).
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Comma-separated private subnet IDs (from overwatch-v2-sandbox-vpc).
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large]
+    Description: Single-operator engineering sandbox; t3.medium is sufficient.
+
+  Al2023AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI via public SSM parameter.
+
+Resources:
+
+  EphemeralBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "overwatch-v2-sandbox-ephemeral-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireEphemeralAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-sandbox
+        - Key: SandboxOnly
+          Value: "true"
+
+  SandboxRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: overwatch-v2-sandbox-role
+      Description: Read-only AWS access + ephemeral-S3 write + ECR auth. SSM-only ingress.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SandboxEphemeralS3Write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteEphemeralBucket
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                Resource: !Sub "${EphemeralBucket.Arn}/*"
+              - Sid: ListEphemeralBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt EphemeralBucket.Arn
+        - PolicyName: SandboxEcrAuthToken
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrAuthToken
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+        - PolicyName: SandboxExplicitDenies
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DenyIamMutation
+                Effect: Deny
+                Action:
+                  - iam:Create*
+                  - iam:Update*
+                  - iam:Delete*
+                  - iam:Put*
+                  - iam:Attach*
+                  - iam:Detach*
+                  - iam:Pass*
+                Resource: "*"
+              - Sid: DenySecretsManager
+                Effect: Deny
+                Action: secretsmanager:*
+                Resource: "*"
+              - Sid: DenyProductionMutation
+                Effect: Deny
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DeleteService
+                  - lambda:UpdateFunction*
+                  - lambda:DeleteFunction
+                  - dynamodb:DeleteTable
+                  - dynamodb:UpdateTable
+                  - cloudformation:DeleteStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateStack
+                Resource: "*"
+      Tags:
+        - Key: Purpose
+          Value: overwatch-v2-sandbox
+        - Key: SandboxOnly
+          Value: "true"
+
+  SandboxInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: overwatch-v2-sandbox-profile
+      Roles:
+        - !Ref SandboxRole
+
+  SandboxSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: overwatch-v2-sandbox-sg
+      GroupDescription: Sandbox EC2 - egress 443 only; no inbound (SSM uses SSM Messages).
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS to the world (pip, dnf, ECR, GitHub, SSM endpoints).
+      Tags:
+        - Key: Name
+          Value: overwatch-v2-sandbox-sg
+        - Key: SandboxOnly
+          Value: "true"
+
+  SandboxInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref Al2023AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref SandboxInstanceProfile
+      SubnetId: !Select [0, !Ref PrivateSubnetIds]
+      SecurityGroupIds:
+        - !Ref SandboxSg
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > >(tee -a /var/log/sandbox-bootstrap.log) 2>&1
+          echo "[$(date -Iseconds)] sandbox bootstrap starting"
+          dnf update -y
+          dnf install -y docker git python3-pip jq awscli unzip dnf-plugins-core
+          dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+          dnf install -y gh
+          systemctl enable --now docker
+          usermod -aG docker ssm-user || true
+          python3 -m pip install --quiet boto3 requests pytest
+          INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id || echo "unknown")
+          echo "$(date -Iseconds) $INSTANCE_ID" > /opt/sandbox-ready
+          chmod 644 /opt/sandbox-ready
+          echo "[$(date -Iseconds)] sandbox bootstrap complete"
+      Tags:
+        - Key: Name
+          Value: overwatch-v2-sandbox
+        - Key: Purpose
+          Value: overwatch-v2-sandbox
+        - Key: SandboxOnly
+          Value: "true"
+
+Outputs:
+
+  InstanceId:
+    Value: !Ref SandboxInstance
+    Export:
+      Name: OverwatchV2SandboxInstanceId
+
+  InstanceProfileArn:
+    Value: !GetAtt SandboxInstanceProfile.Arn
+    Export:
+      Name: OverwatchV2SandboxInstanceProfileArn
+
+  SandboxRoleArn:
+    Value: !GetAtt SandboxRole.Arn
+    Export:
+      Name: OverwatchV2SandboxRoleArn
+
+  EphemeralBucketName:
+    Value: !Ref EphemeralBucket
+    Export:
+      Name: OverwatchV2SandboxEphemeralBucket
+
+  SecurityGroupId:
+    Value: !Ref SandboxSg
+    Export:
+      Name: OverwatchV2SandboxSecurityGroupId

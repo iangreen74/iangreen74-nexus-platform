@@ -23,6 +23,7 @@ from nexus.dashboard import pipeline_events_api
 from nexus.dashboard import dogfood_report_api
 from nexus.dashboard import v2_executions_api
 from nexus.dashboard import echo_routes
+from nexus.dashboard import pipeline_truth_routes
 from nexus.askcustomer import api as askcustomer_api
 from nexus.mechanism1 import api as classifier_api
 from nexus.ontology import query_api as ontology_query_api
@@ -56,6 +57,7 @@ app.include_router(ontology_routes.router, prefix="/api/ontology")
 app.include_router(ontology_query_api.router, prefix="/api/ontology")
 app.include_router(pipeline_events_api.router)
 app.include_router(v2_executions_api.router)
+app.include_router(pipeline_truth_routes.router)
 app.include_router(dogfood_report_api.router)
 app.include_router(askcustomer_api.router)
 app.include_router(classifier_api.router)
