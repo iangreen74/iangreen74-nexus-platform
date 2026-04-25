@@ -1,0 +1,143 @@
+{
+  "containerDefinitions": [
+    {
+      "name": "aria-console",
+      "image": "418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform:latest",
+      "cpu": 0,
+      "portMappings": [
+        {
+          "containerPort": 9001,
+          "hostPort": 9001,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "HYPERLEV_GITHUB_TOKEN",
+          "value": "<REDACTED \u2014 see Secrets Manager / rotate immediately, see PR body>"
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "value": "<REDACTED \u2014 see Secrets Manager / rotate immediately, see PR body>"
+        },
+        {
+          "name": "PIPELINE_EVENTS_QUEUE_URL",
+          "value": "https://queue.amazonaws.com/418295677815/forgewing-pipeline-events"
+        },
+        {
+          "name": "ARIA_PASSWORD",
+          "value": "<REDACTED \u2014 see Secrets Manager / rotate immediately, see PR body>"
+        },
+        {
+          "name": "NEXUS_MODE",
+          "value": "production"
+        },
+        {
+          "name": "ARIA_REGISTRATION_OPEN",
+          "value": "true"
+        },
+        {
+          "name": "ARIA_AGENCY_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "ARIA_TENANT_ID",
+          "value": "aria-platform"
+        },
+        {
+          "name": "ARIA_GRAPH_BACKEND",
+          "value": "neptune"
+        },
+        {
+          "name": "ARIA_TENANT_ZERO",
+          "value": "true"
+        },
+        {
+          "name": "ARIA_AGENCY_MODE",
+          "value": "proposal"
+        },
+        {
+          "name": "NEPTUNE_GRAPH_ID",
+          "value": "g-1xwjj34141"
+        },
+        {
+          "name": "ARIA_DAEMON_MODE",
+          "value": "heartbeat"
+        },
+        {
+          "name": "FORGEWING_EVAL_CORPUS_BUCKET",
+          "value": "forgewing-eval-corpus-418295677815"
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "secrets": [
+        {
+          "name": "STRIPE_SECRET_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:hyperlev/stripe-ZsVpad:STRIPE_SECRET_KEY::"
+        },
+        {
+          "name": "STRIPE_PUBLISHABLE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:hyperlev/stripe-ZsVpad:STRIPE_PUBLISHABLE_KEY::"
+        },
+        {
+          "name": "STRIPE_WEBHOOK_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:hyperlev/stripe-ZsVpad:STRIPE_WEBHOOK_SECRET::"
+        },
+        {
+          "name": "STRIPE_STARTER_PRICE_ID",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:hyperlev/stripe-ZsVpad:STRIPE_STARTER_PRICE_ID::"
+        },
+        {
+          "name": "STRIPE_PRO_PRICE_ID",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:hyperlev/stripe-ZsVpad:STRIPE_PRO_PRICE_ID::"
+        },
+        {
+          "name": "STRIPE_PRICE_ID",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:hyperlev/stripe-ZsVpad:STRIPE_STARTER_PRICE_ID::"
+        },
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:418295677815:secret:nexus/ontology/postgres/connection-XlBoLD:DATABASE_URL::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aria/console",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "console"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:9001/health"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "systemControls": []
+    }
+  ],
+  "family": "aria-console",
+  "taskRoleArn": "arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role",
+  "executionRoleArn": "arn:aws:iam::418295677815:role/aria-ecs-execution-role",
+  "networkMode": "awsvpc",
+  "volumes": [],
+  "placementConstraints": [],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "512",
+  "memory": "1024"
+}

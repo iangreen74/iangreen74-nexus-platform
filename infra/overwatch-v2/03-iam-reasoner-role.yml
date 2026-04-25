@@ -20,10 +20,14 @@ Resources:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
             Condition:
+              # SourceAccount restricts assumption to this account (basic
+              # confused-deputy protection). aws:SourceArn was attempted but
+              # ECS does not populate that context key by default during task
+              # role assumption, so any ArnLike on it fails. Empirically
+              # verified 2026-04-25: with ArnLike on SourceArn, ECS returns
+              # "unable to assume role"; SourceAccount-only works.
               StringEquals:
                 aws:SourceAccount: "418295677815"
-              ArnLike:
-                aws:SourceArn: "arn:aws:ecs:us-east-1:418295677815:task/overwatch-platform/*"
       Policies:
         - PolicyName: OverwatchV2ReasonerReadAccess
           PolicyDocument:
@@ -146,6 +150,27 @@ Resources:
                   - cloudtrail:Describe*
                   - cloudtrail:Get*
                   - cloudtrail:List*
+                Resource: "*"
+
+              # Bedrock — Echo's reasoner invokes Claude via Converse + InvokeModel.
+              # Without this, every chat fails before tool dispatch.
+              - Sid: BedrockInvoke
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:Converse
+                  - bedrock:ConverseStream
+                Resource: "*"
+
+              # CloudWatch metrics — read_overwatch_metrics tool (Tool 6)
+              # reads the Overwatch/V2 namespace for reasoner introspection.
+              - Sid: CloudWatchMetricsRead
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
                 Resource: "*"
 
       Tags:
