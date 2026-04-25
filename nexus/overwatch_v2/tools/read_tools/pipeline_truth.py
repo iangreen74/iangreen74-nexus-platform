@@ -16,7 +16,12 @@ from nexus.overwatch_v2.tools.read_tools.exceptions import (
 
 
 BASE_URL_ENV = "OVERWATCH_V2_API_URL"
-DEFAULT_BASE_URL = "http://localhost:8001"
+# FastAPI binds 9001 in this container (aria-console task def, port mapping
+# 9001->9001; CLAUDE.md "Console: platform.vaultscaler.com (port 9001)").
+# The reasoner runs in the same container, so localhost:9001 is the
+# correct internal target. Override via OVERWATCH_V2_API_URL when the
+# reasoner is split out into its own service.
+DEFAULT_BASE_URL = "http://localhost:9001"
 
 PARAMETER_SCHEMA = {
     "type": "object",
