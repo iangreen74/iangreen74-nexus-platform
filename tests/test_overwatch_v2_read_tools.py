@@ -287,7 +287,9 @@ def _gh_resp(status=200, body=None, text=""):
 
 class TestGitHub:
     def setup_method(self):
-        self._patch_token = patch.object(github, "_token", return_value="tok-test")
+        self._patch_token = patch.object(
+            github, "get_installation_token", return_value="tok-test"
+        )
         self._patch_token.start()
 
     def teardown_method(self):

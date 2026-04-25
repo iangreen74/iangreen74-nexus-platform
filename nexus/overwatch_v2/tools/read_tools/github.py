@@ -1,17 +1,20 @@
 """Tool 3 — read_github: file/PR/commits/workflow-runs reads via GitHub REST.
 
 Repo enum restricts to two known repos so the reasoner cannot accidentally
-read random repos. Auth via overwatch-v2/github-pat in Secrets Manager.
+read random repos. Auth via the overwatch-v2-reasoner GitHub App; the
+installation token is minted on demand and cached in-process by
+_github_app_auth (credentials in overwatch-v2/github-app).
 """
 from __future__ import annotations
 
 import base64
-import json
-import os
 from typing import Any
 
 import httpx
 
+from nexus.overwatch_v2.tools.read_tools._github_app_auth import (
+    get_installation_token,
+)
 from nexus.overwatch_v2.tools.read_tools.exceptions import (
     ToolForbidden, ToolNotFound, ToolThrottled, ToolUnknown,
 )
@@ -19,7 +22,6 @@ from nexus.overwatch_v2.tools.read_tools.exceptions import (
 
 GITHUB_API = "https://api.github.com"
 ALLOWED_REPOS = ["iangreen74/aria-platform", "iangreen74/iangreen74-nexus-platform"]
-PAT_SECRET_ID = "overwatch-v2/github-pat"
 
 PARAMETER_SCHEMA = {
     "type": "object",
@@ -40,26 +42,12 @@ PARAMETER_SCHEMA = {
 }
 
 
-def _token() -> str:
-    if os.environ.get("OVERWATCH_V2_GITHUB_PAT"):
-        return os.environ["OVERWATCH_V2_GITHUB_PAT"]
-    try:
-        from nexus.aws_client import _client
-        raw = _client("secretsmanager").get_secret_value(SecretId=PAT_SECRET_ID)["SecretString"]
-        try:
-            data = json.loads(raw)
-        except Exception:
-            return raw.strip()
-        for k in ("token", "github_pat", "pat"):
-            if data.get(k):
-                return str(data[k])
-        return raw.strip()
-    except Exception as e:
-        raise ToolUnknown(f"github PAT fetch failed: {e}") from e
-
-
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {_token()}",
+    try:
+        token = get_installation_token()
+    except Exception as e:
+        raise ToolUnknown(f"github auth failed: {e}") from e
+    return {"Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28"}
 
