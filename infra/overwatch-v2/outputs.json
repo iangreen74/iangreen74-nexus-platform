@@ -29,5 +29,23 @@
     "DBInstancePort": "5432",
     "DBSecurityGroupId": "sg-02bdc29d2ff79e216",
     "DBSubnetGroupName": "overwatch-v2-rds-postgres-dbsubnetgroup-ebtz0kpvejpa"
+  },
+  "overwatch-v2-sandbox-vpc": {
+    "PrivateSubnetIds": "subnet-09f3411c3c15a7a56,subnet-08a64f8168635dfa5",
+    "PrivateSubnetA": "subnet-09f3411c3c15a7a56",
+    "S3VpcEndpointId": "vpce-0032514667e13b60e",
+    "PrivateSubnetB": "subnet-08a64f8168635dfa5",
+    "VpcId": "vpc-07377f8edb57f499b"
+  },
+  "overwatch-v2-sandbox-instance": {
+    "InstanceId": "i-06efe8255f6040f92",
+    "EphemeralBucketName": "overwatch-v2-sandbox-ephemeral-418295677815-us-east-1",
+    "SecurityGroupId": "sg-011b7c548f0dbee05",
+    "SandboxRoleArn": "arn:aws:iam::418295677815:role/overwatch-v2-sandbox-role",
+    "InstanceProfileArn": "arn:aws:iam::418295677815:instance-profile/overwatch-v2-sandbox-profile"
+  },
+  "overwatch-v2-sandbox-ttl-cleanup": {
+    "TtlLambdaArn": "arn:aws:lambda:us-east-1:418295677815:function:overwatch-v2-sandbox-ttl-cleanup",
+    "HourlyRuleArn": "arn:aws:events:us-east-1:418295677815:rule/overwatch-v2-sandbox-ttl-hourly"
   }
 }
