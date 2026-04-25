@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/components/ChatPane.tsx","./src/components/ConversationList.tsx","./src/components/Input.tsx","./src/components/Message.tsx","./src/components/OperatorBanner.tsx","./src/components/ToolCallCard.tsx","./src/hooks/useChat.ts","./src/hooks/useConversations.ts"],"version":"5.9.3"}
