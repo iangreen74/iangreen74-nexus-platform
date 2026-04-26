@@ -1,8 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Overwatch V2 — KMS HMAC key for signing approval-token JWTs (HS256).
-  kms:Sign restricted to the reasoner role; kms:Verify restricted to the
-  mutation role. Root account retains administrative authority.
+  Phase 1.5.3 (2026-04-26): reasoner role granted BOTH GenerateMac AND
+  VerifyMac to align with the single-actor runtime in
+  nexus/overwatch_v2/auth/approval_tokens.py. Phase 0/1 intended a
+  separation-of-duties two-actor design (reasoner signs, mutation role
+  verifies) but no consumer ever instantiated the second actor; Phase 2
+  will restore the split via STS AssumeRole. See CANONICAL.md search
+  key: KmsHmacApprovalToken_SeparationOfDuties.
   Spec ref §9.3.
 
 Resources:
@@ -29,15 +34,40 @@ Resources:
             Action: "kms:*"
             Resource: "*"
 
-          - Sid: ReasonerRoleSign
+          # Phase 1.5.3 (2026-04-26): renamed from ReasonerRoleSign;
+          # added kms:VerifyMac. Original Phase 0/1 design intended
+          # separation of duties — reasoner signs (GenerateMac),
+          # mutation role verifies (VerifyMac) — but Phase 1's runtime
+          # in approval_tokens.py is single-actor: both _sign and
+          # _verify_sig run as whichever role the executing task
+          # assumed. Phase 1.5.1's smoke test caught the mismatch when
+          # verify_token() failed AccessDenied. Phase 1.5.2 attempted
+          # to fix via the reasoner role's identity policy with a
+          # kms:ResourceAliases condition; that grant matched zero
+          # statements in IAM Simulator (the condition uses plain
+          # StringEquals, but kms:ResourceAliases is a multi-valued
+          # context key requiring ForAnyValue:StringEquals — Phase 0/1
+          # bug propagated). Phase 1.5.3 sidesteps the condition
+          # entirely with a direct principal grant on the key resource
+          # policy. Phase 2 (sub-agent architecture, Sprint 14 Day
+          # 4-5) will reintroduce two-actor separation via STS
+          # AssumeRole, restoring the original security property.
+          # See docs/CANONICAL.md search key:
+          # KmsHmacApprovalToken_SeparationOfDuties
+          - Sid: ReasonerRoleSignVerify
             Effect: Allow
             Principal:
               AWS: "arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role"
             Action:
               - kms:GenerateMac
+              - kms:VerifyMac
               - kms:DescribeKey
             Resource: "*"
 
+          # MutationRoleVerify retained for Phase 2's two-actor
+          # restoration — the mutation role will receive verify-only
+          # via STS AssumeRole from the reasoner. Currently nothing
+          # assumes into it; harmless to keep the grant in place.
           - Sid: MutationRoleVerify
             Effect: Allow
             Principal:

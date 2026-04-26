@@ -88,6 +88,11 @@ def _verify_sig(message: bytes, mac: bytes) -> bool:
     if MODE != "production":
         expected = _hmac.new(_LOCAL_TEST_SECRET, message, hashlib.sha256).digest()
         return _hmac.compare_digest(expected, mac)
+    # TODO(phase-2): STS-assume into overwatch-v2-mutation-role before
+    # verify_mac to restore Phase 0/1's two-actor separation of duties.
+    # Currently single-actor; key resource policy aligned with this in
+    # Phase 1.5.3 (PR #43) — see docs/CANONICAL.md search key:
+    # KmsHmacApprovalToken_SeparationOfDuties.
     try:
         return bool(_kms().verify_mac(
             KeyId=KEY_ALIAS, Message=message,
