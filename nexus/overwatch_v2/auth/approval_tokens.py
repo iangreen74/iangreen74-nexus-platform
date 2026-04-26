@@ -4,10 +4,10 @@ JWT HS256, MAC'd by KMS HMAC_256 key alias/overwatch-v2-approval-token
 (boto3 generate_mac/verify_mac — not asymmetric sign/verify). Claims:
 proposal_id, proposal_hash, issued_at, expires_at, issuer, jti.
 
-Single-use: atomic UPDATE … WHERE used=false RETURNING against
-overwatch_v2.approval_tokens (Track E migration 010). Concurrent verifies
-race; one wins. Hash binding: re-hash payload at verify so a token
-cannot replay across different proposals.
+Single-use: atomic UPDATE … WHERE used=false RETURNING against the
+`approval_tokens` table (Track E migration 010, schema-aligned to code by
+Phase 1.5 migration 013). Concurrent verifies race; one wins. Hash binding:
+re-hash payload at verify so a token cannot replay across different proposals.
 """
 from __future__ import annotations
 
@@ -103,16 +103,18 @@ def _record_issue(claims: ApprovalTokenClaims) -> None:
         with _local_lock:
             _local_token_store[claims.jti] = {**asdict(claims), "used": False}
         return
-    from nexus.overwatch_v2.db import get_conn  # type: ignore
+    from nexus.overwatch_v2.db import get_conn
+    # No schema prefix on `approval_tokens` (Phase 1.5 decision, see db.py
+    # docstring). Migrations create the table in `public`; the earlier
+    # `overwatch_v2.approval_tokens` reference was authorial accident.
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO overwatch_v2.approval_tokens (token_id, proposal_id, "
+            "INSERT INTO approval_tokens (token_id, proposal_id, "
             "proposal_hash, issued_at, expires_at, issuer, used) VALUES "
             "(%s, %s, %s, to_timestamp(%s), to_timestamp(%s), %s, false)",
             (claims.jti, claims.proposal_id, claims.proposal_hash,
              claims.issued_at, claims.expires_at, claims.issuer),
         )
-        conn.commit()
 
 
 def _consume(token_id: str) -> bool:
@@ -126,16 +128,15 @@ def _consume(token_id: str) -> bool:
             row["used_at"] = int(time.time())
             return True
     try:
-        from nexus.overwatch_v2.db import get_conn  # type: ignore
+        from nexus.overwatch_v2.db import get_conn
+        # See _record_issue: schema prefix dropped per Phase 1.5 db.py docstring.
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "UPDATE overwatch_v2.approval_tokens SET used=true, "
+                "UPDATE approval_tokens SET used=true, "
                 "used_at=now() WHERE token_id=%s AND used=false RETURNING token_id",
                 (token_id,),
             )
-            won = cur.fetchone() is not None
-            conn.commit()
-            return won
+            return cur.fetchone() is not None
     except Exception:
         log.exception("approval_tokens consume failed for %s", token_id)
         return False
