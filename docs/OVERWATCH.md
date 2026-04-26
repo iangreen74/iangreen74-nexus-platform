@@ -24,7 +24,8 @@ Forgewing → serves customers (zero downtime, continuous experience)
 | ECS Service | `aria-console` (cluster `aria-platform`) |
 | ECR Image | `nexus-platform:latest` |
 | Task Definition | `aria-console` |
-| Dashboard | `platform.vaultscaler.com` (port 9001) |
+| Operator Console | `vaultscalerlabs.com` (Cognito MFA at ALB; sign-out via `/oauth2/sign-out`). Migrated 2026-04-25; predecessor `platform.vaultscaler.com` RETIRED. |
+| Operator ALB | `overwatch-v2-alb` (dedicated, independent of `aria-platform-alb`). Access logs day-1 to `s3://overwatch-v2-alb-logs-418295677815/`. |
 | Neptune Graph | `g-1xwjj34141` (shared with Forgewing, `Overwatch*` label namespace) |
 | AWS Account | 418295677815, us-east-1 |
 | aria-platform repo | `iangreen74/aria-platform` |

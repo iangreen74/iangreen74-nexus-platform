@@ -255,7 +255,7 @@ Each extraction commit must:
    (update import paths if necessary).
 2. Run the full test suite locally before commit.
 3. Run the full test suite on CI.
-4. Smoke-check the dashboard at platform.vaultscaler.com after deploy.
+4. Smoke-check the dashboard at vaultscalerlabs.com after deploy. (Predecessor platform.vaultscaler.com RETIRED 2026-04-25.)
 
 ## Acceptance criteria
 

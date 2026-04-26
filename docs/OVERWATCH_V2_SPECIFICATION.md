@@ -55,7 +55,7 @@ To prevent confusion in execution, several adjacent ideas are explicitly exclude
 - **Not "Claude Code running inside AWS."** Claude Code is an ephemeral session-bound terminal interface. Overwatch V2 is a persistent service with its own graph database, its own ontology, and its own learning from history.
 - **Not "a faster diagnostic tool."** Diagnostics are a side effect. Overwatch V2 produces code, commits, deploys, and verification — not just diagnosis.
 - **Not "a replacement for Anthropic's Claude API."** Overwatch V2's reasoner is built on Bedrock Sonnet 4.5 and Haiku 4.5, the same models Forgewing uses. The model is the same; the architecture, ontology, persona, and tool surface are what makes Overwatch V2 distinct.
-- **Not "a productized version of the operator console."** Overwatch (V1, the current operator console at platform.vaultscaler.com) is internal-facing and reports-only. Overwatch V2 inherits that infrastructure but is fundamentally a different product class: it executes engineering work, not just observes it.
+- **Not "a productized version of the operator console."** Overwatch (V1, the current operator console at vaultscalerlabs.com — migrated 2026-04-25 from platform.vaultscaler.com) is internal-facing and reports-only. Overwatch V2 inherits that infrastructure but is fundamentally a different product class: it executes engineering work, not just observes it.
 
 ## 3. THE CONCEPTUAL MODEL
 
@@ -102,7 +102,7 @@ Three properties hold across every version, every capability, every interaction.
                                        │ chat (HTTPS)
                                        ▼
               ┌────────────────────────────────────────────────────┐
-              │   platform.vaultscaler.com  (CloudFront → ALB)     │
+              │   vaultscalerlabs.com  (overwatch-v2-alb)          │
               └────────────────────────────┬───────────────────────┘
                                            │
                                            ▼
@@ -160,7 +160,7 @@ Three properties hold across every version, every capability, every interaction.
 
 ### 4.3 Why aria-console is the chat surface and not a new service
 
-The cost of building a new frontend from scratch is several weeks of work that produces no compounding benefit. aria-console already serves at platform.vaultscaler.com, already has Cognito auth, already has a three-pane layout pattern, already has ECS deploy automation. Extending it to host a new chat tab is approximately a week of frontend work. Building a new service is approximately a month of frontend work plus the operational overhead of a second deploy pipeline.
+The cost of building a new frontend from scratch is several weeks of work that produces no compounding benefit. aria-console already serves at vaultscalerlabs.com (migrated 2026-04-25 from platform.vaultscaler.com), already has Cognito auth, already has a three-pane layout pattern, already has ECS deploy automation. Extending it to host a new chat tab is approximately a week of frontend work. Building a new service is approximately a month of frontend work plus the operational overhead of a second deploy pipeline.
 
 The chat surface lives as a new tab or route in aria-console. The existing dashboard remains. Operators choose between "monitor mode" (the current dashboard) and "engineering mode" (the chat). They share auth, deployment, and infrastructure.
 
@@ -878,7 +878,7 @@ The local nexus-platform clone does NOT include the `iangreen74/` prefix in its 
 - Forgewing Neptune graph: `g-1xwjj34141`
 - ECS clusters: `aria-platform` (Forgewing product), `overwatch-platform` (Overwatch and where V2 runs)
 - ECR for nexus-platform: `nexus-platform`
-- aria-console service domain: `platform.vaultscaler.com`
+- aria-console service domain: `vaultscalerlabs.com` (migrated 2026-04-25 from `platform.vaultscaler.com`; predecessor RETIRED)
 - Cognito user pool: `us-east-1_3dzaO4Dzl`
 - Bedrock models in use: Anthropic Claude Sonnet 4.5, Anthropic Claude Haiku 4.5
 
