@@ -31,14 +31,15 @@ TENANT = "forge-1dba4143ca24ed1f"
 
 # --- Registry -------------------------------------------------------------
 
-def test_registration_yields_fifteen_tools():
+def test_registration_yields_eighteen_tools():
+    # Phase 0b added read_cloudtrail, read_alb_logs, query_correlated_events.
     register_all_read_tools()
     names = {(s.get("toolSpec") or {}).get("name") for s in list_tools(include_mutations=False)}
     assert "read_customer_tenant_state" in names
     assert "read_customer_pipeline" in names
     assert "read_customer_ontology" in names
     assert "read_aria_conversations" in names
-    assert len([n for n in names if n]) == 15
+    assert len([n for n in names if n]) == 18
 
 
 # --- Validation propagation ----------------------------------------------

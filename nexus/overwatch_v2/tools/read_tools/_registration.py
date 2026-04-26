@@ -9,6 +9,8 @@ search_codebase, read_git_diff, list_repo_files) — 11 tools.
 Phase 1 added four cross-tenant read tools (read_customer_tenant_state,
 read_customer_pipeline, read_customer_ontology, read_aria_conversations)
 — 15 tools total.
+Phase 0b adds three cross-source-log tools (read_cloudtrail,
+read_alb_logs, query_correlated_events) — 18 tools total.
 """
 from __future__ import annotations
 
@@ -18,7 +20,8 @@ def register_all_read_tools() -> None:
     from nexus.overwatch_v2.tools.read_tools import (
         aws_resource, cloudwatch_logs, engineering_ontology,
         github, list_aws_resources, list_repo_files, overwatch_metrics,
-        pipeline_truth, read_aria_conversations, read_customer_ontology,
+        pipeline_truth, query_correlated_events, read_alb_logs,
+        read_aria_conversations, read_cloudtrail, read_customer_ontology,
         read_customer_pipeline, read_customer_tenant_state,
         read_git_diff, read_repo_file, search_codebase,
     )
@@ -39,6 +42,10 @@ def register_all_read_tools() -> None:
     read_customer_pipeline.register_tool()
     read_customer_ontology.register_tool()
     read_aria_conversations.register_tool()
+    # --- Phase 0b: cross-source log index ---
+    read_cloudtrail.register_tool()
+    read_alb_logs.register_tool()
+    query_correlated_events.register_tool()
 
 
 if __name__ == "__main__":

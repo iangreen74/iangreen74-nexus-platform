@@ -303,7 +303,8 @@ class TestRegistration:
         assert "list_aws_resources" in names
         # Phase 0a (Track C) added 4 codebase-indexing tools.
         # Phase 1 added 4 cross-tenant read tools (count: 15).
-        assert len(names) == 15
+        # Phase 0b added 3 cross-source-log tools (count: 18).
+        assert len(names) == 18
 
 
 # === Idempotency for ingestion-style upserts =============================
