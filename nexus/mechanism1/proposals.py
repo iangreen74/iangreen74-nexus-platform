@@ -2,6 +2,25 @@
 
 enqueue_proposal / list_pending / dispose (accept|edit|reject).
 Mirrors nexus/askcustomer/service.py Postgres pattern.
+
+source_kind vs proposed_via — two adjacent attribution layers
+-------------------------------------------------------------
+``source_kind`` (column on ``classifier_proposals``, migration 012)
+identifies the *kind of producer* that created a proposal. Reserved
+values are listed in the migration header. Mechanism 1's writer below
+hardcodes ``'conversation_classifier'`` — by construction, this writer
+only runs in service of mechanism 1, so the value is fixed at the
+INSERT site.
+
+``proposed_via`` (passed to ``write_action_event`` from ``dispose``,
+below) is the *implementation tag* — free-form, versioned, e.g.
+``'classifier_m1'`` or ``'classifier_m1_edited'``. It identifies the
+specific code path that handled the disposition, distinct from which
+producer originally created the proposal.
+
+Both are useful: ``source_kind`` slices the eval corpus by mechanism;
+``proposed_via`` slices it by code-path version. They are adjacent,
+not redundant.
 """
 from __future__ import annotations
 
@@ -39,8 +58,9 @@ def enqueue_proposal(candidate: ProposalCandidate) -> str:
                     "INSERT INTO classifier_proposals (candidate_id, "
                     "tenant_id, project_id, object_type, title, summary, "
                     "reasoning, confidence, source_turn_id, raw_candidate, "
-                    "status, created_at) VALUES "
-                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'pending',NOW())",
+                    "status, source_kind, created_at) VALUES "
+                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'pending',"
+                    "'conversation_classifier',NOW())",
                     (candidate.candidate_id, candidate.tenant_id,
                      candidate.project_id, candidate.object_type,
                      candidate.title, candidate.summary,

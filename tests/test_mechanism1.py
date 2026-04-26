@@ -172,6 +172,11 @@ def test_enqueue_proposal(monkeypatch):
     mock_cursor.execute.assert_called_once()
     sql = mock_cursor.execute.call_args[0][0]
     assert "INSERT INTO classifier_proposals" in sql
+    # source_kind is hardcoded at the INSERT site to 'conversation_classifier'
+    # (migration 012). Asserts the column is named in the column list AND the
+    # literal value appears in the VALUES clause.
+    assert "source_kind" in sql
+    assert "'conversation_classifier'" in sql
 
 
 def test_dispose_accept_calls_ontology(monkeypatch):

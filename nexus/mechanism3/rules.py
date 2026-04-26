@@ -110,20 +110,30 @@ def _built_not_deployed(tid, graph, db_conn):
 
 
 def _deploy_failure_streak(tid, graph, db_conn):
+    # Per migration 012 the source_kind column exists, so this query no
+    # longer raises "column does not exist". But no producer writes
+    # source_kind='deploy_event' rows yet — mechanism2 is unbuilt as of
+    # 2026-04-26 (nexus/mechanism2/ is an empty directory). The rule
+    # therefore returns zero rows in production today. The warning below
+    # makes the missing-producer condition observable in CloudWatch
+    # instead of silently dead. See docs/SILENT_EXCEPT_SWEEP_2026_04_26.md.
+    # Real DB errors propagate to scan_tenant()'s outer try/except above.
     if not db_conn:
         return []
+    log.warning(
+        "deploy_failure_streak rule executed but no deploy_event producer "
+        "exists; mechanism2 is unbuilt. See "
+        "docs/SILENT_EXCEPT_SWEEP_2026_04_26.md."
+    )
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    try:
-        with db_conn.cursor() as cur:
-            cur.execute(
-                "SELECT project_id, COUNT(*) AS cnt FROM classifier_proposals "
-                "WHERE tenant_id=%s AND source_kind='deploy_event' "
-                "AND raw_candidate::text LIKE %s AND created_at>%s "
-                "GROUP BY project_id HAVING COUNT(*)>=3",
-                (tid, "%deploy_failed%", cutoff))
-            rows = cur.fetchall()
-    except Exception:
-        return []
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT project_id, COUNT(*) AS cnt FROM classifier_proposals "
+            "WHERE tenant_id=%s AND source_kind='deploy_event' "
+            "AND raw_candidate::text LIKE %s AND created_at>%s "
+            "GROUP BY project_id HAVING COUNT(*)>=3",
+            (tid, "%deploy_failed%", cutoff))
+        rows = cur.fetchall()
     return [
         SocraticPrompt(
             tenant_id=tid, project_id=pid,
@@ -136,20 +146,22 @@ def _deploy_failure_streak(tid, graph, db_conn):
 
 
 def _recent_success_pids(tid, pids, conn):
+    # Same missing-producer condition as _deploy_failure_streak — no
+    # producer writes source_kind='deploy_event' rows yet (mechanism2
+    # unbuilt). Post-migration-012 this query no longer raises; it returns
+    # an empty set until a producer ships. Real DB errors propagate to
+    # scan_tenant()'s outer try/except.
     pids = [p for p in pids if p]
     if not pids:
         return set()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT DISTINCT project_id FROM classifier_proposals "
-                "WHERE tenant_id=%s AND source_kind='deploy_event' "
-                "AND raw_candidate::text LIKE %s AND project_id=ANY(%s) AND created_at>%s",
-                (tid, "%deploy_succeeded%", pids, cutoff))
-            return {r[0] for r in cur.fetchall()}
-    except Exception:
-        return set()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT project_id FROM classifier_proposals "
+            "WHERE tenant_id=%s AND source_kind='deploy_event' "
+            "AND raw_candidate::text LIKE %s AND project_id=ANY(%s) AND created_at>%s",
+            (tid, "%deploy_succeeded%", pids, cutoff))
+        return {r[0] for r in cur.fetchall()}
 
 
 def _trunc(s, n):
