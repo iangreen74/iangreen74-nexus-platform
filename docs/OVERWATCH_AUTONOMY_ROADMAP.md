@@ -331,3 +331,27 @@ Overwatch no longer needs manual sensor updates when Forgewing adds features.
 New endpoints are detected automatically and logged as `capability_discovered` events. The dashboard shows all discovered capabilities and their status.
 
 When a new endpoint appears (e.g., /visual-regression/{tid}), Overwatch starts monitoring it on the next discovery cycle without a code change.
+
+---
+
+## Sprint 14 Day 1 — Operator Surface Substrate (April 25, 2026)
+
+Eleven PRs landed on `main` in a single day, completing the substrate for the V2 operator surface.
+
+**Track A — Overwatch substrate (11 PRs, #15–#25):**
+
+- **PR #15** — pipeline-truth tool connection-refused fix
+- **PR #16** — V2 ontology expansion: 8 AWS-catalog node types + `list_aws_resources` read tool (7 read tools total)
+- **PR #17** — Cognito operator pool (`overwatch-operators`) + ALB front-door auth (MFA required)
+- **PR #18** — Echo `read_github` migrated from PAT to GitHub App auth
+- **PR #19** — Sign-out button in OperatorBanner; backend `/oauth2/sign-out` clears ALB session cookies and redirects to Cognito logout
+- **PR #20** — `overwatch-v2-reasoner-role` granted access to `forgescaler/api` secret
+- **PR #21** — V2 Neptune private endpoint provisioned (closes the DNS gap that was silently dropping V2 ontology writes from production)
+- **PR #22** — Drop trailing slash from `logout_uri` to match Cognito allow-list (lesson L30: byte-exact match)
+- **PR #23** — Redirect root `/` to `/engineering`
+- **PR #24** — Full migration of operator console from `platform.vaultscaler.com` to `vaultscalerlabs.com`: dedicated `overwatch-v2-alb`, ACM cert, Route 53 apex alias, Cognito callback/logout URLs flipped, ALB access logs enabled day-1 to `s3://overwatch-v2-alb-logs-418295677815/`
+- **PR #25** — Canonical V2 Reports Architecture spec (`docs/OVERWATCH_V2_REPORTS_ARCHITECTURE.md`)
+
+**Net new state after Day 1:** new operator domain, new ALB with day-1 access logging, MFA-required sign-in, working sign-out flow, V2 ontology writes reach Neptune, GitHub App replaces PAT, 7 V2 read tools registered.
+
+**Phase 0 substrate work** continues into Day 2: ontology ingestion (Track Q runs the `scripts/ingest_aws_state.py` walker now that the Neptune endpoint resolves), missing walkers for `Runner` and `DeploymentTarget` types, post-migration smoke checks.
