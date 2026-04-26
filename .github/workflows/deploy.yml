@@ -14,7 +14,7 @@ env:
   ECR_REPO: 418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform
   ECS_CLUSTER: overwatch-platform
   ECS_SERVICE: aria-console
-  HEALTH_URL: https://platform.vaultscaler.com/health
+  HEALTH_URL: https://vaultscalerlabs.com/health
 
 # Python files exempt from the 200-line invariant. These are established
 # operational modules that predate the invariant. Additions to this list

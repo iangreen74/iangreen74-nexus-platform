@@ -53,5 +53,21 @@
     "UserPoolClientId": "4ceqt9ed8esoqqnu3mao482223",
     "UserPoolDomain": "overwatch-vaultscaler-418295677815",
     "HostedUiBaseUrl": "https://overwatch-vaultscaler-418295677815.auth.us-east-1.amazoncognito.com"
+  },
+  "overwatch-v2-cert": {
+    "CertificateArn": "arn:aws:acm:us-east-1:418295677815:certificate/74c7c02a-86e1-453e-95fc-e8327b071e7c"
+  },
+  "overwatch-v2-alb": {
+    "AlbDnsName": "overwatch-v2-alb-1704349493.us-east-1.elb.amazonaws.com",
+    "AlbCanonicalHostedZoneId": "Z35SXDOTRQ7X7K",
+    "AlbArn": "arn:aws:elasticloadbalancing:us-east-1:418295677815:loadbalancer/app/overwatch-v2-alb/75c8652f2b6e09b2",
+    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607",
+    "AlbSecurityGroupId": "sg-0cab1f971a3a97e70",
+    "HttpsListenerArn": "arn:aws:elasticloadbalancing:us-east-1:418295677815:listener/app/overwatch-v2-alb/75c8652f2b6e09b2/38335717c8958208",
+    "AccessLogsBucket": "overwatch-v2-alb-logs-418295677815"
+  },
+  "overwatch-v2-dns": {
+    "ApexDomain": "vaultscalerlabs.com",
+    "HostedZoneId": "Z050555617OK9IOPPIF5E"
   }
 }

@@ -4,7 +4,7 @@ OVERWATCH — Autonomous Platform Engineering for Forgewing
 This is the external control plane. It monitors, diagnoses, heals,
 and reports on the Forgewing platform without being part of it.
 "NEXUS" remains the daemon's internal identity; "Overwatch" is the
-operator-facing brand at platform.vaultscaler.com.
+operator-facing brand at vaultscalerlabs.com.
 
 Separation principle: Overwatch never imports from aria-platform.
 It connects through AWS APIs, Neptune reads, and HTTP endpoints.
@@ -83,7 +83,7 @@ else:
 
 _COGNITO_DOMAIN = "overwatch-vaultscaler-418295677815.auth.us-east-1.amazoncognito.com"
 _COGNITO_CLIENT_ID = "4ceqt9ed8esoqqnu3mao482223"
-_LOGOUT_URI = "https://platform.vaultscaler.com"
+_LOGOUT_URI = "https://vaultscalerlabs.com"
 
 # ALB session cookies: default name is AWSELBAuthSessionCookie, sharded
 # by index when value exceeds one cookie. Clearing -0..-3 covers the
@@ -104,7 +104,7 @@ async def sign_out() -> RedirectResponse:
       1. Backend returns 302 to Cognito /logout with Set-Cookie headers
          that expire the ALB session cookies in the browser.
       2. Cognito invalidates the IdP session and redirects to logout_uri
-         (root of platform.vaultscaler.com).
+         (root of vaultscalerlabs.com).
       3. ALB sees no valid session cookie (we cleared them) and the
          authenticate-cognito action redirects to Cognito sign-in.
     """

@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Route 53 apex record for vaultscalerlabs.com — alias to the
+  overwatch-v2-alb. Apex (no subdomain) so the operator URL is just
+  https://vaultscalerlabs.com/. Imports DNS name + canonical zone ID
+  from the overwatch-v2-alb stack.
+
+Parameters:
+  HostedZoneId:
+    Type: String
+    Default: Z050555617OK9IOPPIF5E
+    Description: Public Route 53 hosted zone for vaultscalerlabs.com.
+  DomainName:
+    Type: String
+    Default: vaultscalerlabs.com
+
+Resources:
+
+  ApexRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "${DomainName}."
+      Type: A
+      AliasTarget:
+        DNSName:
+          Fn::ImportValue: OverwatchV2AlbDnsName
+        HostedZoneId:
+          Fn::ImportValue: OverwatchV2AlbCanonicalHostedZoneId
+        EvaluateTargetHealth: true
+
+Outputs:
+  RecordName:
+    Value: !Ref ApexRecord
+    Description: The apex A-record now aliasing the overwatch-v2-alb.

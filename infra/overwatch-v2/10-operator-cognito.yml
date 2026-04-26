@@ -10,8 +10,8 @@ Description: >
 Parameters:
   CallbackBaseUrl:
     Type: String
-    Default: https://platform.vaultscaler.com
-    Description: Base URL used to construct the OAuth callback (must match the host served by the ALB default rule).
+    Default: https://vaultscalerlabs.com
+    Description: Base URL used to construct the OAuth callback (must match the host served by the ALB default rule). Migrated from platform.vaultscaler.com 2026-04-25.
 
 Resources:
 

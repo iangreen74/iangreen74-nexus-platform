@@ -46,7 +46,7 @@ INFRASTRUCTURE_LOCKS: dict[str, Any] = {
     "forgewing_domain": FORGEWING_WEB.replace("https://", "").rstrip("/"),
     "api_domain": FORGEWING_API.replace("https://", "").rstrip("/"),
     "staging_domain": FORGEWING_STAGING_API.replace("https://", "").rstrip("/"),
-    "overwatch_domain": "platform.vaultscaler.com",
+    "overwatch_domain": "vaultscalerlabs.com",
     "cognito_pool": COGNITO_USER_POOL_ID,
     "github_app_id": GITHUB_APP_ID,
     "ecs_services": list(FORGEWING_SERVICES),
