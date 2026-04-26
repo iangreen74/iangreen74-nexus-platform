@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Phase 1.5.1 — one-shot ECS task definition that applies a Postgres
+  migration to overwatch-postgres and runs the post-apply verifications
+  (schema_migrations row, approval_tokens column shapes, FK gone, smoke
+  test) in a single transactional unit. Operator launches with:
+    aws ecs run-task --cluster overwatch-platform \
+      --task-definition aria-console-migration-apply \
+      --launch-type FARGATE --network-configuration <ecs sg + subnets>
+  ECS streams stdout to /aws/ecs/aria-console-migration-apply; the wrapper
+  emits one structured-JSON line and exits non-zero on any step failure.
+  This task def is the template for Phase 1.6's automated migration runner.
+
+Parameters:
+
+  PostgresMasterSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:us-east-1:418295677815:secret:overwatch-v2/postgres-master-e16PNJ
+    Description: ARN of overwatch-v2/postgres-master. Source of truth for DB connection.
+
+  EcrImage:
+    Type: String
+    Default: 418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform:latest
+    Description: aria-console image — same tag the live service runs.
+
+  TaskRoleArn:
+    Type: String
+    Default: arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role
+    Description: Same task role as aria-console — has secretsmanager:GetSecretValue on overwatch-v2/* and KMS access for approval-token signing.
+
+  ExecutionRoleName:
+    Type: String
+    Default: aria-ecs-execution-role
+    Description: ECS execution role (pulls image + injects secrets). Inline policy below grants it read access to postgres-master.
+
+  MigrationApplyLogGroupRetentionDays:
+    Type: Number
+    Default: 90
+    Description: Migration apply logs retain 90 days — they're operator-runbook output, distinct from the 365-day mutation-audit log group.
+
+Resources:
+
+  MigrationApplyLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/ecs/aria-console-migration-apply
+      RetentionInDays: !Ref MigrationApplyLogGroupRetentionDays
+
+  # Grant the existing aria-ecs-execution-role permission to pull the
+  # postgres-master secret so ECS can inject its JSON keys (host, port,
+  # username, password, dbname) into the task's PG_* env vars at start.
+  ExecutionRolePostgresMasterAccess:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: overwatch-v2-postgres-master-read
+      Roles:
+        - !Ref ExecutionRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadPostgresMaster
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource:
+              - !Ref PostgresMasterSecretArn
+
+  MigrationApplyTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: aria-console-migration-apply
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: "512"
+      Memory: "1024"
+      TaskRoleArn: !Ref TaskRoleArn
+      ExecutionRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ExecutionRoleName}"
+      ContainerDefinitions:
+        - Name: migration-apply
+          Image: !Ref EcrImage
+          Essential: true
+          # No HealthCheck — one-shot task, container exits when script exits.
+          Environment:
+            - Name: AWS_REGION
+              Value: us-east-1
+            - Name: NEXUS_MODE
+              Value: production
+          Secrets:
+            # Phase 1.5.1 db.py composes the URL from these five PG_* env
+            # vars when OVERWATCH_V2_DATABASE_URL is unset. postgres-master
+            # is the single source of truth — rotating it propagates here
+            # without touching this stack.
+            - Name: PG_HOST
+              ValueFrom: !Sub "${PostgresMasterSecretArn}:host::"
+            - Name: PG_PORT
+              ValueFrom: !Sub "${PostgresMasterSecretArn}:port::"
+            - Name: PG_USER
+              ValueFrom: !Sub "${PostgresMasterSecretArn}:username::"
+            - Name: PG_PASSWORD
+              ValueFrom: !Sub "${PostgresMasterSecretArn}:password::"
+            - Name: PG_DBNAME
+              ValueFrom: !Sub "${PostgresMasterSecretArn}:dbname::"
+          # Default command — operator may override per-migration via
+          # `aws ecs run-task --overrides` if applying a different file.
+          Command:
+            - python
+            - -m
+            - nexus.operator.db_apply_migration_with_verify
+            - migrations/013_approval_tokens_align_with_code.sql
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MigrationApplyLogGroup
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: migration-apply
+
+Outputs:
+
+  TaskDefinitionArn:
+    Value: !Ref MigrationApplyTaskDefinition
+    Description: Use with `aws ecs run-task --task-definition <this arn>`.
+
+  LogGroupName:
+    Value: !Ref MigrationApplyLogGroup
+    Export:
+      Name: OverwatchV2MigrationApplyLogGroupName
