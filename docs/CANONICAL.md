@@ -44,6 +44,18 @@ Last updated: 2026-04-25 (Sprint 14 Day 1)
 | [`OVERWATCH_AUTONOMY_ROADMAP.md`](OVERWATCH_AUTONOMY_ROADMAP.md) | rolling | canonical roadmap |
 | [`OVERWATCH_V2_EXECUTION_PLAN.md`](OVERWATCH_V2_EXECUTION_PLAN.md) | rolling | execution plan |
 
+## Architectural debt — Phase 2 work items
+
+- **Two-actor approval token gate.** Search key: **`KmsHmacApprovalToken_SeparationOfDuties`**.
+  Key resource policy author (Phase 0/1) intended separation of duties — reasoner role *signs* (`kms:GenerateMac`), mutation role *verifies* (`kms:VerifyMac`). Phase 1 runtime in `nexus/overwatch_v2/auth/approval_tokens.py` is single-actor: both `_sign` and `_verify_sig` run as whichever role the executing task assumed (in production, the reasoner role). Phase 1.5.3 (PR #43, 2026-04-26) **aligned the key resource policy with the single-actor runtime as a tactical fix** by adding `kms:VerifyMac` to `ReasonerRoleSignVerify` (formerly `ReasonerRoleSign`). This collapses the intended security separation; documented here so Phase 2 can restore it.
+  - **Phase 2 sub-agent architecture must restore:**
+    1. Operator UI propose/execute split — distinct user actions for the two phases of any mutation.
+    2. STS `AssumeRole` from reasoner into `overwatch-v2-mutation-role` before `verify_mac` in `_verify_sig` (and remove `kms:VerifyMac` from `ReasonerRoleSignVerify` as the final step).
+    3. `sts:AssumeRole` grant on the reasoner role's identity policy targeting the mutation role's ARN.
+    4. Tests for STS failure modes — assume denied, session expired, mutation role missing `kms:VerifyMac`.
+    5. Audit log entries that distinguish the proposer (reasoner) from the executor (mutation role) on every mutation, so post-incident forensics can answer "who proposed this and who executed it?" rather than "the agent did it."
+  - **Diagnostic-quality sub-finding (Sprint 14 Day 3+):** Phase 1.5.2's identity-policy fix used `Condition: StringEquals: kms:ResourceAliases: ...` — but `kms:ResourceAliases` is a *multi-valued* context key per AWS IAM docs, requiring `ForAnyValue:StringEquals` (or `ForAllValues:StringEquals`). Plain `StringEquals` against a multi-valued key has undefined behavior; AWS IAM Simulator confirmed zero matched statements even with the context populated. The Phase 0/1 (dead) `kms:Verify` grant used the same wrong operator — never noticed because the action was wrong anyway. When Phase 2 retires the IAM-condition path along with restoring two-actor separation, this also goes away. Until then: do not trust IAM identity-policy grants on KMS resources gated by `kms:ResourceAliases` without verifying with `ForAnyValue:StringEquals`.
+
 ## Locked principles
 
 - **Operational Truth Substrate Architecture** (locked 2026-04-25). Authoritative spec at [`OPERATIONAL_TRUTH_SUBSTRATE.md`](OPERATIONAL_TRUTH_SUBSTRATE.md). Defines Phase 0 (substrate: Layer 1 raw sources, Layer 2 synthesis primitives, Layer 3 Operational Graph) → Phase 1+ (reports + actions) sequencing for all Overwatch v2 capability work. Supersedes prior report-first sequencing. Companion to V2 Spec Invariant C.
