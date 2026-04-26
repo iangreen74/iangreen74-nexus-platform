@@ -301,7 +301,8 @@ class TestRegistration:
             register_all_read_tools()
         names = {c.args[0].name for c in fake.register.call_args_list}
         assert "list_aws_resources" in names
-        assert len(names) == 7
+        # Phase 0a (Track C) added 4 codebase-indexing tools.
+        assert len(names) == 11
 
 
 # === Idempotency for ingestion-style upserts =============================
