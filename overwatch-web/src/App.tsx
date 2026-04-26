@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { OperatorBanner } from './components/OperatorBanner';
 import { ConversationList } from './components/ConversationList';
 import { ChatPane } from './components/ChatPane';
+import { ReportsPanel } from './components/ReportsPanel';
 import { useChat } from './hooks/useChat';
 import { useConversations } from './hooks/useConversations';
 import { getConversation } from './api';
@@ -49,6 +50,7 @@ export function App() {
           onNew={handleNew}
         />
         <ChatPane turns={chat.turns} loading={chat.loading} onSend={handleSend} />
+        <ReportsPanel />
       </div>
       {chat.error && (
         <div className="bg-op-danger text-op-bg px-4 py-2 font-mono text-xs">
