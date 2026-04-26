@@ -1,4 +1,4 @@
-"""Register V2 read tools with the global tool registry.
+"""Register V2 tools (read + write) with the global tool registry.
 
 Imported once at chat-backend startup (Day 6). Idempotent — Track F's
 register() overwrites a same-name spec rather than duplicating.
@@ -12,6 +12,10 @@ read_customer_pipeline, read_customer_ontology, read_aria_conversations)
 Phase 0b adds four cross-source-log tools (read_cloudtrail,
 read_alb_logs, query_correlated_events, read_cloudwatch_metrics) —
 19 tools total.
+Echo Phase 1 adds the first mutation tool (comment_on_pr,
+requires_approval=True) — 20 tools total. The function name
+register_all_read_tools is kept for caller compatibility; rename to
+register_all_tools is a separate cleanup.
 """
 from __future__ import annotations
 
@@ -49,11 +53,14 @@ def register_all_read_tools() -> None:
     read_alb_logs.register_tool()
     query_correlated_events.register_tool()
     read_cloudwatch_metrics.register_tool()
+    # --- Echo Phase 1: first mutation tool (approval-gated) ---
+    from nexus.overwatch_v2.tools.write_tools import comment_on_pr
+    comment_on_pr.register_tool()
 
 
 if __name__ == "__main__":
     register_all_read_tools()
     from nexus.overwatch_v2.tools.registry import list_tools
-    for spec in list_tools(include_mutations=False):
+    for spec in list_tools(include_mutations=True):
         ts = spec.get("toolSpec") or {}
         print(f"  registered: {ts.get('name')}")

@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Phase 1 echo-mutations audit log group. Sink for every dispatch
+  attempt against a tool with requires_approval=True (mutation tools),
+  regardless of outcome (rejected_no_token, rejected_bad_token,
+  success, tool_error). Mutations are the long-term audit trail for
+  what changed, so retention is 365 days vs the operator-substrate-
+  audit group's 90.
+
+Resources:
+
+  EchoMutationsAuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /overwatch-v2/echo-mutations
+      RetentionInDays: 365
+
+Outputs:
+
+  LogGroupName:
+    Value: !Ref EchoMutationsAuditLogGroup
+    Export:
+      Name: OverwatchV2EchoMutationsAuditLogGroupName
+
+  LogGroupArn:
+    Value: !GetAtt EchoMutationsAuditLogGroup.Arn
+    Export:
+      Name: OverwatchV2EchoMutationsAuditLogGroupArn

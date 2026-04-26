@@ -164,21 +164,17 @@ def dispatch(
     approval_token: Optional[str] = None,
     actor: str = "reasoner",
 ) -> ToolResult:
-    """Validate, gate, execute, audit. Returns ToolResult either way."""
+    """Validate, gate (verify token + audit), execute, audit. Returns ToolResult."""
     spec = get_spec(name)
     err = parameter_validate(spec.parameter_schema, parameters)
     if err is not None:
         raise ParameterValidationError(err)
     token_id: Optional[str] = None
     if spec.requires_approval:
-        if not approval_token:
-            raise ApprovalRequired(
-                f"tool {name!r} requires approval_token (risk={spec.risk_level})"
-            )
-        # Rich verification (signature, hash binding, single-use) is the
-        # caller's job via approval_tokens.verify_token() per spec §5.5.
-        # Registry enforces only "a token was supplied".
-        token_id = approval_token[:24] + "…"
+        from nexus.overwatch_v2.tools._approval_gate import precheck
+        ok, reason, token_id = precheck(name, parameters, approval_token, actor)
+        if not ok:
+            raise ApprovalRequired(f"tool {name!r}: {reason}")
     started = time.perf_counter()
     result = ToolResult(ok=False)
     try:
@@ -191,6 +187,10 @@ def dispatch(
     finally:
         result.duration_ms = int((time.perf_counter() - started) * 1000)
         result.audit_id = _emit_audit(name, parameters, result, actor, token_id)
+        if spec.requires_approval:
+            from nexus.overwatch_v2.tools._approval_gate import emit_outcome
+            emit_outcome(name, parameters, actor, result.ok, result.error,
+                         result.duration_ms, token_id)
     return result
 
 
