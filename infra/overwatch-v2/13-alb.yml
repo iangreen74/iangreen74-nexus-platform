@@ -1,0 +1,253 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Dedicated ALB for vaultscalerlabs.com (Overwatch V2 operator surface).
+
+  Independent of the legacy aria-platform-alb. Provisions:
+    * S3 bucket overwatch-v2-alb-logs-418295677815 with log delivery policy
+    * Internet-facing ALB in the same public subnets as aria-platform-alb
+    * SG allowing 80/443 from 0.0.0.0/0
+    * Ingress rule on the existing aria-console task SG so the new ALB can
+      reach port 9001
+    * TG aimed at aria-console:9001 with /health probe
+    * 80 -> 443 redirect listener
+    * 443 listener: Cognito auth (operator pool) + forward, with priority-5
+      /oauth2/idpresponse and priority-6 /health bypass rules
+    * Access logs enabled day-1 (lesson L34)
+
+Parameters:
+  CertificateArn:
+    Type: String
+    Description: ACM cert from overwatch-v2-cert stack.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-048ee32658b49e0a0
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Default: subnet-01ec999026e582fa6,subnet-0b9434ca933170462
+    Description: Same public subnets used by aria-platform-alb.
+  AriaConsoleTaskSgId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Default: sg-075797efad9ec368d
+    Description: aria-console ECS task SG; we add an ingress rule for the new ALB.
+  CognitoUserPoolArn:
+    Type: String
+    Default: arn:aws:cognito-idp:us-east-1:418295677815:userpool/us-east-1_SsglIc4iM
+  CognitoUserPoolClientId:
+    Type: String
+    Default: 4ceqt9ed8esoqqnu3mao482223
+  CognitoUserPoolDomain:
+    Type: String
+    Default: overwatch-vaultscaler-418295677815
+
+Resources:
+
+  AlbLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: overwatch-v2-alb-logs-418295677815
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: System
+          Value: overwatch
+        - Key: Stack
+          Value: overwatch-v2-alb
+
+  AlbLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AlbLogsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowELBLogDeliveryUsEast1Account
+            Effect: Allow
+            Principal:
+              AWS: arn:aws:iam::127311923021:root
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::${AlbLogsBucket}/AWSLogs/${AWS::AccountId}/*
+          - Sid: AllowELBLogDeliveryServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::${AlbLogsBucket}/AWSLogs/${AWS::AccountId}/*
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: overwatch-v2-alb-sg
+      GroupDescription: Inbound 80/443 from anywhere for vaultscalerlabs.com ALB.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP (redirect to HTTPS)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS
+      Tags:
+        - Key: System
+          Value: overwatch
+        - Key: Name
+          Value: overwatch-v2-alb-sg
+
+  AriaConsoleIngressFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AriaConsoleTaskSgId
+      IpProtocol: tcp
+      FromPort: 9001
+      ToPort: 9001
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Description: Console from overwatch-v2-alb
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn:
+      - AlbLogsBucketPolicy
+    Properties:
+      Name: overwatch-v2-alb
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets: !Ref PublicSubnets
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      LoadBalancerAttributes:
+        - Key: access_logs.s3.enabled
+          Value: "true"
+        - Key: access_logs.s3.bucket
+          Value: !Ref AlbLogsBucket
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+      Tags:
+        - Key: System
+          Value: overwatch
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: overwatch-v2-tg
+      VpcId: !Ref VpcId
+      Port: 9001
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+        - Key: stickiness.enabled
+          Value: "false"
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: HTTP_301
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: authenticate-cognito
+          Order: 1
+          AuthenticateCognitoConfig:
+            UserPoolArn: !Ref CognitoUserPoolArn
+            UserPoolClientId: !Ref CognitoUserPoolClientId
+            UserPoolDomain: !Ref CognitoUserPoolDomain
+            SessionCookieName: AWSELBAuthSessionCookie
+            Scope: openid
+            SessionTimeout: 604800
+            OnUnauthenticatedRequest: authenticate
+        - Type: forward
+          Order: 2
+          TargetGroupArn: !Ref TargetGroup
+
+  IdpResponseBypassRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 5
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /oauth2/idpresponse
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  HealthBypassRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 6
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /health
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  AlbDnsName:
+    Value: !GetAtt Alb.DNSName
+    Description: ALB DNS name; the apex Route 53 alias targets this.
+    Export:
+      Name: OverwatchV2AlbDnsName
+  AlbCanonicalHostedZoneId:
+    Value: !GetAtt Alb.CanonicalHostedZoneID
+    Description: AWS-managed alias-target zone ID for the ALB.
+    Export:
+      Name: OverwatchV2AlbCanonicalHostedZoneId
+  AlbArn:
+    Value: !Ref Alb
+    Export:
+      Name: OverwatchV2AlbArn
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+    Export:
+      Name: OverwatchV2TargetGroupArn
+  AlbSecurityGroupId:
+    Value: !Ref AlbSecurityGroup
+    Export:
+      Name: OverwatchV2AlbSecurityGroupId
+  HttpsListenerArn:
+    Value: !Ref HttpsListener
+    Export:
+      Name: OverwatchV2HttpsListenerArn

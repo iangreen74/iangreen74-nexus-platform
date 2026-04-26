@@ -22,7 +22,7 @@ export function OperatorBanner() {
         Internal engineering surface. Not for customer use.
       </span>
       <span className="ml-auto text-op-text-muted font-mono">
-        platform.vaultscaler.com/engineering
+        vaultscalerlabs.com
       </span>
       <button
         type="button"

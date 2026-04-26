@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-DEFAULT_BASE_URL = "https://platform.vaultscaler.com"
+DEFAULT_BASE_URL = "https://vaultscalerlabs.com"
 
 
 def snapshot_from_graph() -> dict[str, Any] | None:

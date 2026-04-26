@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  ACM TLS certificate for vaultscalerlabs.com (the dedicated Overwatch
+  V2 operator domain). DNS validation auto-creates the CNAME in the
+  vaultscalerlabs.com hosted zone via DomainValidationOptions, so the
+  CFN deploy itself blocks until ISSUED — no manual record-add needed.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: vaultscalerlabs.com
+  HostedZoneId:
+    Type: String
+    Default: Z050555617OK9IOPPIF5E
+    Description: Public Route 53 hosted zone for the apex domain.
+
+Resources:
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: System
+          Value: overwatch
+        - Key: Stack
+          Value: overwatch-v2-cert
+
+Outputs:
+  CertificateArn:
+    Value: !Ref Certificate
+    Description: ACM certificate ARN consumed by overwatch-v2-alb listener.
+    Export:
+      Name: OverwatchV2CertificateArn
