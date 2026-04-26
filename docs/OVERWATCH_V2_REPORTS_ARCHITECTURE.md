@@ -2,7 +2,8 @@
 
 **Authored:** 2026-04-25 (Sprint 14 Week 1)
 **Author:** Claude (CTO/Lead Engineer/Chief Data Architect)
-**Status:** Proposal for Ian's review
+**Status:** CANONICAL — Phase 2 detail spec for the substrate defined in [`OPERATIONAL_TRUTH_SUBSTRATE.md`](OPERATIONAL_TRUTH_SUBSTRATE.md)
+**Parent:** [`OPERATIONAL_TRUTH_SUBSTRATE.md`](OPERATIONAL_TRUTH_SUBSTRATE.md) — the substrate doc supersedes the build-sequencing implied below; the report catalog itself is unchanged.
 
 ---
 
