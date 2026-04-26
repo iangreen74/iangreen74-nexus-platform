@@ -302,8 +302,9 @@ class TestRegistration:
         names = {c.args[0].name for c in fake.register.call_args_list}
         assert "list_aws_resources" in names
         # Phase 0a (Track C) added 4 codebase-indexing tools.
-        # Phase 1 added 4 cross-tenant read tools (count: 15).
-        assert len(names) == 15
+        # Phase 1 added 4 cross-tenant read tools.
+        # Phase 0b added 4 log-correlation tools (count: 19).
+        assert len(names) == 19
 
 
 # === Idempotency for ingestion-style upserts =============================

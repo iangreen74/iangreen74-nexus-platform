@@ -195,6 +195,20 @@ Resources:
                   - tag:GetResources
                 Resource: "*"
 
+              # Phase 0b — read S3-stored ALB access logs. Scoped to the
+              # two access-log buckets only; read-only and matches the
+              # SecretsReadForgescalerApi narrow-scope pattern.
+              - Sid: AlbAccessLogsS3Read
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - "arn:aws:s3:::aria-platform-alb-logs-418295677815"
+                  - "arn:aws:s3:::aria-platform-alb-logs-418295677815/*"
+                  - "arn:aws:s3:::overwatch-v2-alb-logs-418295677815"
+                  - "arn:aws:s3:::overwatch-v2-alb-logs-418295677815/*"
+
               # Cross-tenant audit log writes — Phase 1 guardrail 3.
               # Scoped to the dedicated audit log group only; the role
               # cannot write to any other log destination.
