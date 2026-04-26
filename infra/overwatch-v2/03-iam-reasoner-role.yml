@@ -131,11 +131,23 @@ Resources:
                   - neptune-graph:GetQueryStatus
                 Resource: "*"
 
-              # KMS — verify on the approval-token key only (key ARN unknown until template 05 deploys; scoped by alias usage)
-              - Sid: KmsVerifyApprovalToken
+              # KMS — HMAC sign + verify on the approval-token key only.
+              # Phase 1.5.2 (2026-04-26): renamed Sid + corrected actions.
+              # Pre-1.5.2 this granted `kms:Verify` (asymmetric signature verify),
+              # which is a dead grant against an HMAC_256 / GENERATE_VERIFY_MAC key
+              # — Phase 1.5.1's smoke test caught the asymmetry when verify_token()
+              # failed AccessDenied at AWS. `kms:GenerateMac` was previously
+              # granted only in 05-kms-approval-key.yml's key resource policy
+              # (Sid ReasonerRoleSign) — adding it here too makes 03's role
+              # policy self-contained for HMAC sign+verify; 05's grant becomes
+              # redundant defense-in-depth and is a follow-up cleanup candidate.
+              # `kms:DescribeKey` is defensive — some SDK paths call it for key
+              # metadata before sign/verify; cost is zero, prevents the next surprise.
+              - Sid: KmsHmacApprovalToken
                 Effect: Allow
                 Action:
-                  - kms:Verify
+                  - kms:GenerateMac
+                  - kms:VerifyMac
                   - kms:DescribeKey
                 Resource: "*"
                 Condition:
