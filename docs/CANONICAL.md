@@ -7,3 +7,4 @@ This document records VaultScaler's locked decisions — the architectural and s
 | Document | Date | Status |
 |---|---|---|
 | [`OVERWATCH_V2_SPECIFICATION.md`](OVERWATCH_V2_SPECIFICATION.md) | 2026-04-24 | canonical |
+| [`OVERWATCH_V2_REPORTS_ARCHITECTURE.md`](OVERWATCH_V2_REPORTS_ARCHITECTURE.md) | 2026-04-25 | canonical |
