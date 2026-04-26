@@ -9,8 +9,9 @@ search_codebase, read_git_diff, list_repo_files) — 11 tools.
 Phase 1 added four cross-tenant read tools (read_customer_tenant_state,
 read_customer_pipeline, read_customer_ontology, read_aria_conversations)
 — 15 tools total.
-Phase 0b adds three cross-source-log tools (read_cloudtrail,
-read_alb_logs, query_correlated_events) — 18 tools total.
+Phase 0b adds four cross-source-log tools (read_cloudtrail,
+read_alb_logs, query_correlated_events, read_cloudwatch_metrics) —
+19 tools total.
 """
 from __future__ import annotations
 
@@ -21,9 +22,10 @@ def register_all_read_tools() -> None:
         aws_resource, cloudwatch_logs, engineering_ontology,
         github, list_aws_resources, list_repo_files, overwatch_metrics,
         pipeline_truth, query_correlated_events, read_alb_logs,
-        read_aria_conversations, read_cloudtrail, read_customer_ontology,
-        read_customer_pipeline, read_customer_tenant_state,
-        read_git_diff, read_repo_file, search_codebase,
+        read_aria_conversations, read_cloudtrail, read_cloudwatch_metrics,
+        read_customer_ontology, read_customer_pipeline,
+        read_customer_tenant_state, read_git_diff, read_repo_file,
+        search_codebase,
     )
     aws_resource.register_tool()
     cloudwatch_logs.register_tool()
@@ -46,6 +48,7 @@ def register_all_read_tools() -> None:
     read_cloudtrail.register_tool()
     read_alb_logs.register_tool()
     query_correlated_events.register_tool()
+    read_cloudwatch_metrics.register_tool()
 
 
 if __name__ == "__main__":

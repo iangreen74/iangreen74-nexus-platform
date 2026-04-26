@@ -165,3 +165,55 @@ def test_records_have_expected_fields(monkeypatch):
               "request", "user_agent", "target_group_arn"):
         assert k in rec
     assert rec["elb_status_code"] == 200
+
+
+def test_legacy_bucket_override_routes_to_aria_platform_bucket(monkeypatch):
+    """Gap-closure: caller can opt into the legacy ALB log bucket so we
+    keep visibility on platform.vaultscaler.com traffic until the
+    destruction prompt fires. The IAM grant for the legacy bucket lives
+    in 03-iam-reasoner-role.yml's S3ReadAlbAccessLogs Sid.
+    """
+    captured: dict = {}
+
+    def fake_factory(svc):
+        assert svc == "s3"
+        m = MagicMock()
+        paginator = MagicMock()
+        # Capture the bucket the tool actually paginates against.
+        def _paginate(**kw):
+            captured["paginate_bucket"] = kw.get("Bucket")
+            return [{"Contents": []}]
+        paginator.paginate.side_effect = _paginate
+        m.get_paginator.return_value = paginator
+        return m
+
+    monkeypatch.setattr("nexus.aws_client._client", fake_factory)
+    r = read_alb_logs.handler(
+        start_time="2026-04-26T13:25:00Z",
+        end_time="2026-04-26T13:35:00Z",
+        bucket="aria-platform-alb-logs-418295677815",
+    )
+    assert captured["paginate_bucket"] == "aria-platform-alb-logs-418295677815"
+    assert r["count"] == 0  # empty page; what we care about is the bucket route
+
+
+def test_default_bucket_remains_overwatch_v2(monkeypatch):
+    """No-bucket-arg => the V2 bucket. Legacy access is opt-in only."""
+    captured: dict = {}
+
+    def fake_factory(svc):
+        m = MagicMock()
+        paginator = MagicMock()
+        def _paginate(**kw):
+            captured["paginate_bucket"] = kw.get("Bucket")
+            return [{"Contents": []}]
+        paginator.paginate.side_effect = _paginate
+        m.get_paginator.return_value = paginator
+        return m
+
+    monkeypatch.setattr("nexus.aws_client._client", fake_factory)
+    read_alb_logs.handler(
+        start_time="2026-04-26T13:25:00Z",
+        end_time="2026-04-26T13:35:00Z",
+    )
+    assert captured["paginate_bucket"] == "overwatch-v2-alb-logs-418295677815"

@@ -152,8 +152,12 @@ Resources:
                   - cloudtrail:List*
                 Resource: "*"
 
-              # ALB access logs — read S3 objects under the V2 ALB log
-              # bucket so read_alb_logs can fetch + parse. Phase 0b adds.
+              # ALB access logs — read S3 objects for both ALB log buckets
+              # so read_alb_logs can fetch + parse. Phase 0b adds the V2
+              # bucket; the legacy bucket is preserved here while
+              # platform.vaultscaler.com traffic continues flowing through
+              # aria-platform-alb pre-destruction (becomes moot when the
+              # destruction prompt fires; harmless until then).
               - Sid: S3ReadAlbAccessLogs
                 Effect: Allow
                 Action:
@@ -162,6 +166,8 @@ Resources:
                 Resource:
                   - arn:aws:s3:::overwatch-v2-alb-logs-418295677815
                   - arn:aws:s3:::overwatch-v2-alb-logs-418295677815/*
+                  - arn:aws:s3:::aria-platform-alb-logs-418295677815
+                  - arn:aws:s3:::aria-platform-alb-logs-418295677815/*
 
               # Operator-substrate audit — Phase 0b wires the registry's
               # _emit_audit hook to /overwatch-v2/operator-substrate-audit
