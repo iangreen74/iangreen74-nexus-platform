@@ -153,3 +153,43 @@ Invariant C ("truth before framing") from the V2 spec section 3.3.
 ---
 
 *This document appends. New lessons land below as they surface.*
+
+---
+
+### L44 — Parallel-agent collisions on shared infrastructure (added 2026-04-26)
+
+**Pattern.** When two Claude Code sessions are working from a stale shared
+inventory, they may both pick up the same "next work" item and execute it
+in parallel. The second agent's deploy can silently overwrite IAM/CFN/
+secrets the first agent's deploy registered, leaving live AWS state
+inconsistent with main.
+
+**Observed instances (Sprint 14 Day 1).**
+- PR #29 / PR #30 — cross-tenant read primitive (Phase 1 / "Phase 0c"),
+  built in parallel from the same Phase-1 prompt seed.
+- PR #32 / PR #34 — Phase 0b cross-source log correlation, same pattern.
+
+**Common signature.**
+- Both PRs implement the same spec from the same prompt seed.
+- One merges first; the other catches it post-deploy.
+- The losing agent self-closes as duplicate.
+- IAM/CFN drift between losing-agent's deploy and merged-agent's deploy
+  requires manual reconciliation. In PR #34's case, the losing agent
+  had deployed `AlbAccessLogsS3Read` (both buckets) before discovering
+  PR #32 had merged with `S3ReadAlbAccessLogs` (V2 bucket only); live
+  state had to be reconciled by re-deploying main's IAM template.
+
+**Defense — proposed CI assertion.** Pre-commit hook or workflow step
+that asserts live AWS IAM matches the policies declared in the merging
+branch. Catches drift in the deploy workflow before it lands rather
+than at the next-deploy. Implementation candidate for Day 3.
+
+**Operator discipline complement.** Strategic chat surfaces every "next
+work" item with a clear claim — "Track A is firing Phase 0b in worktree
+X" — so parallel sessions know what's already in flight before they
+pick up a similar item from inventory.
+
+> **Numbering note (2026-04-26).** L6–L43 were recorded only in commit
+> message bodies and the auto-memory store, not appended to this file.
+> L44 lands here as the first entry to break that drift; future lessons
+> should land in this doc at the time they're committed elsewhere.
