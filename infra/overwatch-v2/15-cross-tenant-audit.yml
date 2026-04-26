@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudWatch log group for the cross-tenant audit trail (guardrail 3
+  of Phase 1 cross-tenant read primitive). Every cross-tenant tool
+  call writes one structured JSON event so accidental cross-tenant
+  reads are detectable in retrospect even though the IAM boundary
+  (path γ — same-account, single shared role) is policy-theater.
+
+  Spec ref: docs/OVERWATCH_V2_REPORTS_ARCHITECTURE.md, Phase 1.
+
+Resources:
+
+  CrossTenantAuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /overwatch-v2/cross-tenant-audit
+      RetentionInDays: 90
+
+Outputs:
+  LogGroupName:
+    Value: !Ref CrossTenantAuditLogGroup
+    Export:
+      Name: OverwatchV2CrossTenantAuditLogGroupName
+  LogGroupArn:
+    Value: !GetAtt CrossTenantAuditLogGroup.Arn
+    Export:
+      Name: OverwatchV2CrossTenantAuditLogGroupArn

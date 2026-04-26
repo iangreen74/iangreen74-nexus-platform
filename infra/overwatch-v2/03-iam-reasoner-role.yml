@@ -173,6 +173,39 @@ Resources:
                   - cloudwatch:ListMetrics
                 Resource: "*"
 
+              # CodeBuild read — Phase 1 read_customer_pipeline tool reads
+              # CodeBuild projects + builds for tenant deploy history.
+              - Sid: CodeBuildRead
+                Effect: Allow
+                Action:
+                  - codebuild:BatchGetProjects
+                  - codebuild:ListBuilds
+                  - codebuild:ListBuildsForProject
+                  - codebuild:BatchGetBuilds
+                  - codebuild:ListProjects
+                Resource: "*"
+
+              # Resource Groups Tagging — Phase 1 tools resolve a tenant's
+              # resources by TenantId tag rather than naming (one tenant
+              # can have multiple clusters with different name patterns;
+              # the TenantId tag is the canonical link).
+              - Sid: ResourceGroupsTaggingRead
+                Effect: Allow
+                Action:
+                  - tag:GetResources
+                Resource: "*"
+
+              # Cross-tenant audit log writes — Phase 1 guardrail 3.
+              # Scoped to the dedicated audit log group only; the role
+              # cannot write to any other log destination.
+              - Sid: CrossTenantAuditLogWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - "arn:aws:logs:us-east-1:418295677815:log-group:/overwatch-v2/cross-tenant-audit:*"
+
         # Cross-namespace dependency: the daemon's pipeline-polling loop
         # in nexus.capabilities.forgewing_api reads forgescaler/api to
         # authenticate against api.forgescaler.com. This is intentional

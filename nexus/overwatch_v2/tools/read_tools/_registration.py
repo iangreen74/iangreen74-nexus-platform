@@ -5,7 +5,10 @@ register() overwrites a same-name spec rather than duplicating.
 
 Track Q added list_aws_resources (catalog enumeration) — 7 tools.
 Phase 0a (Track C) added the four codebase-indexing tools (read_repo_file,
-search_codebase, read_git_diff, list_repo_files) — 11 tools total.
+search_codebase, read_git_diff, list_repo_files) — 11 tools.
+Phase 1 added four cross-tenant read tools (read_customer_tenant_state,
+read_customer_pipeline, read_customer_ontology, read_aria_conversations)
+— 15 tools total.
 """
 from __future__ import annotations
 
@@ -15,7 +18,9 @@ def register_all_read_tools() -> None:
     from nexus.overwatch_v2.tools.read_tools import (
         aws_resource, cloudwatch_logs, engineering_ontology,
         github, list_aws_resources, list_repo_files, overwatch_metrics,
-        pipeline_truth, read_git_diff, read_repo_file, search_codebase,
+        pipeline_truth, read_aria_conversations, read_customer_ontology,
+        read_customer_pipeline, read_customer_tenant_state,
+        read_git_diff, read_repo_file, search_codebase,
     )
     aws_resource.register_tool()
     cloudwatch_logs.register_tool()
@@ -29,6 +34,11 @@ def register_all_read_tools() -> None:
     search_codebase.register_tool()
     read_git_diff.register_tool()
     list_repo_files.register_tool()
+    # --- Phase 1: cross-tenant read primitive ---
+    read_customer_tenant_state.register_tool()
+    read_customer_pipeline.register_tool()
+    read_customer_ontology.register_tool()
+    read_aria_conversations.register_tool()
 
 
 if __name__ == "__main__":

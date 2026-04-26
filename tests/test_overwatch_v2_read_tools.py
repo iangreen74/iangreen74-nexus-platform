@@ -699,14 +699,15 @@ class TestRegistration:
             mod = sys.modules[mod_name]
             assert "registry" not in dir(mod)
 
-    def test_register_all_eleven_tools(self):
+    def test_register_all_fifteen_tools(self):
         # Track Q added list_aws_resources alongside the original 6.
         # Phase 0a (Track C) added the four codebase-indexing tools.
+        # Phase 1 added the four cross-tenant read tools (count: 15).
         fake = _fake_registry_module()
         with patch.dict(sys.modules, {"nexus.overwatch_v2.tools.registry": fake}):
             from nexus.overwatch_v2.tools.read_tools._registration import register_all_read_tools
             register_all_read_tools()
-        assert fake.register.call_count == 11
+        assert fake.register.call_count == 15
         names = {call.args[0].name for call in fake.register.call_args_list}
         assert names == {
             "read_aws_resource", "read_cloudwatch_logs", "read_github",
@@ -714,6 +715,8 @@ class TestRegistration:
             "read_overwatch_metrics", "list_aws_resources",
             "read_repo_file", "search_codebase",
             "read_git_diff", "list_repo_files",
+            "read_customer_tenant_state", "read_customer_pipeline",
+            "read_customer_ontology", "read_aria_conversations",
         }
 
     def test_all_tools_marked_read_only(self):
