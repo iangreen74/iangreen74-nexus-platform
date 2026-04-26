@@ -268,3 +268,65 @@ resolution of pre-existing drift** — never for new resource creation.
 The exception: snapshotting state via `describe-rules` /
 `describe-listeners` for rollback purposes is not a mutation and is
 encouraged before any change.
+
+### L48 — Substrate-truth saves divide into internal vs external state (added 2026-04-26)
+
+**Pattern.** Eight substrate-truth saves landed in one day across Phase 1
+end-to-end verification (PRs #39 → #40 → #41 → #42 → #43 plus three
+re-runs of the one-shot apply task). Saves 1–7 were the same class:
+Claude Code refusing to extrapolate from missing internal substrate
+(`nexus.overwatch_v2.db` module didn't exist; migration 010 schema
+diverged from code's INSERT shape; `OVERWATCH_V2_DATABASE_URL` not wired
+into any task def; `aria-ecs-execution-role` couldn't read
+`overwatch-v2/postgres-master`; reasoner role lacked `kms:VerifyMac`;
+the IAM identity-policy fix used `StringEquals` against the
+multi-valued `kms:ResourceAliases` context key; the KMS key resource
+policy had a separation-of-duties design no consumer ever instantiated).
+Save 8 was a different class: the GitHub App `overwatch-v2-reasoner`
+installation lacks Issues:Write scope on `iangreen74/aria-platform`
+because Phase 1 was the first mutation tool — installation permissions
+were never bumped past read-only.
+
+**Effect.** Internal-substrate saves compound exponentially as a session
+continues — each save is a verification step that would have been
+skipped under the older "ship the visible work, verify if it breaks"
+flow. Without the doctrine, Phase 1 would have shipped declared-done
+in PR #39 with a token-issuance path that ImportErrors at runtime, a
+schema gap that wouldn't be discovered until the first real operator
+used issue_token, and KMS IAM gaps that would surface as confusing
+"bad_signature" errors weeks or months later. With the doctrine, Phase 1
+reached genuine end-to-end verification in five commits over ~6 hours,
+with every primitive (KMS sign+verify, Postgres single-use, hash
+binding, TTL, gate logic, audit fan-out) proven against production
+infrastructure with verifiable evidence.
+
+**The lesson divides:**
+
+(a) **For internal substrate** (code, IaC, database schemas, IAM
+identity policies, KMS resource policies — anything we author and
+control), the doctrine is *verify before extrapolating*. Read the
+file, query the resource, simulate the policy. Do not assume an
+imported module exists, a migration was applied, an env var is set,
+a permission is granted, or a condition operator is correctly chosen
+for its context-key cardinality. Each save here costs minutes; each
+miss costs hours of post-incident archaeology and a public deploy that
+needs to be rolled back or hot-patched.
+
+(b) **For external system state** (GitHub App permissions, OAuth
+scopes, third-party tokens, vendor IAM, DNS at registrar level,
+anything that lives outside our IaC and is managed in a vendor's UI),
+the doctrine extends to *identify what state lives outside our IaC and
+document it explicitly*. Uncodified state is a known unknown that must
+be tracked, not surprised by. Save 8 surfaced this gap — there is
+currently no inventory of GitHub App permissions, OAuth callback
+URLs, customer Cognito pool app-client configs, or other externally-
+managed state. Phase 1.5.4 candidate: a dedicated runbook tracking
+uncodified external state with operator-action procedures for each.
+
+**Defense.** Internal: keep doing the substrate-truth diagnosis at
+every "ship" boundary. External: every PR that adds a new external
+integration must update an `EXTERNAL_STATE_INVENTORY.md` (or
+equivalent) entry naming the state, where it lives, who can change it,
+and what runbook covers operator-action changes. The 8th save is
+*always* going to be the one that lives somewhere we forgot to look —
+documentation is how we shrink that surface.
