@@ -5,6 +5,9 @@
 // signal.
 import { useEffect, useState } from 'react';
 import { ReportSection } from './ReportSection';
+import {
+  buildReportCSV, buildReportJSON, downloadFile, reportFilename,
+} from '../lib/reportDownload';
 
 type CatalogEntry = {
   report_id: string;
@@ -154,6 +157,36 @@ export function ReportsPanel() {
             (deferred — empty envelope)
           </div>
         ) : null}
+        {result && (
+          <div className="flex gap-1.5 pb-1">
+            <button
+              type="button"
+              disabled={loading || !!error}
+              onClick={() => downloadFile(
+                reportFilename(result, 'csv'),
+                buildReportCSV(result),
+                'text/csv;charset=utf-8',
+              )}
+              className="font-mono text-2xs border border-op-border text-op-text-dim px-2 py-0.5 hover:border-op-accent hover:text-op-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Download report as CSV"
+            >
+              ↓ csv
+            </button>
+            <button
+              type="button"
+              disabled={loading || !!error}
+              onClick={() => downloadFile(
+                reportFilename(result, 'json'),
+                buildReportJSON(result),
+                'application/json;charset=utf-8',
+              )}
+              className="font-mono text-2xs border border-op-border text-op-text-dim px-2 py-0.5 hover:border-op-accent hover:text-op-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Download report as JSON"
+            >
+              ↓ json
+            </button>
+          </div>
+        )}
         {result?.sections.map((s, i) => (
           <ReportSection key={i} title={s.title} kind={s.kind} data={s.data} />
         ))}
