@@ -193,3 +193,78 @@ pick up a similar item from inventory.
 > message bodies and the auto-memory store, not appended to this file.
 > L44 lands here as the first entry to break that drift; future lessons
 > should land in this doc at the time they're committed elsewhere.
+
+---
+
+### L45 — Migration cleanup must include originating resources (added 2026-04-26)
+
+**Pattern.** When migrating a workload from infra A to infra B (e.g., ALB
+to ALB, cluster to cluster, account to account), removing the workload
+from A is necessary but not sufficient. Bypass rules, IAM grants, DNS
+aliases, listener default actions, and any other accommodations on A
+that were added specifically to support the workload must be removed in
+the same migration PR.
+
+**Observed instance.** PR #24 (2026-04-25 evening) migrated the operator
+console from `platform.vaultscaler.com` (`aria-platform-alb`) to
+`vaultscalerlabs.com` (`overwatch-v2-alb`). The bypass rules and the
+listener default-action `authenticate-cognito` step that PR #17 had
+added on `aria-platform-alb` to support the operator console were not
+removed.
+
+**Effect.** Every `/health` request to any host on `aria-platform-alb`
+matched the stale priority-6 rule (`path-pattern=/health →
+aria-console-tg`) before host-header rules at priorities 9/10 could
+evaluate. `api.forgescaler.com/health` returned Overwatch's response.
+aria-platform CI smoke-test failed on every PR for ~24 hours before
+diagnosis. Resolution recorded at
+`aria-platform/docs/DRIFT_RESOLUTIONS.md` (2026-04-26 entry).
+
+**Defense.** Migration PRs must include a "migration audit" checklist
+covering, at minimum:
+
+- listener rules added on the originating ALB for the migrated workload
+- IAM grants added on the originating role/principal for the migrated workload
+- DNS records added pointing at the originating infra
+- listener default actions modified on the originating listener
+- target groups created for the migrated workload that no longer have callers
+
+Each item must be explicitly addressed (kept, moved, deleted) in the
+migration PR's body or a checklist file committed alongside.
+
+---
+
+### L46 — No production listener rules via CLI, ever (added 2026-04-26)
+
+**Pattern.** Even for "track-time" or "temporary" changes — and even
+when the change is well-understood and small — production listener
+rules, default actions, IAM grants, DNS records, and other infra
+primitives must be created via templated IaC (CFN or Terraform), never
+via direct AWS CLI. CLI creation produces drift that has no template
+to clean up later, leaving the burden of remembering the artifacts'
+existence on the operator's memory.
+
+**Observed instance.** PR #17 (Track P, 2026-04-25 morning) created
+priority 5 + priority 6 listener rules on `aria-platform-alb` HTTPS:443
+via `aws elbv2 create-rule` and modified the listener's default action
+via `aws elbv2 modify-listener` — both executed during the Track P
+implementation session. No CFN or Terraform was authored. When PR #24
+(later that same day) migrated the operator console to a new ALB, no
+template existed to update or delete from. The artifacts persisted on
+the original ALB as drift, where they continued to match traffic.
+
+**Effect.** ~24 hours of customer-facing API routing leak (every
+aria-platform CI run failed). Resolution required imperative drift-
+resolution rather than template-patch — symmetric with the original
+mistake, recorded at `aria-platform/docs/DRIFT_RESOLUTIONS.md`
+(2026-04-26 entry).
+
+**Defense.** Track-time work that needs production listener changes
+must include a template change in the same PR. If the template doesn't
+yet exist, the PR includes both the new template and the artifacts.
+CLI calls against production listeners are reserved for **emergency
+resolution of pre-existing drift** — never for new resource creation.
+
+The exception: snapshotting state via `describe-rules` /
+`describe-listeners` for rollback purposes is not a mutation and is
+encouraged before any change.
