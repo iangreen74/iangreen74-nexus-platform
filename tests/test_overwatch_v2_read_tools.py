@@ -699,17 +699,19 @@ class TestRegistration:
             mod = sys.modules[mod_name]
             assert "registry" not in dir(mod)
 
-    def test_register_all_nineteen_tools(self):
+    def test_register_all_twenty_tools(self):
         # Track Q added list_aws_resources alongside the original 6.
         # Phase 0a (Track C) added the four codebase-indexing tools.
         # Phase 1 added the four cross-tenant read tools (count: 15).
         # Phase 0b added read_cloudtrail, read_alb_logs,
         # query_correlated_events, read_cloudwatch_metrics (count: 19).
+        # Echo Phase 1 added comment_on_pr (the first mutation tool;
+        # requires_approval=True) — count 20.
         fake = _fake_registry_module()
         with patch.dict(sys.modules, {"nexus.overwatch_v2.tools.registry": fake}):
             from nexus.overwatch_v2.tools.read_tools._registration import register_all_read_tools
             register_all_read_tools()
-        assert fake.register.call_count == 19
+        assert fake.register.call_count == 20
         names = {call.args[0].name for call in fake.register.call_args_list}
         assert names == {
             "read_aws_resource", "read_cloudwatch_logs", "read_github",
@@ -721,16 +723,27 @@ class TestRegistration:
             "read_customer_ontology", "read_aria_conversations",
             "read_cloudtrail", "read_alb_logs", "query_correlated_events",
             "read_cloudwatch_metrics",
+            "comment_on_pr",
         }
 
-    def test_all_tools_marked_read_only(self):
+    def test_only_comment_on_pr_is_a_mutation_tool(self):
+        """Echo Phase 1 invariant: every tool except the explicit mutation
+        tool stays requires_approval=False. Defense-in-depth — accidental
+        flips of read tools to write semantics fail this test."""
         fake = _fake_registry_module()
         with patch.dict(sys.modules, {"nexus.overwatch_v2.tools.registry": fake}):
             from nexus.overwatch_v2.tools.read_tools._registration import register_all_read_tools
             register_all_read_tools()
         for call in fake.register.call_args_list:
-            assert call.args[0].requires_approval is False
-            assert call.args[0].risk_level == "low"
+            spec = call.args[0]
+            if spec.name == "comment_on_pr":
+                assert spec.requires_approval is True, "comment_on_pr must be a mutation tool"
+                assert spec.risk_level == "medium"
+            else:
+                assert spec.requires_approval is False, (
+                    f"{spec.name} must remain a read tool (requires_approval=False)"
+                )
+                assert spec.risk_level == "low"
 
     def test_individual_register_tool_calls_register_once(self):
         fake = _fake_registry_module()

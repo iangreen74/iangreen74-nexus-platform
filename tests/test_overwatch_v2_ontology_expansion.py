@@ -304,7 +304,8 @@ class TestRegistration:
         # Phase 0a (Track C) added 4 codebase-indexing tools.
         # Phase 1 added 4 cross-tenant read tools (count: 15).
         # Phase 0b added 4 cross-source-log tools (count: 19).
-        assert len(names) == 19
+        # Echo Phase 1 added comment_on_pr (mutation) (count: 20).
+        assert len(names) == 20
 
 
 # === Idempotency for ingestion-style upserts =============================

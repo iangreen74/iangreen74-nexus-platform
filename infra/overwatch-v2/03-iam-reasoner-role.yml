@@ -180,6 +180,18 @@ Resources:
                 Resource:
                   - arn:aws:logs:us-east-1:418295677815:log-group:/overwatch-v2/operator-substrate-audit:*
 
+              # Echo mutations audit — Phase 1 wires every dispatch attempt
+              # against requires_approval=True tools (regardless of outcome:
+              # rejected_no_token, rejected_bad_token, success, tool_error)
+              # to /overwatch-v2/echo-mutations (365-day retention).
+              - Sid: EchoMutationsAuditWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - arn:aws:logs:us-east-1:418295677815:log-group:/overwatch-v2/echo-mutations:*
+
               # Bedrock — Echo's reasoner invokes Claude via Converse + InvokeModel.
               # Without this, every chat fails before tool dispatch.
               - Sid: BedrockInvoke

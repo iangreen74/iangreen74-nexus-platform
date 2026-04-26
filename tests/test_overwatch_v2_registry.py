@@ -79,8 +79,19 @@ def test_mutation_tool_without_token_raises_approval_required():
         dispatch("m", {"value": "x"})
 
 
-def test_mutation_tool_with_token_executes():
+def test_mutation_tool_with_token_executes(monkeypatch):
     register(_spec(name="m", requires_approval=True, risk_level="high"))
+    # Bypass real KMS/auth verification — registry test should isolate from
+    # the auth module. Echo Phase 1 wires the real verify; that path is
+    # exercised in tests/test_overwatch_v2_echo_gate.py.
+    monkeypatch.setattr(
+        "nexus.overwatch_v2.tools._approval_gate.precheck",
+        lambda *a, **kw: (True, None, "stub-prefix"),
+    )
+    monkeypatch.setattr(
+        "nexus.overwatch_v2.tools._approval_gate.emit_outcome",
+        lambda *a, **kw: None,
+    )
     r = dispatch("m", {"value": "x"}, approval_token="some.jwt.string")
     assert r.ok and r.value == "X"
 
@@ -109,8 +120,16 @@ def test_audit_event_emitted_on_handler_failure():
     assert log[-1]["ok"] is False
 
 
-def test_audit_records_actor_and_token_id_when_present():
+def test_audit_records_actor_and_token_id_when_present(monkeypatch):
     register(_spec(name="m", requires_approval=True, risk_level="medium"))
+    monkeypatch.setattr(
+        "nexus.overwatch_v2.tools._approval_gate.precheck",
+        lambda *a, **kw: (True, None, "abcdefghijklmnopqrstuvwx…"),
+    )
+    monkeypatch.setattr(
+        "nexus.overwatch_v2.tools._approval_gate.emit_outcome",
+        lambda *a, **kw: None,
+    )
     dispatch("m", {"value": "x"}, approval_token="abcdefghijklmnopqrstuvwxyz",
              actor="bot")
     log = get_local_audit_log()

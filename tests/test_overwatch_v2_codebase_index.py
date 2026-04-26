@@ -623,5 +623,6 @@ class TestRegistration:
         for expected in ("read_repo_file", "search_codebase",
                          "read_git_diff", "list_repo_files"):
             assert expected in names, f"{expected} not registered"
-        # Total = 7 (existing) + 4 (Phase 0a) + 4 (Phase 1) + 4 (Phase 0b) = 19.
-        assert len(names) == 19
+        # 7 (existing) + 4 (Phase 0a) + 4 (Phase 1) + 4 (Phase 0b) +
+        # 1 (Echo Phase 1: comment_on_pr) = 20.
+        assert len(names) == 20
