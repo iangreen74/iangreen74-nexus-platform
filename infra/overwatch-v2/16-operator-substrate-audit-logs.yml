@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Overwatch V2 Phase 0b operator-substrate audit log group. Sink for
+  the Track F tool registry's _emit_audit hook. Every tool dispatch
+  (regardless of which tool) writes one structured JSON record here,
+  giving us a single audit trail for "which tools is Echo actually
+  using and at what cadence". 90-day retention. Spec:
+  docs/OPERATIONAL_TRUTH_SUBSTRATE.md Phase 0b + the registry's
+  intended audit sink (registry.py _emit_audit production branch).
+
+Resources:
+
+  OperatorSubstrateAuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /overwatch-v2/operator-substrate-audit
+      RetentionInDays: 90
+
+Outputs:
+
+  LogGroupName:
+    Value: !Ref OperatorSubstrateAuditLogGroup
+    Export:
+      Name: OverwatchV2OperatorSubstrateAuditLogGroupName
+
+  LogGroupArn:
+    Value: !GetAtt OperatorSubstrateAuditLogGroup.Arn
+    Export:
+      Name: OverwatchV2OperatorSubstrateAuditLogGroupArn

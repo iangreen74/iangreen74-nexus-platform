@@ -152,6 +152,28 @@ Resources:
                   - cloudtrail:List*
                 Resource: "*"
 
+              # ALB access logs — read S3 objects under the V2 ALB log
+              # bucket so read_alb_logs can fetch + parse. Phase 0b adds.
+              - Sid: S3ReadAlbAccessLogs
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::overwatch-v2-alb-logs-418295677815
+                  - arn:aws:s3:::overwatch-v2-alb-logs-418295677815/*
+
+              # Operator-substrate audit — Phase 0b wires the registry's
+              # _emit_audit hook to /overwatch-v2/operator-substrate-audit
+              # so every tool dispatch has a structured record.
+              - Sid: OperatorSubstrateAuditWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - arn:aws:logs:us-east-1:418295677815:log-group:/overwatch-v2/operator-substrate-audit:*
+
               # Bedrock — Echo's reasoner invokes Claude via Converse + InvokeModel.
               # Without this, every chat fails before tool dispatch.
               - Sid: BedrockInvoke
