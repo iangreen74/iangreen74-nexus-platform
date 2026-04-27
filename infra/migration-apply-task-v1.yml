@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Sprint 15 Day 3 — V1-targeted migration-apply task definition.
+  Mirrors infra/overwatch-v2/18-migration-apply-task.yml (V2) but
+  injects V1's DATABASE_URL secret instead of V2's PG_* secrets, and
+  invokes the runner with --target=v1.
+
+  V1 = nexus-ontology-postgres (db.t4g.micro, us-east-1a). Secret:
+  nexus/ontology/postgres/connection-XlBoLD. Carries
+  classifier_proposals, ontology objects, founder data.
+
+  Operator launches with:
+    aws ecs run-task --cluster overwatch-platform \
+      --task-definition aria-console-migration-apply-v1 \
+      --launch-type FARGATE \
+      --network-configuration <ecs sg + private subnets> \
+      --overrides '{"containerOverrides":[{"name":"migration-apply-v1",
+                     "command":["python","-m",
+                       "nexus.operator.db_apply_migration",
+                       "migrations/0NN_filename.sql","--target=v1"]}]}'
+
+  ECS streams stdout to /aws/ecs/aria-console-migration-apply-v1; the
+  runner prints "applied: ..." (or "already applied (matching): ...")
+  on success and SystemExits non-zero on drift / SQL error.
+
+  No verification wrapper today — V1 has no analogue of
+  db_apply_migration_with_verify.py because the V2 wrapper's checks are
+  approval_tokens-specific. A V1 verify wrapper, if needed, lands in a
+  separate PR.
+
+  Refs: docs/v1_migration_substrate_findings.md
+
+Parameters:
+
+  V1ConnectionSecretArn:
+    Type: String
+    Default: arn:aws:secretsmanager:us-east-1:418295677815:secret:nexus/ontology/postgres/connection-XlBoLD
+    Description: >
+      ARN of nexus/ontology/postgres/connection. Source of truth for V1
+      DATABASE_URL.
+
+  EcrImage:
+    Type: String
+    Default: 418295677815.dkr.ecr.us-east-1.amazonaws.com/nexus-platform:latest
+    Description: aria-console image — same tag the live service runs.
+
+  TaskRoleArn:
+    Type: String
+    Default: arn:aws:iam::418295677815:role/overwatch-v2-reasoner-role
+    Description: >
+      Same task role as V2 migration-apply. Reads V1 secret via the
+      execution-role inline policy below; task role itself doesn't need
+      additional grants for the migration apply itself.
+
+  ExecutionRoleName:
+    Type: String
+    Default: aria-ecs-execution-role
+    Description: >
+      ECS execution role (pulls image + injects secrets). Inline policy
+      below grants it read access to the V1 secret.
+
+  MigrationApplyV1LogGroupRetentionDays:
+    Type: Number
+    Default: 90
+    Description: >
+      Retain 90 days; matches V2 task def (operator-runbook output, not
+      the 365-day mutation-audit retention).
+
+Resources:
+
+  MigrationApplyV1LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/ecs/aria-console-migration-apply-v1
+      RetentionInDays: !Ref MigrationApplyV1LogGroupRetentionDays
+
+  # Grant the existing aria-ecs-execution-role permission to pull the
+  # V1 connection secret so ECS can inject DATABASE_URL into the task's
+  # env at start. Separate from the V2 inline policy on the same role so
+  # the two grants can be audited independently.
+  ExecutionRoleV1SecretAccess:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: nexus-ontology-postgres-connection-read
+      Roles:
+        - !Ref ExecutionRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadV1ConnectionSecret
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource:
+              - !Ref V1ConnectionSecretArn
+
+  MigrationApplyV1TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: aria-console-migration-apply-v1
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: "512"
+      Memory: "1024"
+      TaskRoleArn: !Ref TaskRoleArn
+      ExecutionRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ExecutionRoleName}"
+      ContainerDefinitions:
+        - Name: migration-apply-v1
+          Image: !Ref EcrImage
+          Essential: true
+          Environment:
+            - Name: AWS_REGION
+              Value: us-east-1
+            - Name: NEXUS_MODE
+              Value: production
+          Secrets:
+            # V1 secret carries DATABASE_URL as a JSON key — extract it
+            # straight into the env var the runner reads. No URL
+            # composition needed (unlike V2's PG_* approach).
+            - Name: DATABASE_URL
+              ValueFrom: !Sub "${V1ConnectionSecretArn}:DATABASE_URL::"
+          # Default command — operator overrides per-migration via
+          # `aws ecs run-task --overrides`. The default points at the V1
+          # ledger creator (migration 015) which is the bootstrap step;
+          # in practice every operator invocation will override.
+          Command:
+            - python
+            - -m
+            - nexus.operator.db_apply_migration
+            - migrations/015_v1_schema_migrations_ledger.sql
+            - --target=v1
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MigrationApplyV1LogGroup
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: migration-apply-v1
+
+Outputs:
+
+  TaskDefinitionArn:
+    Value: !Ref MigrationApplyV1TaskDefinition
+    Description: Use with `aws ecs run-task --task-definition <this arn>`.
+
+  LogGroupName:
+    Value: !Ref MigrationApplyV1LogGroup
+    Export:
+      Name: V1MigrationApplyLogGroupName
