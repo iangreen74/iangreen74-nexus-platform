@@ -137,41 +137,15 @@ def _eval_cloudwatch_log_count(spec: dict[str, Any]) -> float:
 
 def _eval_postgres_query(spec: dict[str, Any]) -> float | None:
     """Spec: target ('v1'|'v2', default 'v1'), query (SQL → single scalar)."""
+    from nexus.operator_features._pg import open_pg_connection
     target = spec.get("target", "v1")
     sql = spec["query"]
-    with _open_pg_connection(target) as conn, conn.cursor() as cur:
+    with open_pg_connection(target) as conn, conn.cursor() as cur:
         cur.execute(sql)
         row = cur.fetchone()
     if row is None or row[0] is None:
         return None
     return float(row[0])
-
-
-def _open_pg_connection(target: str):
-    """Route postgres queries to V1 (DATABASE_URL) or V2 (overwatch_v2.db)."""
-    if target == "v2":
-        from nexus.overwatch_v2.db import get_conn
-        return get_conn()
-    if target == "v1":
-        from contextlib import contextmanager
-        import os
-        import psycopg2
-
-        @contextmanager
-        def _conn():
-            url = os.environ.get("DATABASE_URL", "").strip()
-            if not url:
-                raise RuntimeError(
-                    "DATABASE_URL not set — V1 postgres signal requires it"
-                )
-            c = psycopg2.connect(url, connect_timeout=5)
-            try:
-                yield c
-            finally:
-                c.close()
-
-        return _conn()
-    raise ValueError(f"unknown postgres target: {target!r}")
 
 
 _VALUE_HANDLERS: dict[

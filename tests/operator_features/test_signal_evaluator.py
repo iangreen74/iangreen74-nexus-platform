@@ -202,7 +202,9 @@ def test_postgres_query_returns_scalar(monkeypatch):
     def _fake_conn(target):
         yield conn
 
-    monkeypatch.setattr(signal_evaluator, "_open_pg_connection", _fake_conn)
+    monkeypatch.setattr(
+        "nexus.operator_features._pg.open_pg_connection", _fake_conn,
+    )
     v = signal_evaluator._eval_postgres_query({
         "target": "v1", "query": "SELECT count(*) FROM classifier_proposals",
     })
@@ -224,20 +226,24 @@ def test_postgres_query_null_row_returns_none(monkeypatch):
     def _fake_conn(target):
         yield conn
 
-    monkeypatch.setattr(signal_evaluator, "_open_pg_connection", _fake_conn)
+    monkeypatch.setattr(
+        "nexus.operator_features._pg.open_pg_connection", _fake_conn,
+    )
     v = signal_evaluator._eval_postgres_query({"query": "SELECT 1"})
     assert v is None
 
 
 def test_postgres_query_unknown_target_raises():
+    from nexus.operator_features._pg import open_pg_connection
     with pytest.raises(ValueError, match="unknown postgres target"):
-        with signal_evaluator._open_pg_connection("v3"):
+        with open_pg_connection("v3"):
             pass
 
 
 def test_postgres_query_v1_missing_database_url(monkeypatch):
+    from nexus.operator_features._pg import open_pg_connection
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    cm = signal_evaluator._open_pg_connection("v1")
+    cm = open_pg_connection("v1")
     with pytest.raises(RuntimeError, match="DATABASE_URL not set"):
         with cm:
             pass
