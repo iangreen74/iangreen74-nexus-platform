@@ -131,6 +131,25 @@ Resources:
                   - neptune-graph:GetQueryStatus
                 Resource: "*"
 
+              # Neptune Analytics — write on the aria-platform graph only.
+              # Bug 4 dataplane diagnostic 2026-04-27 confirmed: aria-console
+              # writes to ontology objects in g-1xwjj34141 hit
+              # AccessDeniedException because the role had read-only above.
+              # `overwatch_graph.query()` swallowed the exception and the
+              # 4 Feature Accepts that day succeeded at the Postgres layer
+              # but never landed in Neptune. Tight scope: two write actions,
+              # one specific graph ARN — NOT neptune-graph:* and NOT
+              # Resource: "*". Hardening (raise on swallowed write errors,
+              # deploy-time read-back smoke) is logged for Sprint 16, not
+              # bundled here. Refs: /tmp/bug4_dataplane_diag.md.
+              - Sid: NeptuneAnalyticsWriteAriaGraph
+                Effect: Allow
+                Action:
+                  - neptune-graph:WriteDataViaQuery
+                  - neptune-graph:DeleteDataViaQuery
+                Resource:
+                  - arn:aws:neptune-graph:us-east-1:418295677815:graph/g-1xwjj34141
+
               # KMS — HMAC sign + verify on the approval-token key only.
               # Phase 1.5.2 (2026-04-26): renamed Sid + corrected actions.
               # Pre-1.5.2 this granted `kms:Verify` (asymmetric signature verify),
