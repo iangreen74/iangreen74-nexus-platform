@@ -45,7 +45,27 @@ _local_store: dict[str, list[dict[str, Any]]] = {
     # ActionBanner. Deliberately unprefixed: this is a cross-system interface,
     # not Overwatch's internal memory.
     "ActionRequired": [],
+    # Phase 0e fractal observability framework. Distinct from Forgewing's
+    # `Feature` label (founder ontology, separate Neptune namespace) and
+    # from the dataclass `nexus/ontology/schema.py:Feature`. The Python
+    # surface lives in `nexus/operator_features/`; persistence routes
+    # through `_create_node`/`_create_edge` here.
+    "OperatorFeature": [],
 }
+
+# Phase 0e edges. Edges are not used elsewhere in the Overwatch graph yet;
+# the OperatorFeature framework is the first consumer of edge primitives.
+# Edges live in a parallel list — production uses Neptune relationships,
+# local mode uses dict records.
+_local_edges: list[dict[str, Any]] = []
+
+# Edge type constants. Prefixed `OPERATOR_` so they cannot collide with any
+# DEPENDS_ON / COMPOSES / REFERENCES edge semantics that may exist (or be
+# added later) for the founder Feature/Decision/Hypothesis ontology.
+OPERATOR_DEPENDS_ON = "OPERATOR_DEPENDS_ON"
+OPERATOR_COMPOSES = "OPERATOR_COMPOSES"
+OPERATOR_REFERENCES = "OPERATOR_REFERENCES"
+OPERATOR_EVIDENCED_BY = "OPERATOR_EVIDENCED_BY"
 
 
 def _now_iso() -> str:
@@ -114,6 +134,79 @@ def _create_node(label: str, props: dict[str, Any]) -> str:
     )
     rows = query(cypher, node)
     return rows[0].get("id", node["id"]) if rows else node["id"]
+
+
+def _create_edge(
+    from_label: str,
+    from_id: str,
+    to_label: str,
+    to_id: str,
+    edge_type: str,
+    props: dict[str, Any] | None = None,
+) -> None:
+    """MERGE an edge by (from_id, to_id, edge_type). Idempotent.
+
+    Phase 0e introduces edges to the Overwatch graph; previously the graph
+    held only flat node collections. Local mode stores an edge record in
+    ``_local_edges``. Production issues a parameterised MERGE.
+    """
+    record = {
+        "from_label": from_label,
+        "from_id": from_id,
+        "to_label": to_label,
+        "to_id": to_id,
+        "type": edge_type,
+        "props": props or {},
+        "created_at": _now_iso(),
+    }
+    if MODE != "production":
+        with _lock:
+            for existing in _local_edges:
+                if (
+                    existing["from_id"] == from_id
+                    and existing["to_id"] == to_id
+                    and existing["type"] == edge_type
+                ):
+                    return
+            _local_edges.append(record)
+        return
+    cypher = (
+        f"MATCH (a:{from_label} {{id: $fid}}), (b:{to_label} {{id: $tid}}) "
+        f"MERGE (a)-[r:{edge_type}]->(b) "
+        "RETURN r"
+    )
+    query(cypher, {"fid": from_id, "tid": to_id})
+
+
+def _walk_edges(
+    from_label: str,
+    from_id: str,
+    edge_type: str,
+) -> list[dict[str, Any]]:
+    """Walk outgoing edges of ``edge_type`` from a node.
+
+    Returns ``[{to_label, to_id, props}, ...]``. Local mode filters
+    ``_local_edges``; production runs a Cypher MATCH.
+    """
+    if MODE != "production":
+        with _lock:
+            return [
+                {
+                    "to_label": e["to_label"],
+                    "to_id": e["to_id"],
+                    "props": dict(e["props"]),
+                }
+                for e in _local_edges
+                if e["from_label"] == from_label
+                and e["from_id"] == from_id
+                and e["type"] == edge_type
+            ]
+    return query(
+        f"MATCH (a:{from_label} {{id: $fid}})-[r:{edge_type}]->(b) "
+        "RETURN labels(b)[0] AS to_label, b.id AS to_id, "
+        "properties(r) AS props",
+        {"fid": from_id},
+    )
 
 
 # --- Recording API -----------------------------------------------------------
@@ -1028,3 +1121,4 @@ def reset_local_store() -> None:
     with _lock:
         for label in _local_store:
             _local_store[label] = []
+        _local_edges.clear()
