@@ -9,6 +9,7 @@ os.environ.setdefault("NEXUS_MODE", "local")
 import pytest  # noqa: E402
 
 from nexus.mechanism1.classifier import (  # noqa: E402
+    CONTEXT_MAX_CHARS,
     MIN_CONFIDENCE,
     ProposalCandidate,
     SUPPORTED_TYPES,
@@ -58,8 +59,59 @@ def test_extract_produces_candidates(monkeypatch):
         assert c.confidence == 0.85
         assert c.tenant_id == "t-123"
         assert c.project_id == "p-456"
+        # Migration 014 / Bug 4: context populated from the originating turn.
+        assert c.context == "We built one-click checkout today."
     types = {c.object_type for c in candidates}
     assert types == set(SUPPORTED_TYPES)
+
+
+def test_extract_captures_context_from_conversation_turn(monkeypatch):
+    """Bug 4 regression: every candidate carries its originating turn as context."""
+    monkeypatch.setattr("nexus.config.MODE", "production")
+    proposal = {
+        "title": "Decide to migrate auth",
+        "summary": "Move auth to Cognito.",
+        "reasoning": "Founder decided after weighing alternatives.",
+        "confidence": 0.9,
+    }
+    mock_client = MagicMock()
+    mock_client.invoke_model.return_value = _mock_haiku_response(proposal)
+
+    turn = "We're going with Cognito for auth — IAM-managed, no custom user store."
+    with patch("nexus.mechanism1.classifier._bedrock_client",
+               return_value=mock_client):
+        candidates = extract(
+            conversation_turn=turn,
+            tenant_id="t-123",
+        )
+
+    decision_candidates = [c for c in candidates if c.object_type == "decision"]
+    assert decision_candidates, "expected at least one decision candidate"
+    for c in decision_candidates:
+        assert c.context == turn
+
+
+def test_extract_trims_context_to_max_chars(monkeypatch):
+    """Long turns are trimmed to CONTEXT_MAX_CHARS so payloads stay bounded."""
+    monkeypatch.setattr("nexus.config.MODE", "production")
+    proposal = {
+        "title": "x", "summary": "x", "reasoning": "x", "confidence": 0.9,
+    }
+    mock_client = MagicMock()
+    mock_client.invoke_model.return_value = _mock_haiku_response(proposal)
+
+    long_turn = "a" * (CONTEXT_MAX_CHARS + 500)
+    with patch("nexus.mechanism1.classifier._bedrock_client",
+               return_value=mock_client):
+        candidates = extract(
+            conversation_turn=long_turn,
+            tenant_id="t-123",
+        )
+
+    assert candidates
+    for c in candidates:
+        assert c.context is not None
+        assert len(c.context) == CONTEXT_MAX_CHARS
 
 
 def test_extract_filters_low_confidence(monkeypatch):
@@ -165,18 +217,46 @@ def test_enqueue_proposal(monkeypatch):
     )
 
     from nexus.mechanism1.proposals import enqueue_proposal
-    candidate = _make_candidate()
+    candidate = _make_candidate(context="originating turn text")
     result = enqueue_proposal(candidate)
 
     assert result == candidate.candidate_id
     mock_cursor.execute.assert_called_once()
     sql = mock_cursor.execute.call_args[0][0]
+    params = mock_cursor.execute.call_args[0][1]
     assert "INSERT INTO classifier_proposals" in sql
     # source_kind is hardcoded at the INSERT site to 'conversation_classifier'
     # (migration 012). Asserts the column is named in the column list AND the
     # literal value appears in the VALUES clause.
     assert "source_kind" in sql
     assert "'conversation_classifier'" in sql
+    # Migration 014 / Bug 4: context column is in the column list and the
+    # candidate's context value is bound.
+    assert "context" in sql
+    assert "originating turn text" in params
+
+
+def test_enqueue_proposal_passes_null_context(monkeypatch):
+    """Candidates with no context bind NULL — covered by the column being nullable."""
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_cursor.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value = mock_cursor
+
+    monkeypatch.setattr(
+        "nexus.mechanism1.proposals._pg_connect",
+        lambda: mock_conn,
+    )
+
+    from nexus.mechanism1.proposals import enqueue_proposal
+    candidate = _make_candidate()  # default context=None
+    enqueue_proposal(candidate)
+
+    params = mock_cursor.execute.call_args[0][1]
+    assert None in params  # null context bound positionally
 
 
 def test_dispose_accept_calls_ontology(monkeypatch):

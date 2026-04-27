@@ -21,6 +21,11 @@ SUPPORTED_TYPES = ("feature", "decision", "hypothesis")
 MIN_CONFIDENCE = 0.6
 HAIKU_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 AWS_REGION = "us-east-1"
+# Trim conversation_turn to this length when capturing as proposal context.
+# Long turns bloat both Postgres and the eventual ontology payload; the
+# bounding signal of what motivated the proposal is preserved well below
+# this cap in practice.
+CONTEXT_MAX_CHARS = 1000
 
 
 @dataclass
@@ -34,6 +39,10 @@ class ProposalCandidate:
     reasoning: str
     confidence: float
     source_turn_id: str | None
+    # The conversation excerpt that produced this proposal. Required by the
+    # ontology service for Decision objects; populated for all object_types
+    # for consistency. See migration 014.
+    context: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,6 +137,7 @@ def extract(
                 reasoning=proposal.get("reasoning", "")[:1000],
                 confidence=round(conf, 2),
                 source_turn_id=source_turn_id,
+                context=conversation_turn[:CONTEXT_MAX_CHARS] if conversation_turn else None,
             ))
         except Exception as e:
             logger.warning("Classifier error for %s: %s", object_type, e)
