@@ -58,15 +58,16 @@ def enqueue_proposal(candidate: ProposalCandidate) -> str:
                     "INSERT INTO classifier_proposals (candidate_id, "
                     "tenant_id, project_id, object_type, title, summary, "
                     "reasoning, confidence, source_turn_id, raw_candidate, "
-                    "status, source_kind, created_at) VALUES "
-                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'pending',"
+                    "context, status, source_kind, created_at) VALUES "
+                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,'pending',"
                     "'conversation_classifier',NOW())",
                     (candidate.candidate_id, candidate.tenant_id,
                      candidate.project_id, candidate.object_type,
                      candidate.title, candidate.summary,
                      candidate.reasoning, candidate.confidence,
                      candidate.source_turn_id,
-                     json.dumps(candidate.to_dict())))
+                     json.dumps(candidate.to_dict()),
+                     candidate.context))
     finally:
         conn.close()
     logger.info("classifier: enqueued %s (%s) for %s",
