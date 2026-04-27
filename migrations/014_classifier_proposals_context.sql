@@ -1,0 +1,31 @@
+-- Migration 014: add context to classifier_proposals
+-- ===========================================================================
+-- context: the conversation turn / surrounding situation that produced the
+-- proposal. Required by the ontology service for Decision objects (Track A
+-- diagnostic 2026-04-27 surfaced 422s on every Accept of a Decision proposal
+-- because the outgoing payload had no `context`).
+--
+-- Captured at propose time by mechanism1 (`nexus/mechanism1/proposals.py`,
+-- pairs with this migration in the same PR). Shipped to the ontology service
+-- by the aria-platform writer in a follow-up PR (commit B). The writer
+-- defensively omits null context from the outgoing payload, so existing
+-- pending proposals (created before this migration) continue to ship through
+-- the writer for non-Decision object_types and stay pending for Decisions
+-- until they expire or are replaced.
+--
+-- Additive only. Nullable. No backfill — backfilling would assert a fact
+-- (the original conversation turn) we can no longer recover for proposals
+-- already in the table.
+--
+-- Populated for ALL object_types, not just Decision. Cheap (one TEXT column),
+-- consistent across object_types, future-proof if Feature or Hypothesis ever
+-- start requiring context.
+--
+-- Migration applied manually via one-off ECS task with psql against the
+-- VPC-internal RDS instance (no automated runner — same pattern as 012).
+--
+-- Refs: /tmp/track_a_findings_20260427_1358.md
+-- ===========================================================================
+
+ALTER TABLE classifier_proposals
+  ADD COLUMN IF NOT EXISTS context TEXT;
