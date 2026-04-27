@@ -34,6 +34,75 @@ Last updated: 2026-04-25 (Sprint 14 Day 1)
 - **V2 Neptune private endpoint:** auto-provisioned via `CreatePrivateGraphEndpoint` API (PR #21)
 - **Note:** legacy zone `Z0336367224PC62D12VOO` is service-owned, not customer-managed
 
+## Postgres migrations (V1 / V2 split)
+
+VaultScaler runs **two** Postgres instances. They use the same migration
+shape (numbered SQL files in `migrations/`, ledger table
+`schema_migrations(filename, applied_at, checksum)`) but live in
+**separate RDS instances** with separate connection strings. Operator
+must pick the right target before applying.
+
+### V1 — `nexus-ontology-postgres`
+
+- **Class:** `db.t4g.micro`, single-AZ `us-east-1a`
+- **Tables:** `classifier_proposals`, ontology object versions, founder
+  Decisions / Features / Hypotheses
+- **Connection secret:** `nexus/ontology/postgres/connection-XlBoLD`,
+  exposes a JSON-encoded `DATABASE_URL` key
+- **Env var convention:** `DATABASE_URL` (single-URL form)
+- **Python connector:** `nexus/ontology/postgres.py:_connect()` and
+  `nexus/mechanism1/proposals.py:_pg_connect()`
+- **Migration runner invocation:**
+  `python -m nexus.operator.db_apply_migration <path> --target=v1`
+- **Migration task def:** `aria-console-migration-apply-v1`
+  (`infra/migration-apply-task-v1.yml`)
+- **Ledger:** `schema_migrations` (created by migration 015,
+  bootstrapped 2026-04-27)
+
+### V2 — `overwatch-postgres`
+
+- **Class:** `db.t4g.medium`, single-AZ `us-east-1b`
+- **Tables:** `approval_tokens`, operator-feature substrate (Phase 0e),
+  Overwatch operational state
+- **Connection secret:** `overwatch-v2/postgres-master-e16PNJ`,
+  exposes `host` / `port` / `username` / `password` / `dbname` keys
+- **Env var convention:** `PG_HOST` / `PG_PORT` / `PG_USER` /
+  `PG_PASSWORD` / `PG_DBNAME` (composed in `nexus/overwatch_v2/db.py`)
+- **Python connector:** `nexus/overwatch_v2/db.py:get_conn()`
+- **Migration runner invocation:**
+  `python -m nexus.operator.db_apply_migration <path>` (target='v2'
+  is the default, preserved for backward compat with the existing
+  verify wrapper)
+- **Migration task def:** `aria-console-migration-apply`
+  (`infra/overwatch-v2/18-migration-apply-task.yml`)
+- **Ledger:** `schema_migrations` (created by Phase 1.5.1 in
+  migration 013's apply transaction)
+
+### Common traps
+
+- **Always specify `--target` for V1.** Default is `v2` for backward
+  compat; silently applying a V1 migration via the default would error
+  with "table not found" against the wrong DB. Worse if both DBs
+  happened to have a table of the same name.
+- **Migration filenames don't enforce target.** `014_classifier_*.sql`
+  is V1, `013_overwatch_*.sql` is V2, but only by content. Read the
+  SQL before applying. Operator owns the routing.
+- **Two ledgers, one shape.** Each DB has its own `schema_migrations`
+  table; applying a migration only marks it in the targeted ledger.
+- **Bootstrap caveat (one-time, V1).** Migration 015 — which created
+  the V1 ledger — could not itself use the runner. It was applied via
+  psql one-off through the running aria-console task def's
+  `DATABASE_URL`. After 015, every V1 migration uses the runner.
+
+### Refs
+
+- `docs/v1_migration_substrate_findings.md` — the substrate-gap
+  analysis that motivated this section (Sprint 15 Day 3, Bug 4)
+- `docs/v1_migration_014_apply_runbook.md` — the actual apply runbook
+  for migration 014 + 015 bootstrap
+- `infra/rds-ontology-postgres.yaml` — V1 RDS CFN
+- `infra/overwatch-v2/02-rds-postgres.yml` — V2 RDS CFN
+
 ## Architecture & Roadmap References
 
 | Document | Date | Status |
