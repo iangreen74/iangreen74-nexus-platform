@@ -16,6 +16,12 @@ Echo Phase 1 adds the first mutation tool (comment_on_pr,
 requires_approval=True) — 20 tools total. The function name
 register_all_read_tools is kept for caller compatibility; rename to
 register_all_tools is a separate cleanup.
+Phase 0e.3 adds read_holograph (Holograph diagnostic over an
+OperatorFeature, wraps Phase 0e.2's report engine) — 21 tools total.
+The tool module lives in nexus/operator_features/echo_tool.py to keep
+the operator_features package self-contained, while registration
+remains here as the single chokepoint that knows what's wired up at
+startup.
 """
 from __future__ import annotations
 
@@ -56,6 +62,13 @@ def register_all_read_tools() -> None:
     # --- Echo Phase 1: first mutation tool (approval-gated) ---
     from nexus.overwatch_v2.tools.write_tools import comment_on_pr
     comment_on_pr.register_tool()
+    # --- Phase 0e.3: Holograph diagnostic over OperatorFeature ---
+    # Tool module lives in nexus/operator_features/echo_tool.py rather
+    # than read_tools/ to keep the operator_features package self-
+    # contained (schema + persistence + engine + Echo wrapper).
+    # Registration stays here so this file remains the single chokepoint.
+    from nexus.operator_features import echo_tool as operator_features_echo_tool
+    operator_features_echo_tool.register_tool()
 
 
 if __name__ == "__main__":
