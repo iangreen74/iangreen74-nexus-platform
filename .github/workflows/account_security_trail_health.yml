@@ -1,0 +1,111 @@
+name: account-security-trail health check
+
+# Daily check that the CloudTrail account-security-trail S3 sink continues
+# to deliver. Replaces the session-only CronCreate job 898bfa33 with
+# genuine infrastructure-as-code durability.
+#
+# Runs on the same self-hosted nexus-runner as deploy.yml — the runner's
+# aria-runner instance profile (AdministratorAccess) covers the
+# cloudtrail:GetTrailStatus + s3:ListBucket calls below, matching the
+# existing repo CI pattern (no OIDC role configured for this repo).
+#
+# This workflow gets DELETED when the dogfood-runner substrate check
+# (Sprint 16+) ships generic CloudTrail trail-health monitoring across
+# all trails. One trail, one workflow, deletable in one commit.
+#
+# Refs:
+# - PR #46 (sink restoration): fix(cloudtrail): restore account-security-trail S3 sink
+# - docs/EXTERNAL_STATE_INVENTORY.md (this trail's debt entry)
+# - PR #44 (substrate-truth doctrine, L48 lessons)
+
+on:
+  schedule:
+    - cron: '7 14 * * *'    # 14:07 UTC daily ≈ 07:07 PT summer / 06:07 PT winter.
+                            # Off-minute deliberate (avoids the cron stampede on :00).
+  workflow_dispatch:        # manual re-run from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: [self-hosted, nexus-runner]
+    timeout-minutes: 5
+    env:
+      AWS_REGION: us-east-1
+      TRAIL: account-security-trail
+      BUCKET: account-security-cloudtrail-dc5f419b
+      MAX_AGE_SECONDS: 21600   # 6 hours
+    steps:
+      - name: Check trail status
+        run: |
+          set -euo pipefail
+          echo "=== Trail status ==="
+          STATUS=$(aws cloudtrail get-trail-status --name "$TRAIL" --output json)
+          echo "$STATUS" | python3 -m json.tool
+
+          IS_LOGGING=$(echo "$STATUS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('IsLogging', False))")
+          LAST_ERROR=$(echo "$STATUS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('LatestDeliveryError') or '')")
+          LAST_DELIVERY=$(echo "$STATUS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('LatestDeliveryTime', ''))")
+
+          FAIL=0
+
+          if [ "$IS_LOGGING" != "True" ]; then
+            echo "::error::Trail $TRAIL is not logging (IsLogging=$IS_LOGGING)"
+            FAIL=1
+          else
+            echo "OK IsLogging: True"
+          fi
+
+          if [ -n "$LAST_ERROR" ]; then
+            echo "::error::Trail $TRAIL has LatestDeliveryError: $LAST_ERROR"
+            FAIL=1
+          else
+            echo "OK LatestDeliveryError: (empty)"
+          fi
+
+          if [ -z "$LAST_DELIVERY" ]; then
+            echo "::error::Trail $TRAIL has no LatestDeliveryTime"
+            FAIL=1
+          else
+            DELIVERY_EPOCH=$(python3 -c "import datetime; print(int(datetime.datetime.fromisoformat('$LAST_DELIVERY'.replace('Z','+00:00')).timestamp()))")
+            NOW_EPOCH=$(date -u +%s)
+            AGE=$((NOW_EPOCH - DELIVERY_EPOCH))
+            if [ "$AGE" -gt "$MAX_AGE_SECONDS" ]; then
+              echo "::error::Trail $TRAIL last delivered ${AGE}s ago (>${MAX_AGE_SECONDS}s)"
+              FAIL=1
+            else
+              echo "OK LatestDeliveryTime: $LAST_DELIVERY (${AGE}s ago)"
+            fi
+          fi
+
+          echo "=== S3 freshness ==="
+          LATEST_OBJ=$(aws s3api list-objects-v2 \
+            --bucket "$BUCKET" \
+            --query 'sort_by(Contents, &LastModified)[-1].{Key: Key, LastModified: LastModified}' \
+            --output json 2>/dev/null || echo '{}')
+          echo "$LATEST_OBJ"
+
+          OBJ_TIME=$(echo "$LATEST_OBJ" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('LastModified','') if d else '')")
+          if [ -z "$OBJ_TIME" ]; then
+            echo "::error::No objects in bucket $BUCKET"
+            FAIL=1
+          else
+            OBJ_EPOCH=$(python3 -c "import datetime; print(int(datetime.datetime.fromisoformat('$OBJ_TIME'.replace('Z','+00:00')).timestamp()))")
+            NOW_EPOCH=$(date -u +%s)
+            OBJ_AGE=$((NOW_EPOCH - OBJ_EPOCH))
+            if [ "$OBJ_AGE" -gt "$MAX_AGE_SECONDS" ]; then
+              echo "::error::Most recent S3 object is ${OBJ_AGE}s old (>${MAX_AGE_SECONDS}s)"
+              FAIL=1
+            else
+              echo "OK Latest S3 object: $OBJ_TIME (${OBJ_AGE}s ago)"
+            fi
+          fi
+
+          echo ""
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::CloudTrail health check FAILED"
+            echo "Surfaced via PR #46 fix; investigate before delivery silently fails again."
+            exit 1
+          fi
+          echo "All four conditions passed."
