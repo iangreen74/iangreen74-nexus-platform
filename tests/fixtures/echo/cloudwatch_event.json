@@ -1,0 +1,7 @@
+{
+    "logStreamName": "console/aria-console/6cf721bbfe204243ad7edae943867298",
+    "timestamp": 1777242843172,
+    "message": "2026-04-26 22:34:03,171 nexus.aws ERROR get_secret(github-token) failed",
+    "ingestionTime": 1777242843981,
+    "eventId": "39633839801490892270920353271087140146245381575630389248"
+}

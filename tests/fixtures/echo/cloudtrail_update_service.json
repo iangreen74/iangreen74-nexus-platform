@@ -1,0 +1,723 @@
+{
+  "eventVersion": "1.11",
+  "userIdentity": {
+    "type": "AssumedRole",
+    "principalId": "AROAWCZC5QN3YVRAHBOEO:i-0090e844314b41b0f",
+    "arn": "arn:aws:sts::418295677815:assumed-role/aria-runner/i-0090e844314b41b0f",
+    "accountId": "418295677815",
+    "accessKeyId": "ASIAREDACTEDFIXTURE",
+    "sessionContext": {
+      "sessionIssuer": {
+        "type": "Role",
+        "principalId": "AROAWCZC5QN3YVRAHBOEO",
+        "arn": "arn:aws:iam::418295677815:role/aria-runner",
+        "accountId": "418295677815",
+        "userName": "aria-runner"
+      },
+      "attributes": {
+        "creationDate": "2026-04-27T01:39:22Z",
+        "mfaAuthenticated": "false"
+      },
+      "ec2RoleDelivery": "2.0"
+    },
+    "inScopeOf": {
+      "issuerType": "AWS::EC2::Instance",
+      "credentialsIssuedTo": "arn:aws:ec2:us-east-1:418295677815:instance/i-0090e844314b41b0f"
+    }
+  },
+  "eventTime": "2026-04-27T02:18:03Z",
+  "eventSource": "ecs.amazonaws.com",
+  "eventName": "UpdateService",
+  "awsRegion": "us-east-1",
+  "sourceIPAddress": "54.161.82.27",
+  "userAgent": "aws-cli/1.44.78 md/Botocore#1.42.88 ua/2.1 os/linux#6.8.0-1051-aws md/arch#x86_64 lang/python#3.10.12 md/pyimpl#CPython m/D,b,0,Z cfg/retry-mode#legacy botocore/1.42.88",
+  "requestParameters": {
+    "cluster": "overwatch-platform",
+    "service": "aria-console",
+    "deploymentConfiguration": {
+      "deploymentCircuitBreaker": {
+        "enable": true,
+        "rollback": true
+      },
+      "maximumPercent": 200,
+      "minimumHealthyPercent": 100
+    },
+    "forceNewDeployment": true,
+    "dryrun": false
+  },
+  "responseElements": {
+    "service": {
+      "serviceArn": "arn:aws:ecs:us-east-1:418295677815:service/overwatch-platform/aria-console",
+      "serviceName": "aria-console",
+      "clusterArn": "arn:aws:ecs:us-east-1:418295677815:cluster/overwatch-platform",
+      "loadBalancers": [
+        {
+          "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939",
+          "containerName": "aria-console",
+          "containerPort": 9001
+        },
+        {
+          "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607",
+          "containerName": "aria-console",
+          "containerPort": 9001
+        }
+      ],
+      "serviceRegistries": [],
+      "status": "ACTIVE",
+      "desiredCount": 1,
+      "runningCount": 1,
+      "pendingCount": 0,
+      "launchType": "FARGATE",
+      "platformVersion": "1.4.0",
+      "platformFamily": "Linux",
+      "taskDefinition": "arn:aws:ecs:us-east-1:418295677815:task-definition/aria-console:64",
+      "deploymentConfiguration": {
+        "deploymentCircuitBreaker": {
+          "enable": true,
+          "rollback": true,
+          "resetOnHealthyTask": false,
+          "thresholdConfiguration": {
+            "type": "PERCENT",
+            "value": 50
+          }
+        },
+        "maximumPercent": 200,
+        "minimumHealthyPercent": 100,
+        "strategy": "ROLLING",
+        "bakeTimeInMinutes": 0
+      },
+      "deployments": [
+        {
+          "id": "ecs-svc/8262522039826280063",
+          "status": "PRIMARY",
+          "taskDefinition": "arn:aws:ecs:us-east-1:418295677815:task-definition/aria-console:64",
+          "desiredCount": 0,
+          "pendingCount": 0,
+          "runningCount": 0,
+          "failedTasks": 0,
+          "totalFailedTasks": 0,
+          "createdAt": "Apr 27, 2026, 2:18:03 AM",
+          "updatedAt": "Apr 27, 2026, 2:18:03 AM",
+          "launchType": "FARGATE",
+          "platformVersion": "1.4.0",
+          "platformFamily": "Linux",
+          "networkConfiguration": {
+            "awsvpcConfiguration": {
+              "subnets": [
+                "subnet-0636e59cf68ff3844",
+                "subnet-0797dba8499525215"
+              ],
+              "securityGroups": [
+                "sg-075797efad9ec368d"
+              ],
+              "assignPublicIp": "DISABLED"
+            }
+          },
+          "rolloutState": "IN_PROGRESS",
+          "rolloutStateReason": "ECS deployment ecs-svc/8262522039826280063 in progress.",
+          "failedLaunchTaskCount": 0,
+          "replacedTaskCount": 0,
+          "scale": {
+            "value": 0.0,
+            "unit": "PERCENT"
+          },
+          "stabilityStatus": "STABILIZING"
+        },
+        {
+          "id": "ecs-svc/5870168411407799569",
+          "status": "ACTIVE",
+          "taskDefinition": "arn:aws:ecs:us-east-1:418295677815:task-definition/aria-console:64",
+          "desiredCount": 1,
+          "pendingCount": 0,
+          "runningCount": 1,
+          "failedTasks": 0,
+          "totalFailedTasks": 0,
+          "createdAt": "Apr 26, 2026, 9:31:11 PM",
+          "updatedAt": "Apr 26, 2026, 9:34:33 PM",
+          "launchType": "FARGATE",
+          "platformVersion": "1.4.0",
+          "platformFamily": "Linux",
+          "networkConfiguration": {
+            "awsvpcConfiguration": {
+              "subnets": [
+                "subnet-0636e59cf68ff3844",
+                "subnet-0797dba8499525215"
+              ],
+              "securityGroups": [
+                "sg-075797efad9ec368d"
+              ],
+              "assignPublicIp": "DISABLED"
+            }
+          },
+          "rolloutState": "COMPLETED",
+          "rolloutStateReason": "ECS deployment ecs-svc/5870168411407799569 completed.",
+          "failedLaunchTaskCount": 0,
+          "replacedTaskCount": 0,
+          "scale": {
+            "value": 100.0,
+            "unit": "PERCENT"
+          },
+          "stabilityStatus": "STEADY_STATE"
+        }
+      ],
+      "roleArn": "arn:aws:iam::418295677815:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+      "version": 0,
+      "events": [
+        {
+          "id": "15d3363e-28ad-4dda-a07e-cd0f94b7ed4c",
+          "createdAt": "Apr 26, 2026, 9:34:33 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "061a53f1-4099-4067-93da-76c3c2d1f47e",
+          "createdAt": "Apr 26, 2026, 9:34:33 PM",
+          "message": "(service aria-console) (deployment ecs-svc/5870168411407799569) deployment completed."
+        },
+        {
+          "id": "10e42d9b-f928-400c-884e-59d48cbd74a0",
+          "createdAt": "Apr 26, 2026, 9:32:52 PM",
+          "message": "(service aria-console, taskSet ecs-svc/5216913576878459486) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "88f91a94-65b7-465e-aee7-a10c9fe22148",
+          "createdAt": "Apr 26, 2026, 9:32:52 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "d17fc033-7aae-4a30-8d5c-1b829f5773a2",
+          "createdAt": "Apr 26, 2026, 9:32:51 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "8acfe1a8-2c2a-4069-a398-9253ef74e06b",
+          "createdAt": "Apr 26, 2026, 9:32:42 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task da13604f7d5245dcbc9548588bdf7a8f)."
+        },
+        {
+          "id": "461a4ad9-7707-4ef9-9b6c-ad4dc845eb41",
+          "createdAt": "Apr 26, 2026, 9:32:01 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "02aebd69-2b71-49d2-862f-f6ee02e08f41",
+          "createdAt": "Apr 26, 2026, 9:31:51 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "f84be4a0-0af3-46dd-914e-cc67aab98780",
+          "createdAt": "Apr 26, 2026, 9:31:31 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 6cf721bbfe204243ad7edae943867298)."
+        },
+        {
+          "id": "cc9e95f6-8d83-4038-a788-2dc1fa8a5b44",
+          "createdAt": "Apr 26, 2026, 9:17:36 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "8070cc75-5384-46a4-b6f5-2c611d101a86",
+          "createdAt": "Apr 26, 2026, 9:17:36 PM",
+          "message": "(service aria-console) (deployment ecs-svc/5216913576878459486) deployment completed."
+        },
+        {
+          "id": "e993e030-1f40-49b3-9e02-43c74ea2af08",
+          "createdAt": "Apr 26, 2026, 9:15:51 PM",
+          "message": "(service aria-console, taskSet ecs-svc/7046853624618771674) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "5eadf99a-91dd-47d7-acdd-64f7585c4c75",
+          "createdAt": "Apr 26, 2026, 9:15:51 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "ebe8605e-4f64-4ac8-a1c8-e05a99a0f02f",
+          "createdAt": "Apr 26, 2026, 9:15:51 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "746fc28a-63be-47bb-9f4d-42753880f44b",
+          "createdAt": "Apr 26, 2026, 9:15:41 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task bb2a0fb9e9324b8e9df82d0d2658920b)."
+        },
+        {
+          "id": "47842595-ea4e-4a61-b911-603c81c28ef2",
+          "createdAt": "Apr 26, 2026, 9:15:00 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "f44fe186-4468-475c-b62e-118eb3f6797f",
+          "createdAt": "Apr 26, 2026, 9:14:59 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "dc096f8d-5213-4622-8d02-bad94d244763",
+          "createdAt": "Apr 26, 2026, 9:14:30 PM",
+          "message": "(service aria-console) has started 1 tasks: (task da13604f7d5245dcbc9548588bdf7a8f)."
+        },
+        {
+          "id": "14a036d9-3bd0-4e6d-a71c-825c1c647159",
+          "createdAt": "Apr 26, 2026, 8:37:10 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "c6b216ff-b623-4487-a9c9-7b935e72f620",
+          "createdAt": "Apr 26, 2026, 8:37:10 PM",
+          "message": "(service aria-console) (deployment ecs-svc/7046853624618771674) deployment completed."
+        },
+        {
+          "id": "4d6a8da0-7a9c-4659-a065-cb994d8df443",
+          "createdAt": "Apr 26, 2026, 8:35:29 PM",
+          "message": "(service aria-console, taskSet ecs-svc/2748409247037433356) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "21493b0d-a294-4c42-87f0-41ab9ab0128e",
+          "createdAt": "Apr 26, 2026, 8:35:29 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "bebe2692-3ceb-4866-a7c9-0caef27bc1d0",
+          "createdAt": "Apr 26, 2026, 8:35:29 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "c3a5567c-76d2-4898-9a0c-f436304d1ce3",
+          "createdAt": "Apr 26, 2026, 8:35:19 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 49c3b399f09e42a7ae146fd9301dd60e)."
+        },
+        {
+          "id": "c7269c04-e0f4-4ee8-903f-b9896a8dda7c",
+          "createdAt": "Apr 26, 2026, 8:34:38 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "106e5c44-92fb-4eb3-9f9f-316bdad28765",
+          "createdAt": "Apr 26, 2026, 8:34:38 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "4e06834f-d5c2-4095-8d14-803ce9827143",
+          "createdAt": "Apr 26, 2026, 8:34:08 PM",
+          "message": "(service aria-console) has started 1 tasks: (task bb2a0fb9e9324b8e9df82d0d2658920b)."
+        },
+        {
+          "id": "adeb776c-73c7-442b-a474-3619dc4a56d0",
+          "createdAt": "Apr 26, 2026, 8:12:22 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "0cb2db9c-6abd-468e-af0f-8c54cada501a",
+          "createdAt": "Apr 26, 2026, 8:12:22 PM",
+          "message": "(service aria-console) (deployment ecs-svc/2748409247037433356) deployment completed."
+        },
+        {
+          "id": "d379cc00-d49b-489d-ade9-32f7e3d05841",
+          "createdAt": "Apr 26, 2026, 8:10:03 PM",
+          "message": "(service aria-console, taskSet ecs-svc/9479559728281565184) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "af0fb754-ff8e-4052-9d28-53431609486a",
+          "createdAt": "Apr 26, 2026, 8:10:03 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "821a50b7-1648-422a-b7ff-f07b8919db89",
+          "createdAt": "Apr 26, 2026, 8:10:03 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "46f14ba9-d7c8-4d0a-aaa8-a97c5942c90a",
+          "createdAt": "Apr 26, 2026, 8:09:52 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 081a0a48a12d4b738f6c56c2f6444bfa)."
+        },
+        {
+          "id": "c136deaf-1c52-4a3d-88cc-bbbe2d6f63b9",
+          "createdAt": "Apr 26, 2026, 8:09:12 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "94d5ac3c-0c0f-436e-aa66-1d5f4d47646a",
+          "createdAt": "Apr 26, 2026, 8:09:12 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "4940415c-43af-48af-ab01-3363d95f0160",
+          "createdAt": "Apr 26, 2026, 8:08:40 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 49c3b399f09e42a7ae146fd9301dd60e)."
+        },
+        {
+          "id": "d5e6d5f0-7be3-40d3-b202-c85aa7072a3c",
+          "createdAt": "Apr 26, 2026, 7:28:39 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "697fb660-cfe1-4d26-b75c-c936846e4fe1",
+          "createdAt": "Apr 26, 2026, 7:28:39 PM",
+          "message": "(service aria-console) (deployment ecs-svc/9479559728281565184) deployment completed."
+        },
+        {
+          "id": "34564190-5199-407b-8436-2bb45d2107e4",
+          "createdAt": "Apr 26, 2026, 7:26:56 PM",
+          "message": "(service aria-console, taskSet ecs-svc/0646776432428297752) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "64b4e03a-388f-45e5-bf35-f029873be080",
+          "createdAt": "Apr 26, 2026, 7:26:56 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "7e25c9ff-fcd6-4121-81ef-e84bbc8e4762",
+          "createdAt": "Apr 26, 2026, 7:26:56 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "afe707bf-d27a-45ad-8cc6-84e9b55467aa",
+          "createdAt": "Apr 26, 2026, 7:26:45 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 6df48f5d9b574a0f974d1bc136f3ce24)."
+        },
+        {
+          "id": "ab11208c-f068-4db8-92c0-71279f68eea0",
+          "createdAt": "Apr 26, 2026, 7:26:04 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "5a6a418a-519c-41ff-83a3-e6520d62574a",
+          "createdAt": "Apr 26, 2026, 7:26:04 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "12747554-450c-40b0-9262-b3f219374688",
+          "createdAt": "Apr 26, 2026, 7:25:35 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 081a0a48a12d4b738f6c56c2f6444bfa)."
+        },
+        {
+          "id": "e85df3e6-2dcf-4ac4-95ec-2a5f56daf076",
+          "createdAt": "Apr 26, 2026, 6:45:51 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "86fab1fa-cccc-449b-8089-e0a613e40722",
+          "createdAt": "Apr 26, 2026, 6:45:51 PM",
+          "message": "(service aria-console) (deployment ecs-svc/0646776432428297752) deployment completed."
+        },
+        {
+          "id": "32276b8c-7f94-49c3-acb5-84f5ad2ad662",
+          "createdAt": "Apr 26, 2026, 6:44:08 PM",
+          "message": "(service aria-console, taskSet ecs-svc/2971870757665339960) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "57dbabd4-6099-4cf8-a84f-7bb234aa4d72",
+          "createdAt": "Apr 26, 2026, 6:44:08 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "4d36cb57-778b-4bee-b7ab-12bd4b9c513b",
+          "createdAt": "Apr 26, 2026, 6:44:08 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "a645e69f-372b-47ac-8d0c-b7134645c509",
+          "createdAt": "Apr 26, 2026, 6:43:59 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task b8c79581bd364ce99757ed34a56a1fa3)."
+        },
+        {
+          "id": "a1abd22e-ab08-4527-ab61-98d5862d1004",
+          "createdAt": "Apr 26, 2026, 6:43:17 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "59875981-bb0f-4eb9-9684-e3250bf8c4a0",
+          "createdAt": "Apr 26, 2026, 6:43:17 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "4c11eb68-3609-4e8d-8f35-6921c381105f",
+          "createdAt": "Apr 26, 2026, 6:42:48 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 6df48f5d9b574a0f974d1bc136f3ce24)."
+        },
+        {
+          "id": "78986547-0dc5-4f8b-be1d-3a893c433aed",
+          "createdAt": "Apr 26, 2026, 5:07:16 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "a69a477c-3f33-431a-b58e-713738c74cae",
+          "createdAt": "Apr 26, 2026, 5:07:16 PM",
+          "message": "(service aria-console) (deployment ecs-svc/2971870757665339960) deployment completed."
+        },
+        {
+          "id": "44067a96-158a-4710-aef1-138569c7355b",
+          "createdAt": "Apr 26, 2026, 5:05:31 PM",
+          "message": "(service aria-console, taskSet ecs-svc/5636471863019948665) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "e302489e-6086-431f-8af1-db04188b3a48",
+          "createdAt": "Apr 26, 2026, 5:05:31 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "a8f7a02b-0dd3-4ae8-9c7d-2be1ca5ffc94",
+          "createdAt": "Apr 26, 2026, 5:05:31 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "2df930f8-0170-40e8-a9b5-022eb90577fb",
+          "createdAt": "Apr 26, 2026, 5:05:21 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 4aa678fed93244e88768258d14bc2e3a)."
+        },
+        {
+          "id": "5665ec7c-50f7-466d-9a03-931e94cccc7a",
+          "createdAt": "Apr 26, 2026, 5:04:41 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "74616f4a-1b4d-4764-9e78-44f6dd010c75",
+          "createdAt": "Apr 26, 2026, 5:04:40 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "1611996a-ec9c-45ca-ae3d-1d61bb1ddcd0",
+          "createdAt": "Apr 26, 2026, 5:04:09 PM",
+          "message": "(service aria-console) has started 1 tasks: (task b8c79581bd364ce99757ed34a56a1fa3)."
+        },
+        {
+          "id": "f797ea31-70c1-4ae9-801b-99be15c83cfb",
+          "createdAt": "Apr 26, 2026, 2:59:21 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "3aa95966-664d-4ee9-8788-567d8eefebce",
+          "createdAt": "Apr 26, 2026, 2:59:21 PM",
+          "message": "(service aria-console) (deployment ecs-svc/5636471863019948665) deployment completed."
+        },
+        {
+          "id": "b199eda2-2dd3-4d25-9698-a1827661017e",
+          "createdAt": "Apr 26, 2026, 2:57:40 PM",
+          "message": "(service aria-console, taskSet ecs-svc/7882515144833588038) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "2ee7bf97-32a0-46b8-beb8-0ae0666be8dd",
+          "createdAt": "Apr 26, 2026, 2:57:40 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "5e931e21-af36-4301-8644-d78056962d31",
+          "createdAt": "Apr 26, 2026, 2:57:40 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "0cdb8b3d-9920-4c80-af6c-8e312546bc37",
+          "createdAt": "Apr 26, 2026, 2:57:30 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task c619b0261f60484e93d4d5547e1f4c7a)."
+        },
+        {
+          "id": "37f5024e-fdff-4a4a-bcd0-c162f3a09761",
+          "createdAt": "Apr 26, 2026, 2:56:49 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "0004bfed-f5f5-4d09-a1c3-8b02185509f2",
+          "createdAt": "Apr 26, 2026, 2:56:49 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "32a16ea2-e584-4a11-a9cc-6a72480451b2",
+          "createdAt": "Apr 26, 2026, 2:56:20 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 4aa678fed93244e88768258d14bc2e3a)."
+        },
+        {
+          "id": "1a297113-0745-42e8-8058-486d2df9ab06",
+          "createdAt": "Apr 26, 2026, 2:50:30 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "ef11fa76-88ab-40a9-8835-8c8cd5efe1b9",
+          "createdAt": "Apr 26, 2026, 2:50:30 PM",
+          "message": "(service aria-console) (deployment ecs-svc/7882515144833588038) deployment completed."
+        },
+        {
+          "id": "924da3f3-f77c-4236-8340-9b0f3216112b",
+          "createdAt": "Apr 26, 2026, 2:48:44 PM",
+          "message": "(service aria-console, taskSet ecs-svc/0144274000410310095) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "ac0f9a19-f5c8-4f0d-bea4-7732ce1b8402",
+          "createdAt": "Apr 26, 2026, 2:48:44 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "0523a7d7-5a52-437e-9c60-fd847d6eee21",
+          "createdAt": "Apr 26, 2026, 2:48:44 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "1575666f-052f-4b55-b9c3-6d5382c283c1",
+          "createdAt": "Apr 26, 2026, 2:48:34 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 61333d9020f843c7b7f674bfc37df26b)."
+        },
+        {
+          "id": "d0c328c2-c743-468f-b689-21814341634b",
+          "createdAt": "Apr 26, 2026, 2:47:54 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "fa8c8a9e-e46e-4f12-9b8b-8c7c71082762",
+          "createdAt": "Apr 26, 2026, 2:47:54 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "85e09fa3-2db0-4e7f-8cd4-7622654fc25f",
+          "createdAt": "Apr 26, 2026, 2:47:23 PM",
+          "message": "(service aria-console) has started 1 tasks: (task c619b0261f60484e93d4d5547e1f4c7a)."
+        },
+        {
+          "id": "da711afe-ac5f-461b-8ce5-f125e7afe024",
+          "createdAt": "Apr 26, 2026, 2:32:30 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "d6408eb5-fa88-4be1-b004-b524a65d55ef",
+          "createdAt": "Apr 26, 2026, 2:32:30 PM",
+          "message": "(service aria-console) (deployment ecs-svc/0144274000410310095) deployment completed."
+        },
+        {
+          "id": "90fa9a38-cd2f-4282-8b17-b73f293bea49",
+          "createdAt": "Apr 26, 2026, 2:30:12 PM",
+          "message": "(service aria-console, taskSet ecs-svc/3048811436748047062) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "a6fc4669-860e-49c8-b19a-06ecd9b9969e",
+          "createdAt": "Apr 26, 2026, 2:30:12 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "d00eb5f3-06b9-49b2-aefb-0d8f6fe7c0e4",
+          "createdAt": "Apr 26, 2026, 2:30:12 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "74066b21-ac3a-4fdf-8d74-408e0e6f5f32",
+          "createdAt": "Apr 26, 2026, 2:30:00 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 570cf24386b54e92ad431bf9806a047c)."
+        },
+        {
+          "id": "dbaed45f-27df-452a-9251-4488b2e6485b",
+          "createdAt": "Apr 26, 2026, 2:29:20 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "54f8ce57-5e99-4d54-bf11-8b00f251c8bc",
+          "createdAt": "Apr 26, 2026, 2:29:20 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "9523cc29-62a0-42c6-a36e-d426a71928c6",
+          "createdAt": "Apr 26, 2026, 2:28:49 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 61333d9020f843c7b7f674bfc37df26b)."
+        },
+        {
+          "id": "63fef065-9c20-48a6-a117-808856a3ee7a",
+          "createdAt": "Apr 26, 2026, 2:14:13 PM",
+          "message": "(service aria-console) has reached a steady state."
+        },
+        {
+          "id": "e51669c9-06ca-4d8d-b070-9f0356e06b02",
+          "createdAt": "Apr 26, 2026, 2:14:13 PM",
+          "message": "(service aria-console) (deployment ecs-svc/3048811436748047062) deployment completed."
+        },
+        {
+          "id": "d1900468-bddf-40d6-b79a-9fc11856bc50",
+          "createdAt": "Apr 26, 2026, 2:12:29 PM",
+          "message": "(service aria-console, taskSet ecs-svc/2243192047003159861) has begun draining connections on 2 tasks."
+        },
+        {
+          "id": "48cc76df-14d2-42b1-86b8-d98e0bb39dd4",
+          "createdAt": "Apr 26, 2026, 2:12:29 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "2304b08c-a2c0-4d54-9d8e-6665ae8a27cd",
+          "createdAt": "Apr 26, 2026, 2:12:29 PM",
+          "message": "(service aria-console) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "9bdb8445-9143-462f-b6ad-59a5551180f3",
+          "createdAt": "Apr 26, 2026, 2:12:19 PM",
+          "message": "(service aria-console) has stopped 1 running tasks: (task 538d4e83f1f24e9297118b2b36b1b181)."
+        },
+        {
+          "id": "66a102c8-de14-40e6-a40b-0099dba60263",
+          "createdAt": "Apr 26, 2026, 2:11:37 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/aria-console-tg/88c2f39520c8f939)"
+        },
+        {
+          "id": "c835fa96-e2ca-4d47-af15-abeea32084b1",
+          "createdAt": "Apr 26, 2026, 2:11:37 PM",
+          "message": "(service aria-console) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:418295677815:targetgroup/overwatch-v2-tg/e4be302101666607)"
+        },
+        {
+          "id": "cce70fc8-b6fc-43e3-ab79-c80e24fef678",
+          "createdAt": "Apr 26, 2026, 2:11:08 PM",
+          "message": "(service aria-console) has started 1 tasks: (task 570cf24386b54e92ad431bf9806a047c)."
+        },
+        {
+          "id": "f2f85af2-c811-464c-ba95-d9c6c6c1f0eb",
+          "createdAt": "Apr 26, 2026, 1:43:56 PM",
+          "message": "(service aria-console) has reached a steady state."
+        }
+      ],
+      "createdAt": "Apr 13, 2026, 7:44:52 PM",
+      "currentServiceRevisions": [
+        {
+          "arn": "arn:aws:ecs:us-east-1:418295677815:service-revision/overwatch-platform/aria-console/8262522039826280063",
+          "requestedTaskCount": 0,
+          "runningTaskCount": 0,
+          "pendingTaskCount": 0
+        },
+        {
+          "arn": "arn:aws:ecs:us-east-1:418295677815:service-revision/overwatch-platform/aria-console/5870168411407799569",
+          "requestedTaskCount": 1,
+          "runningTaskCount": 1,
+          "pendingTaskCount": 0
+        }
+      ],
+      "placementConstraints": [],
+      "placementStrategy": [],
+      "networkConfiguration": {
+        "awsvpcConfiguration": {
+          "subnets": [
+            "subnet-0636e59cf68ff3844",
+            "subnet-0797dba8499525215"
+          ],
+          "securityGroups": [
+            "sg-075797efad9ec368d"
+          ],
+          "assignPublicIp": "DISABLED"
+        }
+      },
+      "healthCheckGracePeriodSeconds": 0,
+      "schedulingStrategy": "REPLICA",
+      "deploymentController": {
+        "type": "ECS"
+      },
+      "createdBy": "arn:aws:iam::418295677815:user/ian-myceliux",
+      "enableECSManagedTags": false,
+      "propagateTags": "NONE",
+      "enableExecuteCommand": true,
+      "availabilityZoneRebalancing": "ENABLED",
+      "runStatus": "SteadyState",
+      "extendDeploymentTimePeriod": 0,
+      "resourceManagementType": "CUSTOMER"
+    }
+  },
+  "requestID": "1686d279-ea1e-4852-b0b2-522a4d9f5ad9",
+  "eventID": "49e351ce-a429-4159-886d-0a2a0a78dccc",
+  "readOnly": false,
+  "eventType": "AwsApiCall",
+  "managementEvent": true,
+  "recipientAccountId": "418295677815",
+  "eventCategory": "Management",
+  "tlsDetails": {
+    "tlsVersion": "TLSv1.3",
+    "cipherSuite": "TLS_AES_128_GCM_SHA256",
+    "clientProvidedHostHeader": "ecs.us-east-1.amazonaws.com"
+  }
+}
