@@ -6,10 +6,15 @@ hand it to ``signal.status_for(value)`` (the 0e.1 threshold mapper),
 and wrap the outcome in a ``SignalResult``.
 
 Implemented kinds: ``CLOUDWATCH_METRIC``, ``CLOUDWATCH_LOG_COUNT``,
-``POSTGRES_QUERY``. Stubs (return None → ``UNKNOWN`` via
-``status_for``): ``NEPTUNE_COUNT``, ``NEPTUNE_AGGREGATE``,
-``HTTP_HEALTH``. Stubs are pluggable — fill in by adding to
-``_VALUE_HANDLERS``.
+``POSTGRES_QUERY``, ``NEPTUNE_COUNT``, ``NEPTUNE_AGGREGATE``. Stub
+(return None → ``UNKNOWN`` via ``status_for``): ``HTTP_HEALTH``. Stubs
+are pluggable — fill in by adding to ``_VALUE_HANDLERS``.
+
+The two Neptune handlers share a single shape (extract first scalar
+from first row); the enum split between ``NEPTUNE_COUNT`` and
+``NEPTUNE_AGGREGATE`` is operator-facing semantics — both dispatch to
+``_eval_neptune_scalar``. Mirrors the canonical
+``evidence_executor._exec_neptune_cypher`` pattern.
 
 Per-signal exceptions are caught and converted to ``UNKNOWN`` with a
 descriptive ``detail``; the loop continues for the rest of the
@@ -148,15 +153,44 @@ def _eval_postgres_query(spec: dict[str, Any]) -> float | None:
     return float(row[0])
 
 
+def _eval_neptune_scalar(spec: dict[str, Any]) -> float | None:
+    """Spec: cypher (Cypher → single scalar), (parameters).
+
+    Used by both NEPTUNE_COUNT and NEPTUNE_AGGREGATE — both expect the
+    first column of the first row to be a numeric scalar. Returns None
+    when overwatch_graph.query yields no rows (typically a Neptune
+    error or local mode — query is no-raise per its contract), when
+    the row is shape-malformed, or when the scalar is None / non-
+    numeric. status_for(None) maps to UNKNOWN.
+    """
+    from nexus import overwatch_graph
+    cypher = spec["cypher"]
+    parameters = spec.get("parameters") or {}
+    rows = overwatch_graph.query(cypher, parameters)
+    if not rows:
+        return None
+    first = rows[0]
+    if not isinstance(first, dict) or not first:
+        return None
+    value = next(iter(first.values()))
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 _VALUE_HANDLERS: dict[
     SignalQueryKind, Callable[[dict[str, Any]], float | None]
 ] = {
     SignalQueryKind.CLOUDWATCH_METRIC: _eval_cloudwatch_metric,
     SignalQueryKind.CLOUDWATCH_LOG_COUNT: _eval_cloudwatch_log_count,
     SignalQueryKind.POSTGRES_QUERY: _eval_postgres_query,
-    # Stubs — leaving NEPTUNE_COUNT, NEPTUNE_AGGREGATE, HTTP_HEALTH out
-    # of this dict means they fall through to None → UNKNOWN. Add them
-    # here when their query semantics are designed.
+    SignalQueryKind.NEPTUNE_COUNT: _eval_neptune_scalar,
+    SignalQueryKind.NEPTUNE_AGGREGATE: _eval_neptune_scalar,
+    # HTTP_HEALTH still stubbed — falls through to None → UNKNOWN. Add
+    # an entry here when its query semantics are designed.
 }
 
 

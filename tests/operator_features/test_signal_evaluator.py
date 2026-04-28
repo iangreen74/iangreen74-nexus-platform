@@ -250,6 +250,104 @@ def test_postgres_query_v1_missing_database_url(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# NEPTUNE_COUNT / NEPTUNE_AGGREGATE handlers (PR-H1)
+# ---------------------------------------------------------------------------
+
+def test_neptune_scalar_happy_path_count(monkeypatch):
+    """First column of first row is the scalar; coerced to float."""
+    fake_query = MagicMock(return_value=[{"n": 5}])
+    monkeypatch.setattr("nexus.overwatch_graph.query", fake_query)
+    spec = {"cypher": "MATCH (n:Foo) RETURN count(n) AS n"}
+    result = signal_evaluator._eval_neptune_scalar(spec)
+    assert result == 5.0
+    fake_query.assert_called_once_with(
+        "MATCH (n:Foo) RETURN count(n) AS n", {},
+    )
+
+
+def test_neptune_scalar_happy_path_aggregate(monkeypatch):
+    """Aggregate handler is shape-identical: extracts first scalar."""
+    fake_query = MagicMock(return_value=[{"pct": 87.5}])
+    monkeypatch.setattr("nexus.overwatch_graph.query", fake_query)
+    result = signal_evaluator._eval_neptune_scalar({"cypher": "..."})
+    assert result == 87.5
+
+
+def test_neptune_scalar_passes_parameters(monkeypatch):
+    """spec.parameters thread through to overwatch_graph.query."""
+    fake_query = MagicMock(return_value=[{"c": 1}])
+    monkeypatch.setattr("nexus.overwatch_graph.query", fake_query)
+    spec = {"cypher": "MATCH (n) WHERE n.id = $id RETURN count(n) AS c",
+            "parameters": {"id": "abc"}}
+    signal_evaluator._eval_neptune_scalar(spec)
+    fake_query.assert_called_once_with(spec["cypher"], {"id": "abc"})
+
+
+def test_neptune_scalar_empty_rows_is_unknown(monkeypatch):
+    """overwatch_graph.query returns [] on errors / local mode → UNKNOWN."""
+    monkeypatch.setattr(
+        "nexus.overwatch_graph.query", MagicMock(return_value=[]),
+    )
+    assert signal_evaluator._eval_neptune_scalar({"cypher": "..."}) is None
+
+
+def test_neptune_scalar_malformed_row_is_unknown(monkeypatch):
+    """Empty dict or non-dict row → None → UNKNOWN."""
+    monkeypatch.setattr(
+        "nexus.overwatch_graph.query", MagicMock(return_value=[{}]),
+    )
+    assert signal_evaluator._eval_neptune_scalar({"cypher": "..."}) is None
+
+
+def test_neptune_scalar_null_value_is_unknown(monkeypatch):
+    """Scalar value None (e.g., NULL aggregate over empty match) → UNKNOWN."""
+    monkeypatch.setattr(
+        "nexus.overwatch_graph.query", MagicMock(return_value=[{"n": None}]),
+    )
+    assert signal_evaluator._eval_neptune_scalar({"cypher": "..."}) is None
+
+
+def test_neptune_scalar_non_numeric_is_unknown(monkeypatch):
+    """Non-numeric scalar (string, dict, etc.) → UNKNOWN — float() raises."""
+    monkeypatch.setattr(
+        "nexus.overwatch_graph.query", MagicMock(return_value=[{"n": "abc"}]),
+    )
+    assert signal_evaluator._eval_neptune_scalar({"cypher": "..."}) is None
+
+
+def test_evaluate_health_signal_with_neptune_count_threshold(monkeypatch):
+    """End-to-end: NEPTUNE_COUNT signal evaluated → SignalResult with
+    status. Wires the new handler through dispatch + status_for. Pre-PR-H1
+    this would have been UNKNOWN (handler missing from _VALUE_HANDLERS)."""
+    monkeypatch.setattr(
+        "nexus.overwatch_graph.query", MagicMock(return_value=[{"n": 7}]),
+    )
+    sig = _make_signal(
+        name="neptune_signal",
+        query_kind=SignalQueryKind.NEPTUNE_COUNT,
+        query_spec={"cypher": "MATCH (n) RETURN count(n) AS n"},
+        green=10.0, amber=5.0, comparison="gte", unit="count",
+    )
+    feature = _make_feature([sig])
+    results = signal_evaluator.evaluate_health_signals(feature)
+    assert len(results) == 1
+    assert results[0].name == "neptune_signal"
+    # 7 is gte 5 (amber) but lt 10 (green) → AMBER, not UNKNOWN
+    assert results[0].status == SignalStatus.AMBER
+    assert results[0].observed_value == 7.0
+
+
+def test_neptune_count_and_aggregate_share_handler():
+    """Both kinds dispatch to the same _eval_neptune_scalar — locks the
+    design choice that aggregate is shape-identical to count."""
+    handlers = signal_evaluator._VALUE_HANDLERS
+    assert SignalQueryKind.NEPTUNE_COUNT in handlers
+    assert SignalQueryKind.NEPTUNE_AGGREGATE in handlers
+    assert (handlers[SignalQueryKind.NEPTUNE_COUNT]
+            is handlers[SignalQueryKind.NEPTUNE_AGGREGATE])
+
+
+# ---------------------------------------------------------------------------
 # Threshold formatting
 # ---------------------------------------------------------------------------
 
