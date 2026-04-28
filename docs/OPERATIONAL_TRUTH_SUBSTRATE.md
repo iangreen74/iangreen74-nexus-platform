@@ -266,3 +266,49 @@ Three lessons consolidated by this spec:
 - **L37** *(prior, recorded in V1→V2 transition):* V2 must preserve V1 functionality before adding V2-only features. This spec operationalizes that as Phase 3 (V1 Diagnose parity) being a substrate dependency, not an afterthought.
 - **L38** *(prior, from `OVERWATCH_V2_REPORTS_ARCHITECTURE.md`):* Reports are substrate; conversational AI is layer. This spec extends: reports themselves are a layer on top of a deeper substrate (Layer 1+2+3).
 - **L39** *(new):* **Operational truth is an architectural primitive, not a feature.** Every Echo answer must cite evidence. The substrate exists so this is structurally enforceable rather than an aspiration. The April 25 incident is the worked example that motivates the lesson; the lesson exists to prevent its recurrence.
+
+---
+
+## Appendix — Phase 0e instances
+
+### OperatorFeature: Ontology Capture Loop
+
+The first canonical OperatorFeature instance, encoding the ontology
+capture loop's health surface. Six Sprint 15 Day 3-4 substrate-truth
+catches ship as either HealthSignals or EvidenceQueries:
+
+- HealthSignal `capture_loop_accepted_24h` — Bug 4 closure proxy: count
+  of accepted Decision/Hypothesis rows in 24h with all type-required
+  fields populated. RED at 0.
+- HealthSignal `source_turn_id_linkage_pct_24h` — Loop 2/3 substrate
+  quality. Today's smoke surfaced 100% NULL.
+- HealthSignal `pending_stale_rate_pct_24h` — UI workflow stall +
+  CrossServiceWriteAtomicity orphan visibility.
+- HealthSignal `extraction_quality_pct_24h` — silent classifier
+  degradation (Bedrock regression, prompt overflow, Lambda staleness).
+- EvidenceQuery `Postgres proposal counts by type and status (24h)` —
+  drift surface (Postgres side).
+- EvidenceQuery `Neptune ontology node counts (cumulative, by type)` —
+  drift surface (Neptune side); compare with Postgres for IAM-regression
+  detection of the same shape as 2026-04-27.
+- EvidenceQuery `Recent classifier proposals (4h, all tenants)` —
+  near-realtime workflow visibility.
+- EvidenceQuery `Neptune Decisions and Hypotheses with required fields
+  (recent)` — orphan / atomicity-debt visibility.
+
+Two concerns defer pending new evidence kinds: schema round-trip
+integrity (file/git read) and Lambda staleness vs. nexus/mechanism1/
+(AWS-API + git correlation). Both are follow-ups to this PR; the
+deferred enum values are documented in the instance's module
+docstring.
+
+The falsifiability statement requires at least one fully-populated
+Decision or Hypothesis per 24h with all required fields populated by
+the classifier. Sweep automation (scheduled execution writing
+FeatureReports) deferred to a follow-up so signal definitions can be
+refined against real production data before automating.
+
+Consumed today via `read_holograph(feature_id="ontology_capture_loop")`
+from any Echo-using surface; before this OperatorFeature, the same
+diagnostic state surfaced over hours of manual investigation across
+classifier_proposals SQL, Neptune Cypher, and CloudWatch logs.
