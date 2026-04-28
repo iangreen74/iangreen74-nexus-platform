@@ -699,7 +699,7 @@ class TestRegistration:
             mod = sys.modules[mod_name]
             assert "registry" not in dir(mod)
 
-    def test_register_all_twenty_tools(self):
+    def test_register_all_twentyone_tools(self):
         # Track Q added list_aws_resources alongside the original 6.
         # Phase 0a (Track C) added the four codebase-indexing tools.
         # Phase 1 added the four cross-tenant read tools (count: 15).
@@ -707,11 +707,14 @@ class TestRegistration:
         # query_correlated_events, read_cloudwatch_metrics (count: 19).
         # Echo Phase 1 added comment_on_pr (the first mutation tool;
         # requires_approval=True) — count 20.
+        # Phase 0e.3 added read_holograph (Holograph diagnostic over an
+        # OperatorFeature; module lives in nexus/operator_features/) —
+        # count 21.
         fake = _fake_registry_module()
         with patch.dict(sys.modules, {"nexus.overwatch_v2.tools.registry": fake}):
             from nexus.overwatch_v2.tools.read_tools._registration import register_all_read_tools
             register_all_read_tools()
-        assert fake.register.call_count == 20
+        assert fake.register.call_count == 21
         names = {call.args[0].name for call in fake.register.call_args_list}
         assert names == {
             "read_aws_resource", "read_cloudwatch_logs", "read_github",
@@ -724,6 +727,7 @@ class TestRegistration:
             "read_cloudtrail", "read_alb_logs", "query_correlated_events",
             "read_cloudwatch_metrics",
             "comment_on_pr",
+            "read_holograph",
         }
 
     def test_only_comment_on_pr_is_a_mutation_tool(self):
