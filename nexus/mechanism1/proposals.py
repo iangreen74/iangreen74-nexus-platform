@@ -1,26 +1,14 @@
-"""Mechanism 1 proposal persistence + disposition.
+"""Mechanism 1 proposal persistence.
 
-enqueue_proposal / list_pending / dispose (accept|edit|reject).
-Mirrors nexus/askcustomer/service.py Postgres pattern.
+enqueue_proposal / list_pending / _fetch_candidate. Mirrors
+nexus/askcustomer/service.py Postgres pattern. Dispositions
+(accept/edit/reject) live in ``nexus.mechanism1.disposition`` — split
+from this module in PR-B (Bug 4 rigorous fix) to keep both files under
+the 200-line CI invariant after Decision/Hypothesis columns landed.
 
-source_kind vs proposed_via — two adjacent attribution layers
--------------------------------------------------------------
-``source_kind`` (column on ``classifier_proposals``, migration 012)
-identifies the *kind of producer* that created a proposal. Reserved
-values are listed in the migration header. Mechanism 1's writer below
-hardcodes ``'conversation_classifier'`` — by construction, this writer
-only runs in service of mechanism 1, so the value is fixed at the
-INSERT site.
-
-``proposed_via`` (passed to ``write_action_event`` from ``dispose``,
-below) is the *implementation tag* — free-form, versioned, e.g.
-``'classifier_m1'`` or ``'classifier_m1_edited'``. It identifies the
-specific code path that handled the disposition, distinct from which
-producer originally created the proposal.
-
-Both are useful: ``source_kind`` slices the eval corpus by mechanism;
-``proposed_via`` slices it by code-path version. They are adjacent,
-not redundant.
+``source_kind`` is hardcoded to ``'conversation_classifier'`` at the
+INSERT site below — this writer only runs in service of mechanism 1,
+so the value is fixed (migration 012 reserves the enum values).
 """
 from __future__ import annotations
 
@@ -58,16 +46,21 @@ def enqueue_proposal(candidate: ProposalCandidate) -> str:
                     "INSERT INTO classifier_proposals (candidate_id, "
                     "tenant_id, project_id, object_type, title, summary, "
                     "reasoning, confidence, source_turn_id, raw_candidate, "
-                    "context, status, source_kind, created_at) VALUES "
-                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,'pending',"
-                    "'conversation_classifier',NOW())",
+                    "context, choice_made, decided_at, decided_by, "
+                    "alternatives_considered, statement, why_believed, "
+                    "how_will_be_tested, status, source_kind, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,"
+                    "%s,%s,%s,%s,%s,'pending','conversation_classifier',NOW())",
                     (candidate.candidate_id, candidate.tenant_id,
                      candidate.project_id, candidate.object_type,
                      candidate.title, candidate.summary,
                      candidate.reasoning, candidate.confidence,
                      candidate.source_turn_id,
                      json.dumps(candidate.to_dict()),
-                     candidate.context))
+                     candidate.context, candidate.choice_made,
+                     candidate.decided_at, candidate.decided_by,
+                     candidate.alternatives_considered, candidate.statement,
+                     candidate.why_believed, candidate.how_will_be_tested))
     finally:
         conn.close()
     logger.info("classifier: enqueued %s (%s) for %s",
@@ -137,98 +130,3 @@ def _fetch_candidate(candidate_id: str) -> dict[str, Any]:
         conn.close()
 
 
-def _mark_disposed(candidate_id, disposition, dispositioned_by,
-                   edits=None, reason=None):
-    conn = _pg_connect()
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE classifier_proposals SET status=%s, "
-                    "dispositioned_by=%s, dispositioned_at=NOW(), "
-                    "edits=%s::jsonb, reject_reason=%s "
-                    "WHERE candidate_id=%s",
-                    (disposition, dispositioned_by,
-                     json.dumps(edits) if edits else None,
-                     reason, candidate_id))
-    finally:
-        conn.close()
-
-
-def dispose(
-    candidate_id: str,
-    disposition: str,
-    *,
-    edits: dict[str, Any] | None = None,
-    reason: str | None = None,
-    dispositioned_by: str,
-) -> dict[str, Any]:
-    """Accept/edit/reject a proposal. Writes ontology + ActionEvent."""
-    if disposition not in ("accepted", "edited", "rejected"):
-        raise ValueError(f"Invalid disposition: {disposition}")
-
-    candidate = _fetch_candidate(candidate_id)
-    ontology_id = None
-    version_id = None
-
-    if disposition in ("accepted", "edited"):
-        from nexus.ontology.service import propose_object
-        props = {
-            "title": candidate["title"],
-            "summary": candidate["summary"],
-        }
-        if disposition == "edited" and edits:
-            props.update(edits)
-        proposed_via = (
-            "classifier_m1" if disposition == "accepted"
-            else "classifier_m1_edited"
-        )
-        result = propose_object(
-            object_type=candidate["object_type"],
-            tenant_id=candidate["tenant_id"],
-            properties=props,
-            actor=dispositioned_by,
-            project_id=candidate["project_id"],
-        )
-        ontology_id = result["object_id"]
-        version_id = result["version_id"]
-
-    _mark_disposed(candidate_id, disposition, dispositioned_by,
-                   edits=edits, reason=reason)
-
-    try:
-        from nexus.ontology.eval_corpus import write_action_event
-        write_action_event(
-            tenant_id=candidate["tenant_id"],
-            project_id=candidate["project_id"],
-            ontology_id=ontology_id or candidate_id,
-            version_id=str(version_id) if version_id else candidate_id,
-            object_type="classifier_proposal",
-            mutation_kind=disposition,
-            caller=dispositioned_by,
-            proposed_via="classifier_m1",
-            old_state=candidate["raw_candidate"],
-            new_state=(
-                edits if disposition == "edited"
-                else None if disposition == "rejected"
-                else {"accepted": True}
-            ),
-            metadata={
-                "confidence": candidate["confidence"],
-                "source_turn_id": candidate["source_turn_id"],
-                "reject_reason": reason if disposition == "rejected" else None,
-                "original_object_type": candidate["object_type"],
-            },
-        )
-    except Exception as e:
-        logger.warning("eval_corpus write failed for %s: %s",
-                       candidate_id[:8], e)
-
-    logger.info("classifier: %s %s by %s",
-                disposition, candidate_id[:8], dispositioned_by)
-    return {
-        "candidate_id": candidate_id,
-        "disposition": disposition,
-        "ontology_id": ontology_id,
-        "version_id": version_id,
-    }
