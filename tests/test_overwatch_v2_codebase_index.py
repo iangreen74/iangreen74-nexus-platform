@@ -624,5 +624,6 @@ class TestRegistration:
                          "read_git_diff", "list_repo_files"):
             assert expected in names, f"{expected} not registered"
         # 7 (existing) + 4 (Phase 0a) + 4 (Phase 1) + 4 (Phase 0b) +
-        # 1 (Echo Phase 1: comment_on_pr) = 20.
-        assert len(names) == 20
+        # 1 (Echo Phase 1: comment_on_pr) + 1 (Phase 0e.3: read_holograph)
+        # = 21.
+        assert len(names) == 21

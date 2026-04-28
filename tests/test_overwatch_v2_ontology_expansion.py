@@ -305,7 +305,8 @@ class TestRegistration:
         # Phase 1 added 4 cross-tenant read tools (count: 15).
         # Phase 0b added 4 cross-source-log tools (count: 19).
         # Echo Phase 1 added comment_on_pr (mutation) (count: 20).
-        assert len(names) == 20
+        # Phase 0e.3 added read_holograph (count: 21).
+        assert len(names) == 21
 
 
 # === Idempotency for ingestion-style upserts =============================

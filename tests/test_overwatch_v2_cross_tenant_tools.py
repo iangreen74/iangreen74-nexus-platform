@@ -31,19 +31,22 @@ TENANT = "forge-1dba4143ca24ed1f"
 
 # --- Registry -------------------------------------------------------------
 
-def test_registration_yields_nineteen_read_tools():
+def test_registration_yields_twenty_read_tools():
     # Phase 0b ships read_cloudtrail, read_alb_logs, query_correlated_events
     # plus the gap-closure tool read_cloudwatch_metrics (count: 19).
     # Echo Phase 1 added comment_on_pr (mutation) but include_mutations=False
-    # filters it out — read-tool count stays at 19.
+    # filters it out — read-tool count stayed at 19.
+    # Phase 0e.3 added read_holograph (Holograph diagnostic over an
+    # OperatorFeature) — count is now 20.
     register_all_read_tools()
     names = {(s.get("toolSpec") or {}).get("name") for s in list_tools(include_mutations=False)}
     assert "read_customer_tenant_state" in names
     assert "read_customer_pipeline" in names
     assert "read_customer_ontology" in names
     assert "read_aria_conversations" in names
+    assert "read_holograph" in names
     assert "comment_on_pr" not in names  # mutation tool excluded
-    assert len([n for n in names if n]) == 19
+    assert len([n for n in names if n]) == 20
 
 
 # --- Validation propagation ----------------------------------------------
