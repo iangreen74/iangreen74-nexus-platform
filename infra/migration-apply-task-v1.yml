@@ -1,34 +1,41 @@
+# Sprint 15 Day 3 — V1-targeted migration-apply task definition.
+# Mirrors infra/overwatch-v2/18-migration-apply-task.yml (V2) but injects
+# V1's DATABASE_URL secret instead of V2's PG_* secrets and invokes the
+# runner with --target=v1.
+#
+# V1 = nexus-ontology-postgres (db.t4g.micro, us-east-1a). Secret:
+# nexus/ontology/postgres/connection-XlBoLD. Carries classifier_proposals,
+# ontology objects, founder data.
+#
+# Operator launches with:
+#   aws ecs run-task --cluster overwatch-platform \
+#     --task-definition aria-console-migration-apply-v1 \
+#     --launch-type FARGATE \
+#     --network-configuration <ecs sg + private subnets> \
+#     --overrides '{"containerOverrides":[{"name":"migration-apply-v1",
+#                    "command":["python","-m",
+#                      "nexus.operator.db_apply_migration",
+#                      "migrations/0NN_filename.sql","--target=v1"]}]}'
+#
+# ECS streams stdout to /aws/ecs/aria-console-migration-apply-v1; the
+# runner prints "applied: ..." (or "already applied (matching): ...") on
+# success and SystemExits non-zero on drift / SQL error.
+#
+# No verification wrapper today — V1 has no analogue of
+# db_apply_migration_with_verify.py because the V2 wrapper's checks are
+# approval_tokens-specific. A V1 verify wrapper, if needed, lands in a
+# separate PR.
+#
+# Refs: docs/v1_migration_substrate_findings.md
+
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Sprint 15 Day 3 — V1-targeted migration-apply task definition.
-  Mirrors infra/overwatch-v2/18-migration-apply-task.yml (V2) but
-  injects V1's DATABASE_URL secret instead of V2's PG_* secrets, and
-  invokes the runner with --target=v1.
-
-  V1 = nexus-ontology-postgres (db.t4g.micro, us-east-1a). Secret:
-  nexus/ontology/postgres/connection-XlBoLD. Carries
-  classifier_proposals, ontology objects, founder data.
-
-  Operator launches with:
-    aws ecs run-task --cluster overwatch-platform \
-      --task-definition aria-console-migration-apply-v1 \
-      --launch-type FARGATE \
-      --network-configuration <ecs sg + private subnets> \
-      --overrides '{"containerOverrides":[{"name":"migration-apply-v1",
-                     "command":["python","-m",
-                       "nexus.operator.db_apply_migration",
-                       "migrations/0NN_filename.sql","--target=v1"]}]}'
-
-  ECS streams stdout to /aws/ecs/aria-console-migration-apply-v1; the
-  runner prints "applied: ..." (or "already applied (matching): ...")
-  on success and SystemExits non-zero on drift / SQL error.
-
-  No verification wrapper today — V1 has no analogue of
-  db_apply_migration_with_verify.py because the V2 wrapper's checks are
-  approval_tokens-specific. A V1 verify wrapper, if needed, lands in a
-  separate PR.
-
-  Refs: docs/v1_migration_substrate_findings.md
+  V1-targeted migration-apply task def (nexus-ontology-postgres). Mirrors
+  the V2 task def but injects DATABASE_URL from
+  nexus/ontology/postgres/connection-XlBoLD and invokes the runner with
+  --target=v1. Operator overrides command per migration; default points
+  at migration 015 (the V1 ledger bootstrap). Logs:
+  /aws/ecs/aria-console-migration-apply-v1.
 
 Parameters:
 
