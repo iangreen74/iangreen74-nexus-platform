@@ -2,7 +2,7 @@
 
 Reads a conversation turn via Haiku per-type prompts, produces
 ontology proposal candidates. Every candidate is a suggestion;
-dispositions flow through nexus.mechanism1.proposals.dispose().
+dispositions flow through nexus.mechanism1.disposition.dispose().
 
 Bedrock pattern matches nexus/capabilities/investigation.py.
 """
@@ -13,6 +13,7 @@ import logging
 import os
 import uuid
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,11 @@ AWS_REGION = "us-east-1"
 # bounding signal of what motivated the proposal is preserved well below
 # this cap in practice.
 CONTEXT_MAX_CHARS = 1000
+# Per-type Haiku-output caps — bounds Postgres/payload size.
+_FIELD_CAPS = {
+    "choice_made": 1000, "alternatives_considered": 1000,
+    "statement": 2000, "why_believed": 2000, "how_will_be_tested": 2000,
+}
 
 
 @dataclass
@@ -43,9 +49,53 @@ class ProposalCandidate:
     # ontology service for Decision objects; populated for all object_types
     # for consistency. See migration 014.
     context: str | None = None
+    # Decision-only fields (migration 016 / Bug 4): None for non-decision rows.
+    choice_made: str | None = None
+    decided_at: str | None = None
+    decided_by: str | None = None
+    alternatives_considered: str | None = None
+    # Hypothesis-only fields (migration 016 / Bug 4): None for non-hypothesis rows.
+    statement: str | None = None
+    why_believed: str | None = None
+    how_will_be_tested: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _now_iso() -> str:
+    """ISO-8601 UTC timestamp — fallback for decided_at when Haiku omits it."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _trim(value: Any, cap: int) -> str | None:
+    """Coerce to non-empty trimmed string or None."""
+    s = (value or "")
+    if not isinstance(s, str):
+        s = str(s)
+    s = s[:cap]
+    return s or None
+
+
+def _per_type_fields(object_type: str, p: dict[str, Any]) -> dict[str, Any]:
+    """Decision/Hypothesis fields with defaults; empty for feature.
+
+    Decision: decided_at → current UTC ISO when Haiku omits (within seconds
+    of message-publish, fine for proposal-time capture); decided_by →
+    'founder' when speaker is the decision-maker.
+    """
+    if object_type == "decision":
+        return {
+            "choice_made": _trim(p.get("choice_made"), _FIELD_CAPS["choice_made"]),
+            "decided_at": p.get("decided_at") or _now_iso(),
+            "decided_by": p.get("decided_by") or "founder",
+            "alternatives_considered": _trim(
+                p.get("alternatives_considered"), _FIELD_CAPS["alternatives_considered"]),
+        }
+    if object_type == "hypothesis":
+        return {k: _trim(p.get(k), _FIELD_CAPS[k])
+                for k in ("statement", "why_believed", "how_will_be_tested")}
+    return {}
 
 
 def _load_prompt(object_type: str) -> str:
@@ -138,6 +188,7 @@ def extract(
                 confidence=round(conf, 2),
                 source_turn_id=source_turn_id,
                 context=conversation_turn[:CONTEXT_MAX_CHARS] if conversation_turn else None,
+                **_per_type_fields(object_type, proposal),
             ))
         except Exception as e:
             logger.warning("Classifier error for %s: %s", object_type, e)

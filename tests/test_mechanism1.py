@@ -266,7 +266,7 @@ def test_dispose_accept_calls_ontology(monkeypatch):
            "title": "Feat", "summary": "S"}
 
     monkeypatch.setattr(
-        "nexus.mechanism1.proposals._fetch_candidate",
+        "nexus.mechanism1.disposition._fetch_candidate",
         lambda _: {
             "candidate_id": cid, "tenant_id": "t-1",
             "project_id": "p-1", "object_type": "feature",
@@ -276,7 +276,7 @@ def test_dispose_accept_calls_ontology(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "nexus.mechanism1.proposals._mark_disposed",
+        "nexus.mechanism1.disposition._mark_disposed",
         lambda *a, **kw: None,
     )
 
@@ -292,8 +292,8 @@ def test_dispose_accept_calls_ontology(monkeypatch):
         "nexus.ontology.eval_corpus.write_action_event", eval_mock,
     )
 
-    from nexus.mechanism1 import proposals
-    result = proposals.dispose(cid, "accepted", dispositioned_by="ian")
+    from nexus.mechanism1 import disposition
+    result = disposition.dispose(cid, "accepted", dispositioned_by="ian")
 
     assert result["ontology_id"] == "obj-1"
     assert result["disposition"] == "accepted"
@@ -305,7 +305,7 @@ def test_dispose_reject_no_ontology(monkeypatch):
     cid = str(uuid.uuid4())
 
     monkeypatch.setattr(
-        "nexus.mechanism1.proposals._fetch_candidate",
+        "nexus.mechanism1.disposition._fetch_candidate",
         lambda _: {
             "candidate_id": cid, "tenant_id": "t-1",
             "project_id": "p-1", "object_type": "decision",
@@ -315,7 +315,7 @@ def test_dispose_reject_no_ontology(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "nexus.mechanism1.proposals._mark_disposed",
+        "nexus.mechanism1.disposition._mark_disposed",
         lambda *a, **kw: None,
     )
 
@@ -328,8 +328,8 @@ def test_dispose_reject_no_ontology(monkeypatch):
         "nexus.ontology.eval_corpus.write_action_event", eval_mock,
     )
 
-    from nexus.mechanism1 import proposals
-    result = proposals.dispose(
+    from nexus.mechanism1 import disposition
+    result = disposition.dispose(
         cid, "rejected", reason="Not relevant",
         dispositioned_by="ian",
     )
@@ -345,7 +345,7 @@ def test_dispose_edit_applies_edits(monkeypatch):
     cid = str(uuid.uuid4())
 
     monkeypatch.setattr(
-        "nexus.mechanism1.proposals._fetch_candidate",
+        "nexus.mechanism1.disposition._fetch_candidate",
         lambda _: {
             "candidate_id": cid, "tenant_id": "t-1",
             "project_id": "p-1", "object_type": "hypothesis",
@@ -356,7 +356,7 @@ def test_dispose_edit_applies_edits(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "nexus.mechanism1.proposals._mark_disposed",
+        "nexus.mechanism1.disposition._mark_disposed",
         lambda *a, **kw: None,
     )
 
@@ -372,8 +372,8 @@ def test_dispose_edit_applies_edits(monkeypatch):
         "nexus.ontology.eval_corpus.write_action_event", eval_mock,
     )
 
-    from nexus.mechanism1 import proposals
-    result = proposals.dispose(
+    from nexus.mechanism1 import disposition
+    result = disposition.dispose(
         cid, "edited",
         edits={"title": "Edited Title", "summary": "New summary"},
         dispositioned_by="ian",

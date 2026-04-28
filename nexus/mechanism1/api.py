@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from nexus.mechanism1 import proposals
+from nexus.mechanism1 import disposition, proposals
 
 router = APIRouter(prefix="/api/classifier", tags=["classifier"])
 
@@ -42,7 +42,7 @@ async def pending(
 @router.post("/{candidate_id}/accept")
 async def accept(candidate_id: str, body: AcceptRequest):
     try:
-        return proposals.dispose(
+        return disposition.dispose(
             candidate_id, "accepted",
             dispositioned_by=body.dispositioned_by,
         )
@@ -53,7 +53,7 @@ async def accept(candidate_id: str, body: AcceptRequest):
 @router.post("/{candidate_id}/edit")
 async def edit(candidate_id: str, body: EditRequest):
     try:
-        return proposals.dispose(
+        return disposition.dispose(
             candidate_id, "edited",
             edits=body.edits,
             dispositioned_by=body.dispositioned_by,
@@ -65,7 +65,7 @@ async def edit(candidate_id: str, body: EditRequest):
 @router.post("/{candidate_id}/reject")
 async def reject(candidate_id: str, body: RejectRequest):
     try:
-        return proposals.dispose(
+        return disposition.dispose(
             candidate_id, "rejected",
             reason=body.reason,
             dispositioned_by=body.dispositioned_by,
