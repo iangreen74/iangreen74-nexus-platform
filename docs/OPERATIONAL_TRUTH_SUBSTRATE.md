@@ -344,3 +344,44 @@ PR-H1 is the antifragile outcome of the second instance's authoring
 phase. Phase 1 substrate read on the deployment_capability prompt
 caught the gap before any signal shipped against stubs. The methodology
 earned its keep — fourth substrate-truth catch in three days.
+
+### OperatorFeature: Deployment Capability
+
+The second canonical OperatorFeature instance, encoding the customer
+deployment capability's operational health. Ships 3 health signals
+derived from D bundle substrate read 2026-04-28 (Phase 2 verified actual
+Neptune property names against production):
+
+- `customer_tenant_successes_7d` (NEPTUNE_COUNT): D bundle showed 0
+  customer-tenant DeploymentAttempt nodes in 7 days despite at least
+  one known SFN execution success. Recording invariant is Sprint 16
+  candidate.
+- `tenant_aws_role_arn_pct` (NEPTUNE_AGGREGATE): D bundle showed 75%
+  Tenant.aws_role_arn population (3 of 4). CAPABILITY_MATRIX flagged
+  this as Sprint 11 priority.
+- `proven_stack_count` (NEPTUNE_COUNT): Distinct fingerprint stacks
+  meeting CAPABILITY_MATRIX 'proven' (≥3 deploys, quality_score ≥0.8).
+  Phase 2 substrate confirmed today's count: 1
+  (`javascript/express/1-svc/ecs`). Website-claim substrate.
+
+Four signals deferred because their evidence kinds aren't yet supported:
+
+- `fingerprint_label_correctness_pct`: needs framework→language mapping
+  in the evaluator (PR #88's `_FRAMEWORK_LANGUAGE` table). Encoding the
+  mapping in Cypher CASE without verifying against PR #88's truth would
+  make the signal a function of guessed mapping, not measured truth.
+- `deploy_attempt_recording_rate_per_sfn_success`: cross-source
+  evidence kind (SFN list-executions API + Cypher count).
+- `stub_handler_rate_recovery_branches`: file/git read evidence kind.
+- `state_machine_drift_source_vs_deployed`: SFN describe-state-machine +
+  filesystem diff.
+
+When evidence kinds land, follow this instance's pattern to add each.
+
+After bootstrap, read via:
+  `read_holograph(feature_id='deployment_capability')`
+
+Predicted Day 5 first rendering: 1 AMBER + 2 RED on the 3 shipped
+signals. The Holograph correctly reflects the capability's known-broken
+state — exactly the "Sprint 16 architectural decisions happen against
+numerical evidence" mechanic the substrate design intends.
