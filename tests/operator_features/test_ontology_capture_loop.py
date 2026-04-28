@@ -134,10 +134,14 @@ def test_health_signals_use_implemented_query_kinds():
     """Defer-or-ship rule: every shipped signal must use a SignalQueryKind
     that the signal evaluator actually implements. Stubs return
     UNKNOWN, which would defeat the falsifiability claim — defer such
-    signals to follow-ups instead of shipping placeholders."""
+    signals to follow-ups instead of shipping placeholders.
+
+    Implemented set updated by PR-H1 (Neptune handlers added)."""
     implemented = {SignalQueryKind.POSTGRES_QUERY,
                    SignalQueryKind.CLOUDWATCH_METRIC,
-                   SignalQueryKind.CLOUDWATCH_LOG_COUNT}
+                   SignalQueryKind.CLOUDWATCH_LOG_COUNT,
+                   SignalQueryKind.NEPTUNE_COUNT,
+                   SignalQueryKind.NEPTUNE_AGGREGATE}
     for sig in FEATURE.health_signals:
         assert sig.query_kind in implemented, (
             f"{sig.name} uses unimplemented kind {sig.query_kind}; "

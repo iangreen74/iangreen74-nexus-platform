@@ -312,3 +312,35 @@ Consumed today via `read_holograph(feature_id="ontology_capture_loop")`
 from any Echo-using surface; before this OperatorFeature, the same
 diagnostic state surfaced over hours of manual investigation across
 classifier_proposals SQL, Neptune Cypher, and CloudWatch logs.
+
+### Engine handler coverage (post-PR-H1)
+
+The `signal_evaluator` dispatch table now supports five SignalQueryKinds
+for thresholded HealthSignals:
+
+- `POSTGRES_QUERY` (PR #51)
+- `CLOUDWATCH_METRIC` (PR #51)
+- `CLOUDWATCH_LOG_COUNT` (PR #51)
+- `NEPTUNE_COUNT` (PR-H1)
+- `NEPTUNE_AGGREGATE` (PR-H1)
+
+The two Neptune handlers share `_eval_neptune_scalar` — both expect a
+single-row single-column scalar from `nexus.overwatch_graph.query`.
+The enum split is operator-facing semantics (count vs aggregate), not
+a difference in extraction shape. Mirrors the canonical
+`evidence_executor._exec_neptune_cypher` pattern.
+
+`HTTP_HEALTH` remains the only stubbed `SignalQueryKind`. Future
+OperatorFeature instances needing it follow the same pattern: tiny
+engine-extension PR before instance authoring.
+
+The defer-or-ship discipline established by the ontology_capture_loop
+test (`test_health_signals_use_implemented_query_kinds`) is now
+updated to allow the two new kinds. Any new instance using stubs would
+fail that test; instances using `NEPTUNE_COUNT`/`NEPTUNE_AGGREGATE`
+ship cleanly.
+
+PR-H1 is the antifragile outcome of the second instance's authoring
+phase. Phase 1 substrate read on the deployment_capability prompt
+caught the gap before any signal shipped against stubs. The methodology
+earned its keep — fourth substrate-truth catch in three days.
