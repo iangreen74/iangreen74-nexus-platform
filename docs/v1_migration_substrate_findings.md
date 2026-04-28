@@ -114,6 +114,63 @@ first to actually use the runner.
 This pragmatic two-step is documented explicitly in commit 5 so it
 isn't mistaken for "the runner doesn't work" by future readers.
 
+## Migrations applied via V1 runner
+
+| Migration | Applied via | Date (UTC) | Notes |
+|---|---|---|---|
+| 012 | raw psql one-off (pre-runner) | ~2026-04-26 | Pre-runner-existence; ledger entry backfilled in migration 015 |
+| 014 | raw psql one-off (in-PR bootstrap) | 2026-04-27 18:16 | V1-aware runner not yet on `:latest` at apply time |
+| **016** | **`aria-console-migration-apply-v1` + runner `--target=v1`** | **2026-04-28 00:53** | **First real V1 runner exercise.** Adds 7 nullable columns to classifier_proposals for Bug 4 rigorous fix |
+
+## Runner exercise notes (migration 016)
+
+First migration to apply through the V1 runner without psql bootstrap.
+Two substrate gaps surfaced and were closed in PR-A:
+
+1. **CFN stack `aria-console-migration-apply-v1` had never been
+   deployed** despite the YAML file (`infra/migration-apply-task-v1.yml`)
+   shipping in PR #50. `aws ecs describe-task-definition` returned
+   `ClientException`. Deploying the stack via
+   `aws cloudformation deploy --template-file
+   infra/migration-apply-task-v1.yml --stack-name
+   aria-console-migration-apply-v1 --capabilities CAPABILITY_IAM`
+   succeeded after fix #2 below.
+2. **CFN template's `Description` field exceeded the 1024-char CFN
+   limit.** PR #50's YAML embedded the operator-instruction block as
+   the `Description:` value (multi-line `>` folded scalar). CFN
+   rejected with `Template format error: 'Description' length is
+   greater than 1024.` Fix: moved the operator instructions to a
+   YAML-comment header (`# ...`) at the top of the file and replaced
+   the `Description:` value with a brief 350-char summary. The
+   detailed operator instructions are still in the file, just not in
+   the field CFN constrains.
+
+Apply mechanics for 016:
+
+- Task def: `aria-console-migration-apply-v1:1` (registered by CFN
+  stack `aria-console-migration-apply-v1`)
+- Image: `nexus-platform:latest` (digest matches main `4a140ed`,
+  V1-aware runner present)
+- Pre-PR-merge constraint: migration file did not yet exist in
+  `:latest`. Worked around by passing the SQL content base64-encoded
+  in the `command` override; the override decoded to
+  `/tmp/m/016_classifier_proposals_bug4_columns.sql` and invoked the
+  runner against that path. Runner records `Path.name` in the ledger,
+  so the recorded `filename` is `016_classifier_proposals_bug4_columns.sql`
+  — same value the runner will see post-merge when re-invoking
+  against the canonical `migrations/016_*.sql` in `:latest`. Idempotent
+  re-application post-merge will report
+  `already_applied_matching` because checksum will match.
+- Wall time: 49 seconds (Fargate cold start dominates; Postgres apply
+  itself was sub-second per `applied_at` resolution).
+- Ledger entry: `016_classifier_proposals_bug4_columns.sql |
+  eeed1522eeb0c00940f50f3a0b637f5811ccb22baf710b73afefaae8992ec0df |
+  2026-04-28 00:53:39.887491+00` — checksum byte-matches repo file.
+
+Surprises beyond the two gaps above: none. Runner emitted exactly the
+expected `applied: <filename> (target v1, sha256 <12-char-prefix>…)`
+line, exited zero, ledger row appeared.
+
 ## Side observation: GITHUB_TOKEN exposure
 
 While reading the `aria-console:64` task definition for substrate
