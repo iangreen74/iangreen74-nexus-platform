@@ -79,6 +79,12 @@ Resources:
                   - states:List*
                   - states:GetExecutionHistory
                 Resource: "*"
+              - Sid: SendTaskTokensForgewingDeployV2
+                Effect: Allow
+                Action:
+                  - states:SendTaskSuccess
+                  - states:SendTaskFailure
+                Resource: arn:aws:states:us-east-1:418295677815:stateMachine:forgewing-deploy-v2
               - Sid: LambdaRead
                 Effect: Allow
                 Action:
